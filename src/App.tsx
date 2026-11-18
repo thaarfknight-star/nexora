@@ -603,6 +603,26 @@ function SettingsView() {
     saveSettings({ ...settings, [key]: !settings[key] });
   };
 
+  const previewTheme = (id: ThemeId | null) => {
+    // Hover preview only: local to this window, never persisted and
+    // never sent to the island — set_settings stays out of it.
+    document.documentElement.dataset.theme = id ?? theme;
+  };
+
+  const resetToDefaults = () => {
+    // Backend defaults (settings.rs defaults()): theme neon-glass,
+    // auto-hide off, always-on-top on.
+    applyTheme("neon-glass");
+    if (settings) {
+      saveSettings({
+        ...settings,
+        theme: "neon-glass",
+        auto_hide_taskbar: false,
+        always_on_top: true,
+      });
+    }
+  };
+
   const checkForUpdates = () => {
     invoke<UpdateInfo>("check_updates")
       .then(setUpdateInfo)
@@ -629,25 +649,49 @@ function SettingsView() {
       <img className="settings-wordmark" src={wordmark} alt="Nexora" />
       <h1 className="settings-title">Settings</h1>
       <h2 className="settings-section-title">Appearance</h2>
-      <div className="island-themes" role="group" aria-label="Nexora theme">
-        <span className="theme-label">Theme:</span>
+      <p className="settings-section-desc">
+        Themes apply live to the island — hover a card to preview it
+        here, click to keep it.
+      </p>
+      <div className="theme-cards" role="group" aria-label="Nexora theme">
         {THEMES.map((candidate) => (
           <button
             key={candidate.id}
             type="button"
-            className={`theme-swatch${
+            className={`theme-card${
               candidate.id === theme ? " selected" : ""
             }`}
-            style={{ background: candidate.swatch }}
-            title={`${candidate.name} — ${candidate.description}`}
+            data-theme={candidate.id}
             aria-label={candidate.name}
             aria-pressed={candidate.id === theme}
             onClick={() => pickTheme(candidate.id)}
-          />
+            onMouseEnter={() => previewTheme(candidate.id)}
+            onMouseLeave={() => previewTheme(null)}
+            onFocus={() => previewTheme(candidate.id)}
+            onBlur={() => previewTheme(null)}
+          >
+            <span className="theme-card-preview" aria-hidden="true">
+              <span className="theme-card-dot" />
+              <span className="theme-card-bar" />
+              <span className="theme-card-bar short" />
+            </span>
+            <span className="theme-card-name">
+              {candidate.name}
+              {candidate.id === theme ? " ✓" : ""}
+            </span>
+            <span className="theme-card-desc">
+              {candidate.description}
+            </span>
+          </button>
         ))}
       </div>
       <div className="settings-row">
-        <span>Auto-hide taskbar</span>
+        <span className="settings-row-text">
+          <span>Auto-hide taskbar</span>
+          <span className="settings-row-desc">
+            Hide the Windows taskbar while Nexora runs.
+          </span>
+        </span>
         <button
           type="button"
           className="mini-btn"
@@ -657,7 +701,12 @@ function SettingsView() {
         </button>
       </div>
       <div className="settings-row">
-        <span>Always on top</span>
+        <span className="settings-row-text">
+          <span>Always on top</span>
+          <span className="settings-row-desc">
+            Keep the island above other windows.
+          </span>
+        </span>
         <button
           type="button"
           className="mini-btn"
@@ -678,6 +727,13 @@ function SettingsView() {
           Check for updates
         </button>
       </div>
+      <button
+        type="button"
+        className="mini-btn settings-reset"
+        onClick={resetToDefaults}
+      >
+        Reset to defaults
+      </button>
       <div className="settings-version">
         Nexora v{updateInfo ? updateInfo.current_version : "—"}
       </div>

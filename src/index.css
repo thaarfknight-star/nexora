@@ -4,10 +4,14 @@
 }
 
 /* Theme variables. The active theme is selected by
-   `:root[data-theme="<id>"]` (see `src/themes.ts` for the six ids).
+   `:root[data-theme="<id>"]` (see `src/themes.ts` for the seven ids).
+   A `[data-theme="<id>"]` element also carries its theme's variables
+   for its own subtree, so a theme preview card can show its theme
+   without changing the window theme.
    Obsidian is the default and matches the original hardcoded pill. */
 :root,
-:root[data-theme="obsidian"] {
+:root[data-theme="obsidian"],
+[data-theme="obsidian"] {
   --island-bg: rgba(15, 23, 42, 0.92);
   --island-border: rgba(148, 163, 184, 0.25);
   --island-text: #f8fafc;
@@ -19,7 +23,8 @@
   --island-blur: 18px;
 }
 
-:root[data-theme="liquid-glass"] {
+:root[data-theme="liquid-glass"],
+[data-theme="liquid-glass"] {
   --island-bg: rgba(255, 255, 255, 0.16);
   --island-border: rgba(255, 255, 255, 0.45);
   --island-text: #ffffff;
@@ -31,7 +36,8 @@
   --island-blur: 24px;
 }
 
-:root[data-theme="aurora"] {
+:root[data-theme="aurora"],
+[data-theme="aurora"] {
   --island-bg: rgba(4, 47, 46, 0.94);
   --island-border: rgba(45, 212, 191, 0.35);
   --island-text: #f0fdfa;
@@ -43,7 +49,8 @@
   --island-blur: 18px;
 }
 
-:root[data-theme="sunset"] {
+:root[data-theme="sunset"],
+[data-theme="sunset"] {
   --island-bg: rgba(69, 26, 3, 0.94);
   --island-border: rgba(251, 146, 60, 0.4);
   --island-text: #fff7ed;
@@ -55,7 +62,8 @@
   --island-blur: 18px;
 }
 
-:root[data-theme="midnight"] {
+:root[data-theme="midnight"],
+[data-theme="midnight"] {
   --island-bg: rgba(15, 10, 40, 0.94);
   --island-border: rgba(167, 139, 250, 0.35);
   --island-text: #f5f3ff;
@@ -67,7 +75,8 @@
   --island-blur: 18px;
 }
 
-:root[data-theme="forest"] {
+:root[data-theme="forest"],
+[data-theme="forest"] {
   --island-bg: rgba(12, 46, 26, 0.94);
   --island-border: rgba(74, 222, 128, 0.35);
   --island-text: #f0fdf4;
@@ -79,7 +88,8 @@
   --island-blur: 18px;
 }
 
-:root[data-theme="neon-glass"] {
+:root[data-theme="neon-glass"],
+[data-theme="neon-glass"] {
   --island-bg: rgba(24, 10, 54, 0.88);
   --island-border: rgba(167, 139, 250, 0.45);
   --island-text: #f5f3ff;
@@ -250,31 +260,103 @@ body,
   cursor: pointer;
 }
 
-.island-themes {
+/* Theme preview cards in the Settings window. Each card carries its
+   own data-theme so the mini island inside previews that theme,
+   while the card chrome follows the window's active theme. */
+.theme-cards {
   width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
+  max-width: 420px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
 
-.theme-label {
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid var(--island-border);
+  background: var(--island-btn-bg);
+  color: var(--island-text);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+
+.theme-card.selected {
+  border-color: var(--island-accent);
+  box-shadow: 0 0 0 1px var(--island-accent);
+}
+
+.theme-card-preview {
+  height: 30px;
+  border-radius: 9999px;
+  background: var(--island-bg);
+  border: 1px solid var(--island-border);
+  backdrop-filter: blur(var(--island-blur));
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+}
+
+.theme-card-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background: var(--island-accent);
+  flex: none;
+}
+
+.theme-card-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--island-text);
+  opacity: 0.85;
+  flex: 1;
+}
+
+.theme-card-bar.short {
+  flex: 0 0 34px;
+  background: var(--island-subtext);
+}
+
+.theme-card-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.theme-card-desc {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--island-subtext);
+}
+
+.settings-section-desc {
+  width: 100%;
+  max-width: 420px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--island-subtext);
+  margin-top: -8px;
+}
+
+.settings-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-row-desc {
   font-size: 11px;
   color: var(--island-subtext);
 }
 
-.theme-swatch {
-  width: 22px;
-  height: 22px;
-  border-radius: 9999px;
-  border: 2px solid transparent;
-  padding: 0;
-  cursor: pointer;
-}
-
-.theme-swatch.selected {
-  border-color: var(--island-text);
-  box-shadow: 0 0 0 2px var(--island-btn-border);
+.settings-reset {
+  margin-top: 4px;
 }
 
 /* Settings window (label "settings"): a plain centered column that
