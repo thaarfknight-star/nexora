@@ -49,43 +49,12 @@ fn toggle_main_window(app: &AppHandle) {
     }
 }
 
-/// Restores the Windows taskbar by showing `Shell_TrayWnd` again.
-/// Raw Win32 FFI on purpose: no extra crate is needed for two calls.
-/// On other platforms this is a no-op (Nexora targets Windows).
-#[cfg(windows)]
-pub fn restore_taskbar() {
-    use std::os::raw::{c_int, c_void};
-
-    type Hwnd = *mut c_void;
-    const SW_SHOW: c_int = 5;
-
-    #[link(name = "user32")]
-    extern "system" {
-        fn FindWindowW(lp_class_name: *const u16, lp_window_name: *const u16) -> Hwnd;
-        fn ShowWindow(hwnd: Hwnd, n_cmd_show: c_int) -> c_int;
-    }
-
-    let class: Vec<u16> = "Shell_TrayWnd"
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
-    unsafe {
-        let hwnd = FindWindowW(class.as_ptr(), std::ptr::null());
-        if !hwnd.is_null() {
-            ShowWindow(hwnd, SW_SHOW);
-        }
-    }
-}
-
-/// Restores the Windows taskbar by showing `Shell_TrayWnd` again.
-/// No-op on non-Windows platforms.
-#[cfg(not(windows))]
-pub fn restore_taskbar() {}
-
 /// Quits Nexora, restoring the taskbar first so the desktop is never
-/// left without a taskbar.
+/// left without a taskbar. The restore is the watchdog's canonical one
+/// (both tray classes, with retries); tray.rs must not redeclare the
+/// same Win32 symbols (CI denies clashing extern declarations).
 pub fn quit(app: &AppHandle) {
-    restore_taskbar();
+    let _ = crate::watchdog::restore_taskbar();
     app.exit(0);
 }
 
