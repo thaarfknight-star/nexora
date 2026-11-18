@@ -1,5 +1,5 @@
 /**
- * The six Nexora themes.
+ * The seven Nexora themes.
  *
  * This file is the source of truth for theme ids. The ids are plain
  * strings shared with the backend `theme` field in `NexoraSettings`
@@ -15,7 +15,8 @@ export type ThemeId =
   | "aurora"
   | "sunset"
   | "midnight"
-  | "forest";
+  | "forest"
+  | "neon-glass";
 
 export interface ThemeDefinition {
   id: ThemeId;
@@ -25,7 +26,7 @@ export interface ThemeDefinition {
   swatch: string;
 }
 
-export const DEFAULT_THEME_ID: ThemeId = "obsidian";
+export const DEFAULT_THEME_ID: ThemeId = "neon-glass";
 
 export const THEMES: readonly ThemeDefinition[] = [
   {
@@ -63,6 +64,13 @@ export const THEMES: readonly ThemeDefinition[] = [
     name: "Forest",
     description: "Deep green with a fresh leaf accent.",
     swatch: "#4ade80",
+  },
+  {
+    id: "neon-glass",
+    name: "Neon Glass",
+    description:
+      "Deep violet glass with a neon purple-blue glow — the brand-sheet look.",
+    swatch: "#a78bfa",
   },
 ];
 

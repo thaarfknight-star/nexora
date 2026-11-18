@@ -79,6 +79,18 @@
   --island-blur: 18px;
 }
 
+:root[data-theme="neon-glass"] {
+  --island-bg: rgba(24, 10, 54, 0.88);
+  --island-border: rgba(167, 139, 250, 0.45);
+  --island-text: #f5f3ff;
+  --island-subtext: #c4b5fd;
+  --island-accent: #a78bfa;
+  --island-accent-text: #ddd6fe;
+  --island-btn-bg: rgba(139, 92, 246, 0.2);
+  --island-btn-border: rgba(167, 139, 250, 0.5);
+  --island-blur: 24px;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -320,4 +332,135 @@ body,
   height: 28px;
   border-radius: 8px;
   display: block;
+}
+
+/* Neon Glass sheet layout: stat chips, media card, clock. */
+.island-clock {
+  text-align: right;
+  line-height: 1.2;
+  flex: none;
+}
+
+.island-clock-time {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.island-clock-date {
+  font-size: 11px;
+  color: var(--island-subtext);
+}
+
+.stat-chips {
+  width: 100%;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.stat-chip {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+  border-radius: 12px;
+  background: var(--island-btn-bg);
+  border: 1px solid var(--island-btn-border);
+}
+
+.stat-chip-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--island-subtext);
+}
+
+.stat-chip-value {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.net-speed {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--island-subtext);
+}
+
+.media-card {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 14px;
+  background: var(--island-btn-bg);
+  border: 1px solid var(--island-btn-border);
+}
+
+.media-cover {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex: none;
+}
+
+.media-cover-placeholder {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--island-btn-bg);
+  border: 1px solid var(--island-btn-border);
+}
+
+.media-cover-placeholder img {
+  width: 28px;
+  height: 28px;
+}
+
+.media-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.media-track {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.media-artist {
+  font-size: 11px;
+  color: var(--island-subtext);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--island-subtext);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.media-source {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  flex: none;
 }

@@ -27,6 +27,10 @@ interface NexoraSettings {
 interface SystemStats {
   cpu_percent: number;
   memory_percent: number;
+  /** Sent by the stats backend when it reports them; "—" until then. */
+  gpu_percent?: number;
+  net_up_kbps?: number;
+  net_down_kbps?: number;
 }
 
 interface MediaInfo {
@@ -36,6 +40,10 @@ interface MediaInfo {
   album: string;
   source_app: string;
   playback_status: string;
+  /** Album cover art (data URI) when the media backend provides it. */
+  cover_art?: string;
+  /** Source-app icon (base64 PNG) when the media backend provides it. */
+  source_icon?: string;
 }
 
 interface TaskbarStatus {
@@ -78,18 +86,34 @@ function onOff(value: boolean): string {
   return value ? "On" : "Off";
 }
 
+function clockTime(date: Date): string {
+  return date.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function clockDate(date: Date): string {
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+}
+
 function IslandApp() {
   const [state, setState] = useState<IslandState>({
     expanded: false,
     mode: "compact",
     title: "Nexora Island",
   });
-  const [theme, setTheme] = useState<ThemeId>("obsidian");
+  const [theme, setTheme] = useState<ThemeId>("neon-glass");
   const [tab, setTab] = useState<IslandTab>("media");
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [media, setMedia] = useState<MediaInfo | null>(null);
   const [taskbar, setTaskbar] = useState<TaskbarStatus | null>(null);
   const [watchdog, setWatchdog] = useState<WatchdogStatus | null>(null);
+  const [now, setNow] = useState(() => new Date());
 
   const applyTheme = (id: ThemeId) => {
     setTheme(id);
@@ -116,8 +140,8 @@ function IslandApp() {
     | "media_previous";
 
   const sendMediaCommand = (command: MediaCommand) => {
-    // The four commands are registered by EAgent5's IPC wiring; until
-    // then a failed invoke just re-reads the current state.
+    // After every command — accepted or not — re-read the live state
+    // so the display never disagrees with the backend.
     invoke<boolean>(command)
       .then(() => refreshMedia())
       .catch(() => refreshMedia());
@@ -169,7 +193,11 @@ function IslandApp() {
       refreshStats();
       refreshMedia();
     }, 3000);
-    return () => window.clearInterval(id);
+    const clockId = window.setInterval(() => setNow(new Date()), 1000);
+    return () => {
+      window.clearInterval(id);
+      window.clearInterval(clockId);
+    };
     // Refresh helpers only use stable setters and invoke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.expanded]);
@@ -221,6 +249,12 @@ function IslandApp() {
               </div>
             </div>
           </div>
+          {state.expanded && (
+            <div className="island-clock">
+              <div className="island-clock-time">{clockTime(now)}</div>
+              <div className="island-clock-date">{clockDate(now)}</div>
+            </div>
+          )}
           <button
             type="button"
             className="gear-btn"
@@ -258,10 +292,36 @@ function IslandApp() {
             </div>
             {tab === "media" && (
               <div className="island-panel" role="tabpanel">
+                <div className="media-card">
+                  {media?.cover_art ? (
+                    <img
+                      className="media-cover"
+                      src={media.cover_art}
+                      alt={media.album || "Album cover"}
+                    />
+                  ) : (
+                    <span className="media-cover-placeholder">
+                      <img src={emblem} alt="" />
+                    </span>
+                  )}
+                  <div className="media-info">
+                    <span className="media-track">
+                      {media ? media.title : "—"}
+                    </span>
+                    <span className="media-artist">
+                      {media ? media.artist : "—"}
+                      {media?.album ? ` — ${media.album}` : ""}
+                    </span>
+                  </div>
+                  {media?.source_icon && (
+                    <img
+                      className="media-source"
+                      src={media.source_icon}
+                      alt={media.source_app}
+                    />
+                  )}
+                </div>
                 <div className="panel-line">
-                  <span className="panel-title">
-                    {media ? `${media.title} — ${media.artist}` : "—"}
-                  </span>
                   <span className="panel-controls">
                     <button
                       type="button"
@@ -296,10 +356,7 @@ function IslandApp() {
                       Refresh
                     </button>
                   </span>
-                </div>
-                <div className="panel-line">
                   <span>
-                    {media?.album ? `${media.album} · ` : ""}
                     {media?.source_app ? media.source_app : "—"} ·{" "}
                     {media ? media.playback_status : "—"}
                   </span>
@@ -308,22 +365,52 @@ function IslandApp() {
             )}
             {tab === "stats" && (
               <div className="island-panel" role="tabpanel">
-                <div className="panel-line">
+                <div className="stat-chips">
+                  <div className="stat-chip">
+                    <span className="stat-chip-label">CPU</span>
+                    <span className="stat-chip-value">
+                      {stats ? `${stats.cpu_percent.toFixed(0)}%` : "—"}
+                    </span>
+                  </div>
+                  <div className="stat-chip">
+                    <span className="stat-chip-label">RAM</span>
+                    <span className="stat-chip-value">
+                      {stats ? `${stats.memory_percent.toFixed(0)}%` : "—"}
+                    </span>
+                  </div>
+                  <div className="stat-chip">
+                    <span className="stat-chip-label">GPU</span>
+                    <span className="stat-chip-value">
+                      {stats?.gpu_percent !== undefined
+                        ? `${stats.gpu_percent.toFixed(0)}%`
+                        : "—"}
+                    </span>
+                  </div>
+                </div>
+                <div className="net-speed">
                   <span>
-                    CPU{" "}
-                    {stats ? `${stats.cpu_percent.toFixed(1)}%` : "—"} ·
-                    Memory{" "}
-                    {stats ? `${stats.memory_percent.toFixed(1)}%` : "—"}
+                    ↑{" "}
+                    {stats?.net_up_kbps !== undefined
+                      ? `${stats.net_up_kbps.toFixed(1)} KB/s`
+                      : "—"}
                   </span>
                   <span>
-                    Taskbar: {taskbar ? (taskbar.hidden ? "hidden" : "shown") : "—"}
+                    ↓{" "}
+                    {stats?.net_down_kbps !== undefined
+                      ? `${stats.net_down_kbps.toFixed(1)} KB/s`
+                      : "—"}
                   </span>
                 </div>
                 <div className="panel-line">
                   <span>
+                    Taskbar: {taskbar ? (taskbar.hidden ? "hidden" : "shown") : "—"}
+                  </span>
+                  <span>
                     Watchdog:{" "}
                     {watchdog ? (watchdog.healthy ? "healthy" : "unhealthy") : "—"}
                   </span>
+                </div>
+                <div className="panel-line">
                   <span>
                     Explorer:{" "}
                     {watchdog ? (watchdog.explorer_ok ? "ok" : "down") : "—"}
@@ -340,7 +427,7 @@ function IslandApp() {
 
 function SettingsView() {
   const [settings, setSettings] = useState<NexoraSettings | null>(null);
-  const [theme, setTheme] = useState<ThemeId>("obsidian");
+  const [theme, setTheme] = useState<ThemeId>("neon-glass");
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
 
   const applyTheme = (id: ThemeId) => {
@@ -396,6 +483,7 @@ function SettingsView() {
     <main className="settings-shell">
       <img className="settings-wordmark" src={wordmark} alt="Nexora" />
       <h1 className="settings-title">Settings</h1>
+      <h2 className="settings-section-title">Appearance</h2>
       <div className="island-themes" role="group" aria-label="Nexora theme">
         <span className="theme-label">Theme:</span>
         {THEMES.map((candidate) => (

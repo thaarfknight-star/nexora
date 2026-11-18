@@ -41,11 +41,12 @@
 
 ### Themes
 
-Six built-in themes, switchable from the separate Settings window and persisted across restarts:
+Seven built-in themes, switchable from the separate Settings window and persisted across restarts:
 
 | Theme | Style |
 | --- | --- |
-| **Obsidian** (default) | Dark, neutral — the classic Nexora look |
+| **Neon Glass** (default) | Deep violet glass with a neon purple-blue glow — the brand-sheet look |
+| **Obsidian** | Dark, neutral — the classic Nexora look |
 | **Liquid Glass** | Signature frosted-glass aesthetic |
 | **Aurora** | Cool green-blue glow |
 | **Sunset** | Warm orange-pink gradient |
@@ -100,7 +101,7 @@ Tauri v2 app: a React frontend (`src/`) talking to a Rust backend (`src-tauri/sr
 | `ipc.rs` | All Tauri commands exposed to the frontend |
 | `lib.rs` | App setup: single setup closure wiring island, Watchdog, tray, and updater |
 
-Frontend: `src/App.tsx` (tabbed island UI), `src/themes.ts` (6 themes), `src/index.css` (theme variables).
+Frontend: `src/App.tsx` (tabbed island UI), `src/themes.ts` (7 themes), `src/index.css` (theme variables).
 
 ## Development
 
