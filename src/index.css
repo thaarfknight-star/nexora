@@ -14,7 +14,6 @@
   --island-subtext: #94a3b8;
   --island-accent: #38bdf8;
   --island-accent-text: #7dd3fc;
-  --island-dot: #38bdf8;
   --island-btn-bg: rgba(56, 189, 248, 0.16);
   --island-btn-border: rgba(56, 189, 248, 0.35);
   --island-blur: 18px;
@@ -27,7 +26,6 @@
   --island-subtext: rgba(255, 255, 255, 0.72);
   --island-accent: #ffffff;
   --island-accent-text: #e0f2fe;
-  --island-dot: #ffffff;
   --island-btn-bg: rgba(255, 255, 255, 0.22);
   --island-btn-border: rgba(255, 255, 255, 0.5);
   --island-blur: 24px;
@@ -40,7 +38,6 @@
   --island-subtext: #99f6e4;
   --island-accent: #2dd4bf;
   --island-accent-text: #5eead4;
-  --island-dot: #2dd4bf;
   --island-btn-bg: rgba(45, 212, 191, 0.16);
   --island-btn-border: rgba(45, 212, 191, 0.4);
   --island-blur: 18px;
@@ -53,7 +50,6 @@
   --island-subtext: #fdba74;
   --island-accent: #fb923c;
   --island-accent-text: #fdba74;
-  --island-dot: #f97316;
   --island-btn-bg: rgba(251, 146, 60, 0.18);
   --island-btn-border: rgba(251, 146, 60, 0.45);
   --island-blur: 18px;
@@ -66,7 +62,6 @@
   --island-subtext: #c4b5fd;
   --island-accent: #a78bfa;
   --island-accent-text: #c4b5fd;
-  --island-dot: #8b5cf6;
   --island-btn-bg: rgba(167, 139, 250, 0.16);
   --island-btn-border: rgba(167, 139, 250, 0.4);
   --island-blur: 18px;
@@ -79,7 +74,6 @@
   --island-subtext: #86efac;
   --island-accent: #4ade80;
   --island-accent-text: #86efac;
-  --island-dot: #22c55e;
   --island-btn-bg: rgba(74, 222, 128, 0.16);
   --island-btn-border: rgba(74, 222, 128, 0.4);
   --island-blur: 18px;
@@ -212,11 +206,17 @@ body,
   gap: 10px;
 }
 
-.island-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 9999px;
-  background: var(--island-dot);
+.island-emblem {
+  width: 28px;
+  height: 28px;
+  flex: none;
+}
+
+.island-wordmark {
+  width: 120px;
+  height: auto;
+  display: block;
+  margin-bottom: 8px;
 }
 
 .island-title {

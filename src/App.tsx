@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import emblem from "./assets/emblem.svg";
+import wordmark from "./assets/wordmark.png";
 import {
   THEMES,
   themeById,
@@ -195,7 +197,13 @@ export function App() {
       >
         <div className="island-row" data-tauri-drag-region>
           <div className="island-brand">
-            <span className="island-dot" />
+            <img
+              className="island-emblem"
+              src={emblem}
+              alt="Nexora"
+              width={28}
+              height={28}
+            />
             <div>
               <div className="island-title">{state.title}</div>
               <div className="island-sub">
@@ -298,6 +306,11 @@ export function App() {
             )}
             {tab === "settings" && (
               <div className="island-panel" role="tabpanel">
+                <img
+                  className="island-wordmark"
+                  src={wordmark}
+                  alt="Nexora"
+                />
                 <div
                   className="island-themes"
                   role="group"

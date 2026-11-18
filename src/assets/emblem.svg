@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<defs>
+ <linearGradient id="g" x1="70" y1="400" x2="430" y2="90" gradientUnits="userSpaceOnUse">
+  <stop stop-color="#4B19FF"/><stop offset=".42" stop-color="#9B68FF"/>
+  <stop offset=".72" stop-color="#E5D9FF"/><stop offset="1" stop-color="#673BFF"/>
+ </linearGradient>
+ <linearGradient id="hi" x1="100" y1="100" x2="400" y2="400" gradientUnits="userSpaceOnUse">
+  <stop stop-color="#FFFFFF" stop-opacity=".95"/><stop offset=".48" stop-color="#BDA4FF" stop-opacity=".15"/><stop offset="1" stop-color="#6D35FF" stop-opacity=".8"/>
+ </linearGradient>
+ <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+  <feGaussianBlur stdDeviation="9" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+ </filter>
+</defs>
+<path d="M86 344 C112 409 161 401 205 342 L326 177 C363 126 403 132 421 174
+ C444 228 402 278 361 329 C327 371 286 390 247 354 C209 319 179 244 151 188
+ C127 140 94 127 76 164 C59 199 75 251 111 283 C147 316 187 309 220 270
+ L324 145" fill="none" stroke="#5424E8" stroke-width="54" stroke-linecap="round" stroke-linejoin="round" opacity=".42" filter="url(#glow)"/>
+<path d="M86 344 C112 409 161 401 205 342 L326 177 C363 126 403 132 421 174
+ C444 228 402 278 361 329 C327 371 286 390 247 354 C209 319 179 244 151 188 C127 140 94 127 76 164
+ C59 199 75 251 111 283 C147 316 187 309 220 270 L324 145" fill="none" stroke="url(#g)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M86 344 C112 409 161 401 205 342 L326 177 C363 126 403 132 421 174" fill="none" stroke="url(#hi)" stroke-width="7" stroke-linecap="round" opacity=".8"/>
+<path d="M76 164 C59 199 75 251 111 283 C147 316 187 309 220 270 L324 145" fill="none" stroke="#E8DEFF" stroke-width="5" stroke-linecap="round" opacity=".58"/>
+<ellipse cx="256" cy="256" rx="220" ry="118" transform="rotate(-24 256 256)" fill="none" stroke="#A98AFF" stroke-width="2.5" opacity=".55"/>
+</svg>
