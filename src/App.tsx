@@ -23,6 +23,10 @@ interface NexoraSettings {
   auto_hide_taskbar: boolean;
   always_on_top: boolean;
   theme: string;
+  /** Island blur override in px; null means the theme default. */
+  island_blur_px: number | null;
+  /** Island corner-radius override in px; null means the theme default. */
+  island_radius_px: number | null;
 }
 
 interface SystemStats {
@@ -183,6 +187,11 @@ function IslandApp() {
   const [density, setDensity] = useState<"comfortable" | "compact">(
     "comfortable",
   );
+  // Island style overrides from settings; null means the theme default.
+  const [islandStyle, setIslandStyle] = useState<{
+    blur: number | null;
+    radius: number | null;
+  }>({ blur: null, radius: null });
 
   const applyTheme = (id: ThemeId) => {
     setTheme(id);
@@ -240,7 +249,13 @@ function IslandApp() {
     // Saved choice wins; the backend default is the fallback.
     const saved = readSavedTheme();
     invoke<NexoraSettings>("get_settings")
-      .then((loaded) => applyTheme(themeOrDefault(saved ?? loaded.theme)))
+      .then((loaded) => {
+        applyTheme(themeOrDefault(saved ?? loaded.theme));
+        setIslandStyle({
+          blur: loaded.island_blur_px ?? null,
+          radius: loaded.island_radius_px ?? null,
+        });
+      })
       .catch(() => applyTheme(themeOrDefault(saved)));
     invoke<IslandState>("get_island_state")
       .then(setState)
@@ -250,6 +265,10 @@ function IslandApp() {
     let unlisten: (() => void) | undefined;
     listen<NexoraSettings>("settings-changed", (event) => {
       applyTheme(themeOrDefault(event.payload.theme));
+      setIslandStyle({
+        blur: event.payload.island_blur_px ?? null,
+        radius: event.payload.island_radius_px ?? null,
+      });
     })
       .then((stop) => {
         unlisten = stop;
@@ -383,6 +402,14 @@ function IslandApp() {
       <section
         className={`island-pill${state.expanded ? " expanded" : ""}`}
         data-tauri-drag-region
+        style={{
+          ...(islandStyle.blur !== null
+            ? { backdropFilter: `blur(${islandStyle.blur}px)` }
+            : {}),
+          ...(islandStyle.radius !== null
+            ? { borderRadius: `${islandStyle.radius}px` }
+            : {}),
+        }}
       >
         <div className="island-row" data-tauri-drag-region>
           <div className="island-brand">
@@ -774,6 +801,40 @@ function SettingsView() {
     saveSettings({ ...settings, [key]: !settings[key] });
   };
 
+  // Slider range for the island style overrides (px). The backend
+  // stores Option<u8>; the frontend clamps to this range so a stale
+  // or out-of-range stored value never breaks the slider.
+  const ISLAND_STYLE_MIN_PX = 0;
+  const ISLAND_STYLE_MAX_PX = 32;
+  const clampStylePx = (value: number) =>
+    Math.min(
+      ISLAND_STYLE_MAX_PX,
+      Math.max(ISLAND_STYLE_MIN_PX, Math.round(value)),
+    );
+
+  // The theme's own blur, read live from the CSS variable so the
+  // "theme default" label always matches the active theme.
+  const themeBlurPx = () => {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue(
+      "--island-blur",
+    );
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isNaN(parsed) ? 18 : parsed;
+  };
+
+  // The theme's own corner radius: the fixed 28px in .island-pill.
+  const ISLAND_RADIUS_DEFAULT_PX = 28;
+
+  const setStyleField = (
+    key: "island_blur_px" | "island_radius_px",
+    value: number | null,
+  ) => {
+    if (!settings) {
+      return;
+    }
+    saveSettings({ ...settings, [key]: value });
+  };
+
   const previewTheme = (id: ThemeId | null) => {
     // Hover preview only: local to this window, never persisted and
     // never sent to the island — set_settings stays out of it.
@@ -782,7 +843,7 @@ function SettingsView() {
 
   const resetToDefaults = () => {
     // Backend defaults (settings.rs defaults()): theme neon-glass,
-    // auto-hide off, always-on-top on.
+    // auto-hide off, always-on-top on, blur and radius unset (theme).
     applyTheme("neon-glass");
     if (settings) {
       saveSettings({
@@ -790,6 +851,8 @@ function SettingsView() {
         theme: "neon-glass",
         auto_hide_taskbar: false,
         always_on_top: true,
+        island_blur_px: null,
+        island_radius_px: null,
       });
     }
   };
@@ -885,6 +948,93 @@ function SettingsView() {
         >
           {settings ? onOff(settings.always_on_top) : "—"}
         </button>
+      </div>
+      <h2 className="settings-section-title">Island style</h2>
+      <p className="settings-section-desc">
+        Blur and corner radius override the theme defaults — set them
+        back to Default to follow the theme again.
+      </p>
+      <div className="settings-slider-row">
+        <div className="settings-row-text">
+          <span>Island blur</span>
+          <span className="settings-row-desc">
+            {settings?.island_blur_px != null
+              ? `Override: ${settings.island_blur_px} px.`
+              : `Theme default: ${themeBlurPx()} px.`}
+          </span>
+        </div>
+        <div className="settings-slider-line">
+          <input
+            type="range"
+            className="settings-slider"
+            min={ISLAND_STYLE_MIN_PX}
+            max={ISLAND_STYLE_MAX_PX}
+            step={1}
+            value={settings?.island_blur_px ?? themeBlurPx()}
+            disabled={!settings}
+            aria-label="Island blur in pixels"
+            onChange={(event) =>
+              setStyleField(
+                "island_blur_px",
+                clampStylePx(Number(event.target.value)),
+              )
+            }
+          />
+          <span className="settings-slider-value">
+            {settings?.island_blur_px != null
+              ? `${settings.island_blur_px} px`
+              : "Default"}
+          </span>
+          <button
+            type="button"
+            className="mini-btn"
+            disabled={!settings || settings?.island_blur_px == null}
+            onClick={() => setStyleField("island_blur_px", null)}
+          >
+            Default
+          </button>
+        </div>
+      </div>
+      <div className="settings-slider-row">
+        <div className="settings-row-text">
+          <span>Corner radius</span>
+          <span className="settings-row-desc">
+            {settings?.island_radius_px != null
+              ? `Override: ${settings.island_radius_px} px.`
+              : `Theme default: ${ISLAND_RADIUS_DEFAULT_PX} px.`}
+          </span>
+        </div>
+        <div className="settings-slider-line">
+          <input
+            type="range"
+            className="settings-slider"
+            min={ISLAND_STYLE_MIN_PX}
+            max={ISLAND_STYLE_MAX_PX}
+            step={1}
+            value={settings?.island_radius_px ?? ISLAND_RADIUS_DEFAULT_PX}
+            disabled={!settings}
+            aria-label="Island corner radius in pixels"
+            onChange={(event) =>
+              setStyleField(
+                "island_radius_px",
+                clampStylePx(Number(event.target.value)),
+              )
+            }
+          />
+          <span className="settings-slider-value">
+            {settings?.island_radius_px != null
+              ? `${settings.island_radius_px} px`
+              : "Default"}
+          </span>
+          <button
+            type="button"
+            className="mini-btn"
+            disabled={!settings || settings?.island_radius_px == null}
+            onClick={() => setStyleField("island_radius_px", null)}
+          >
+            Default
+          </button>
+        </div>
       </div>
       <div className="settings-row">
         <span>

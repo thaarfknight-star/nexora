@@ -359,6 +359,34 @@ body,
   margin-top: 4px;
 }
 
+.settings-slider-row {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-slider-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--island-accent);
+}
+
+.settings-slider-value {
+  font-size: 12px;
+  color: var(--island-subtext);
+  flex: none;
+  min-width: 52px;
+  text-align: right;
+}
+
 /* Settings window (label "settings"): a plain centered column that
    follows the active theme, reusing the island's swatches/buttons. */
 .settings-shell {
