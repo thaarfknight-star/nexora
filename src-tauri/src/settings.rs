@@ -15,6 +15,26 @@ fn default_theme() -> String {
     "neon-glass".into()
 }
 
+fn default_clock_24h() -> bool {
+    true
+}
+
+fn default_date_format() -> String {
+    "short".into()
+}
+
+fn default_poll_interval_secs() -> u64 {
+    3
+}
+
+fn default_stats_speed_unit() -> String {
+    "auto".into()
+}
+
+fn default_stats_percent_style() -> String {
+    "with".into()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NexoraSettings {
     #[serde(default)]
@@ -30,6 +50,24 @@ pub struct NexoraSettings {
     /// Island corner radius in px; same `None`/`Some` meaning as blur.
     #[serde(default)]
     pub island_radius_px: Option<u8>,
+    /// Clock in 24-hour format (`false` is 12-hour).
+    #[serde(default = "default_clock_24h")]
+    pub clock_24h: bool,
+    /// Clock shows seconds.
+    #[serde(default)]
+    pub show_seconds: bool,
+    /// Date format: `"short"` or `"full"`.
+    #[serde(default = "default_date_format")]
+    pub date_format: String,
+    /// How often system stats are polled, in seconds.
+    #[serde(default = "default_poll_interval_secs")]
+    pub poll_interval_secs: u64,
+    /// Stats speed unit: `"auto"`, `"kb"` or `"mb"`.
+    #[serde(default = "default_stats_speed_unit")]
+    pub stats_speed_unit: String,
+    /// Stats percent style: `"with"` shows the `%` sign, `"without"` hides it.
+    #[serde(default = "default_stats_percent_style")]
+    pub stats_percent_style: String,
 }
 
 impl Default for NexoraSettings {
@@ -45,6 +83,12 @@ pub fn defaults() -> NexoraSettings {
         theme: "neon-glass".into(),
         island_blur_px: None,
         island_radius_px: None,
+        clock_24h: true,
+        show_seconds: false,
+        date_format: "short".into(),
+        poll_interval_secs: 3,
+        stats_speed_unit: "auto".into(),
+        stats_percent_style: "with".into(),
     }
 }
 
@@ -169,6 +213,12 @@ mod tests {
             theme: "liquid-glass".into(),
             island_blur_px: Some(12),
             island_radius_px: Some(24),
+            clock_24h: false,
+            show_seconds: true,
+            date_format: "full".into(),
+            poll_interval_secs: 5,
+            stats_speed_unit: "mb".into(),
+            stats_percent_style: "without".into(),
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
         assert_eq!(load_from_dir(&dir), settings);
@@ -198,6 +248,12 @@ mod tests {
                 theme: "sunset".into(),
                 island_blur_px: None,
                 island_radius_px: None,
+                clock_24h: true,
+                show_seconds: false,
+                date_format: "short".into(),
+                poll_interval_secs: 3,
+                stats_speed_unit: "auto".into(),
+                stats_percent_style: "with".into(),
             }
         );
         let _ = fs::remove_dir_all(&dir);
@@ -221,6 +277,12 @@ mod tests {
             theme: "   ".into(),
             island_blur_px: None,
             island_radius_px: None,
+            clock_24h: true,
+            show_seconds: false,
+            date_format: "short".into(),
+            poll_interval_secs: 3,
+            stats_speed_unit: "auto".into(),
+            stats_percent_style: "with".into(),
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
         assert_eq!(load_from_dir(&dir).theme, "neon-glass");
