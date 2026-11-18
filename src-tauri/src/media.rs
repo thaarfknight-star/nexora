@@ -18,6 +18,10 @@
 //!   (`GetThumbnailAsync`): the bytes are returned as a `data:` URI in
 //!   `MediaInfo.cover_art` (empty when the session has no thumbnail). The
 //!   frontend uses it directly as the `<img>` source.
+//! - The source app's icon comes from the session's AUMID: the package
+//!   family name (the part before `!`) is matched against the installed
+//!   packages and the package logo file is read from the install folder.
+//!   Anything missing means the empty string, never a substitute icon.
 //! - Transport commands are separate play and pause (DEVagent's confirmed
 //!   names): `media_play`, `media_pause`, `media_next`, `media_previous`.
 //!   This module exposes the matching `play` / `pause` / `next` /
@@ -30,12 +34,16 @@ use serde::Serialize;
 #[cfg(target_os = "windows")]
 use windows::{
     core::{Result as WinResult, HSTRING},
+    ApplicationModel::Package,
+    Foundation::Uri,
+    Management::Deployment::PackageManager,
     Media::Control::{
         GlobalSystemMediaTransportControlsSession,
         GlobalSystemMediaTransportControlsSessionManager,
         GlobalSystemMediaTransportControlsSessionMediaProperties,
         GlobalSystemMediaTransportControlsSessionPlaybackStatus,
     },
+    Storage::PathIO,
     Storage::Streams::DataReader,
     Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED},
 };
@@ -50,6 +58,7 @@ pub struct MediaInfo {
     pub artist: String,
     pub album: String,
     pub source_app: String,
+    pub source_icon: String,
     pub playback_status: String,
     pub cover_art: String,
 }
@@ -62,6 +71,7 @@ impl Default for MediaInfo {
             artist: "Nexora".into(),
             album: String::new(),
             source_app: String::new(),
+            source_icon: String::new(),
             playback_status: "none".into(),
             cover_art: String::new(),
         }
@@ -101,13 +111,16 @@ pub async fn now_playing() -> MediaInfo {
             String::new(),
         ),
     };
+    let source_app = hstring_or(session.SourceAppUserModelId(), "");
+    let source_icon = read_source_icon(&source_app).await;
     MediaInfo {
         playing: is_playing(status),
         title,
         artist,
         album,
         cover_art,
-        source_app: hstring_or(session.SourceAppUserModelId(), ""),
+        source_app,
+        source_icon,
         playback_status: status_label(status).to_string(),
     }
 }
@@ -307,6 +320,145 @@ fn is_playing(status: GlobalSystemMediaTransportControlsSessionPlaybackStatus) -
     status == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing
 }
 
+/// The source app's icon, as a `data:` URI the frontend uses as the
+/// `<img>` source in the media card. The icon comes from the session's
+/// AUMID: the package family name (the part before `!`) is matched
+/// against the installed packages, and the package logo file is read
+/// from the package's install folder. Anything missing — no AUMID, no
+/// package, no logo file — means the empty string, never a substitute
+/// icon. The logo is capped at 1 MiB, like the cover art.
+#[cfg(target_os = "windows")]
+async fn read_source_icon(aumid: &str) -> String {
+    let Some(family) = aumid.split('!').next().filter(|f| !f.is_empty()) else {
+        return String::new();
+    };
+    let Some(package) = find_package(family) else {
+        return String::new();
+    };
+    let Ok(uri) = package.Logo() else {
+        return String::new();
+    };
+    let Ok(path) = logo_file_path(&package, &uri) else {
+        return String::new();
+    };
+    for candidate in logo_candidates(&path) {
+        if let Some(bytes) = read_file_bytes(&candidate).await {
+            return icon_data_uri(&bytes, &candidate);
+        }
+    }
+    String::new()
+}
+
+/// The installed package whose family name matches, if any. Win32 apps
+/// installed the classic way have no package, so "none" is normal.
+#[cfg(target_os = "windows")]
+fn find_package(family: &str) -> Option<Package> {
+    let packages = PackageManager::new().ok()?.FindPackages().ok()?;
+    let iterator = packages.First().ok()?;
+    while iterator.HasCurrent().unwrap_or(false) {
+        if let Ok(package) = iterator.Current() {
+            let matches = package
+                .Id()
+                .and_then(|id| id.FamilyName())
+                .map(|name| name == family)
+                .unwrap_or(false);
+            if matches {
+                return Some(package);
+            }
+        }
+        if !iterator.MoveNext().unwrap_or(false) {
+            break;
+        }
+    }
+    None
+}
+
+/// The logo file's absolute path. A `file:` URI is already a path; an
+/// `ms-appx:` URI is resolved against the package's install folder
+/// (the caller is unpackaged, so the URI scheme cannot resolve it).
+#[cfg(target_os = "windows")]
+fn logo_file_path(package: &Package, uri: &Uri) -> WinResult<String> {
+    let scheme = uri.SchemeName()?.to_string();
+    let logo_path = uri.Path()?.to_string();
+    if scheme.eq_ignore_ascii_case("file") {
+        return Ok(logo_path);
+    }
+    let folder = package.InstalledLocation()?.Path()?.to_string();
+    Ok(format!(
+        "{}\\{}",
+        folder,
+        logo_path.trim_start_matches('/').replace('/', "\\")
+    ))
+}
+
+/// Logo file candidates: the exact path first, then the scale variants
+/// AppX packages store on disk (`StoreLogo.scale-200.png` and friends).
+/// Only image extensions get variants; anything else stays exact-only.
+#[cfg(any(target_os = "windows", test))]
+fn logo_candidates(path: &str) -> Vec<String> {
+    let mut out = vec![path.to_string()];
+    let lower = path.to_ascii_lowercase();
+    if !(lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg")) {
+        return out;
+    }
+    if let Some(dot) = path.rfind('.') {
+        let (base, ext) = path.split_at(dot);
+        for scale in [
+            "scale-100",
+            "scale-125",
+            "scale-150",
+            "scale-200",
+            "scale-400",
+        ] {
+            out.push(format!("{base}.{scale}{ext}"));
+        }
+    }
+    out
+}
+
+/// The file's bytes, or `None` on any failure. Empty files and anything
+/// over 1 MiB are rejected, like the cover art.
+#[cfg(target_os = "windows")]
+async fn read_file_bytes(path: &str) -> Option<Vec<u8>> {
+    let buffer = PathIO::ReadBufferAsync(&HSTRING::from(path))
+        .ok()?
+        .await
+        .ok()?;
+    let len = buffer.Length().ok()? as usize;
+    if len == 0 || len > 1_048_576 {
+        return None;
+    }
+    let reader = DataReader::FromBuffer(&buffer).ok()?;
+    let loaded = reader.LoadAsync(len as u32).ok()?.await.ok()?;
+    if loaded as usize != len {
+        return None;
+    }
+    let mut bytes = vec![0u8; len];
+    reader.ReadBytes(&mut bytes).ok()?;
+    Some(bytes)
+}
+
+/// Build the `data:` URI the frontend uses as the `<img>` source for the
+/// source app's icon. Empty bytes mean "no icon" and stay the empty
+/// string; the MIME type comes from the file extension and defaults to
+/// PNG, the format package logos almost always use.
+#[cfg(any(target_os = "windows", test))]
+fn icon_data_uri(bytes: &[u8], path: &str) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+    let lower = path.to_ascii_lowercase();
+    let mime = if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        "image/jpeg"
+    } else {
+        "image/png"
+    };
+    format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,6 +489,7 @@ mod tests {
             "playing" | "paused" | "stopped" | "closed" | "changing" | "none"
         ));
         assert!(info.cover_art.is_empty() || info.cover_art.starts_with("data:image/"));
+        assert!(info.source_icon.is_empty() || info.source_icon.starts_with("data:image/"));
     }
 
     #[test]
@@ -353,6 +506,42 @@ mod tests {
         );
     }
 
+    #[test]
+    fn icon_data_uri_builds_a_usable_img_source() {
+        assert_eq!(icon_data_uri(&[], "logo.png"), "");
+        assert_eq!(
+            icon_data_uri(b"hi", "logo.png"),
+            "data:image/png;base64,aGk="
+        );
+        assert_eq!(
+            icon_data_uri(b"hi", "logo.jpg"),
+            "data:image/jpeg;base64,aGk="
+        );
+        assert_eq!(
+            icon_data_uri(b"hi", "logo.unknown"),
+            "data:image/png;base64,aGk="
+        );
+    }
+
+    #[test]
+    fn logo_candidates_try_the_exact_path_first_then_scales() {
+        assert_eq!(
+            logo_candidates("C:\\pkg\\StoreLogo.png"),
+            vec![
+                "C:\\pkg\\StoreLogo.png",
+                "C:\\pkg\\StoreLogo.scale-100.png",
+                "C:\\pkg\\StoreLogo.scale-125.png",
+                "C:\\pkg\\StoreLogo.scale-150.png",
+                "C:\\pkg\\StoreLogo.scale-200.png",
+                "C:\\pkg\\StoreLogo.scale-400.png",
+            ]
+        );
+        assert_eq!(
+            logo_candidates("C:\\pkg\\readme.txt"),
+            vec!["C:\\pkg\\readme.txt"]
+        );
+    }
+
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn fallback_reports_no_media() {
@@ -362,6 +551,7 @@ mod tests {
         assert_eq!(info.artist, "Nexora");
         assert_eq!(info.playback_status, "none");
         assert_eq!(info.cover_art, "");
+        assert_eq!(info.source_icon, "");
     }
 
     #[cfg(not(target_os = "windows"))]

@@ -26,7 +26,7 @@ base64 = "0.22"
 # need WinAPI should extend this section's feature list (coordinated
 # through DEVagent) instead of adding a second `windows` dep.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = ["Foundation", "Media", "Media_Control", "Storage_Streams", "Win32_Foundation", "Win32_System_WinRT", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.61", features = ["ApplicationModel", "Foundation", "Management_Deployment", "Media", "Media_Control", "Storage", "Storage_Search", "Storage_Streams", "Win32_Foundation", "Win32_System_WinRT", "Win32_UI_WindowsAndMessaging"] }
 # Direct dep (default features): windows 0.61 pulls windows-future with
 # default-features off, but awaiting IAsyncOperation needs its `std`
 # feature (the IntoFuture impls). Feature unification turns it on.
