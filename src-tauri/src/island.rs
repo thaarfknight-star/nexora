@@ -14,7 +14,11 @@ pub fn current_state() -> IslandState {
     let expanded = *EXPANDED.lock().unwrap_or_else(|e| e.into_inner());
     IslandState {
         expanded,
-        mode: if expanded { "expanded".into() } else { "compact".into() },
+        mode: if expanded {
+            "expanded".into() 
+        } else { 
+            "compact".into() 
+        },
         title: "Nexora Island".into(),
     }
 }
