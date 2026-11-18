@@ -101,7 +101,7 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 8px;
+  padding: 0;
 }
 
 .island-pill {
@@ -109,7 +109,6 @@ body,
   height: 100%;
   border-radius: 28px;
   background: var(--island-bg);
-  border: 1px solid var(--island-border);
   color: var(--island-text);
   display: flex;
   align-items: center;
