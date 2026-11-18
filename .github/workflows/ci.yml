@@ -14,7 +14,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
+      - run: python .github/scripts/bootstrap.py
+      
       - uses: actions/setup-node@v4
         with:
           node-version: 24
