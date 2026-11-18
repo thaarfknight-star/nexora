@@ -12,7 +12,7 @@ fn default_always_on_top() -> bool {
 }
 
 fn default_theme() -> String {
-    "obsidian".into()
+    "neon-glass".into()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,7 +35,7 @@ pub fn defaults() -> NexoraSettings {
     NexoraSettings {
         auto_hide_taskbar: false,
         always_on_top: true,
-        theme: "obsidian".into(),
+        theme: "neon-glass".into(),
     }
 }
 
@@ -208,7 +208,7 @@ mod tests {
             theme: "   ".into(),
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
-        assert_eq!(load_from_dir(&dir).theme, "obsidian");
+        assert_eq!(load_from_dir(&dir).theme, "neon-glass");
         let _ = fs::remove_dir_all(&dir);
     }
 }
