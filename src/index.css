@@ -261,8 +261,8 @@ body,
 }
 
 /* Theme preview cards in the Settings window. Each card carries its
-   own data-theme so the mini island inside previews that theme,
-   while the card chrome follows the window's active theme. */
+   own data-theme, so the whole card — chrome and mini island alike —
+   renders in that theme. */
 .theme-cards {
   width: 100%;
   max-width: 420px;
@@ -596,20 +596,84 @@ body,
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
 }
 
 .notifications-title {
   font-size: 13px;
   font-weight: 600;
+  flex: none;
+}
+
+.notifications-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .notifications-list {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
   max-height: 180px;
   overflow-y: auto;
+}
+
+.notification-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.notification-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 2px 0;
+}
+
+.notification-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--island-subtext);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.notification-group-count {
+  font-size: 11px;
+  color: var(--island-subtext);
+}
+
+.notification-group-clear {
+  background: transparent;
+  border: none;
+  color: var(--island-subtext);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+  margin-left: auto;
+}
+
+/* Compact density: tighter items, smaller text, a little more room. */
+.notifications-panel.compact .notification-item {
+  padding: 5px 8px;
+}
+
+.notifications-panel.compact .notification-title {
+  font-size: 12px;
+}
+
+.notifications-panel.compact .notification-body {
+  font-size: 10px;
+}
+
+.notifications-panel.compact .notifications-list {
+  gap: 8px;
+  max-height: 190px;
 }
 
 .notification-item {
@@ -647,9 +711,18 @@ body,
 }
 
 .notification-time {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
   font-size: 11px;
   color: var(--island-subtext);
   flex: none;
+}
+
+.notification-clock {
+  font-size: 10px;
+  opacity: 0.8;
 }
 
 .notification-dismiss {

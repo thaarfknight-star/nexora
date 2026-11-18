@@ -111,12 +111,17 @@ function clockDate(date: Date): string {
   });
 }
 
-function notificationTime(value: number | string): string {
+function notificationDate(value: number | string): Date | null {
   const date =
     typeof value === "number"
       ? new Date(value > 1e11 ? value : value * 1000)
       : new Date(value);
-  if (Number.isNaN(date.getTime())) {
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function notificationTime(value: number | string): string {
+  const date = notificationDate(value);
+  if (!date) {
     return typeof value === "string" ? value : "—";
   }
   return date.toLocaleTimeString("en-US", {
@@ -124,6 +129,39 @@ function notificationTime(value: number | string): string {
     minute: "2-digit",
     hour12: false,
   });
+}
+
+function relativeTime(value: number | string, now: Date): string {
+  const date = notificationDate(value);
+  if (!date) {
+    return typeof value === "string" ? value : "—";
+  }
+  const seconds = Math.max(
+    0,
+    Math.floor((now.getTime() - date.getTime()) / 1000),
+  );
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  return `${Math.floor(hours / 24)} d ago`;
+}
+
+// Display labels for the notification kinds the backend emits
+// (update found, taskbar restored). Any other kind falls back to
+// its own name, capitalized, so grouping never depends on the
+// backend's exact vocabulary.
+const NOTIFICATION_KIND_LABELS: Record<string, string> = {
+  update: "Updates",
+  taskbar: "Taskbar",
+};
+
+function notificationKindLabel(kind: string): string {
+  return (
+    NOTIFICATION_KIND_LABELS[kind] ??
+    (kind ? kind.charAt(0).toUpperCase() + kind.slice(1) : "Other")
+  );
 }
 
 function IslandApp() {
@@ -142,6 +180,9 @@ function IslandApp() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [seenIds, setSeenIds] = useState<string[]>([]);
+  const [density, setDensity] = useState<"comfortable" | "compact">(
+    "comfortable",
+  );
 
   const applyTheme = (id: ThemeId) => {
     setTheme(id);
@@ -294,10 +335,44 @@ function IslandApp() {
       .catch(() => refreshNotifications());
   };
 
+  const markAllNotificationsRead = () => {
+    setSeenIds(notifications.map((item) => item.id));
+  };
+
+  const clearNotificationGroup = (kind: string) => {
+    // Per-group clear reuses the single-item dismiss command.
+    const ids = notifications
+      .filter((item) => item.kind === kind)
+      .map((item) => item.id);
+    Promise.allSettled(
+      ids.map((id) => invoke("dismiss_notification", { id })),
+    ).then(() => refreshNotifications());
+  };
+
   const currentTheme = themeById(theme);
   const unreadCount = notifications.filter(
     (item) => !seenIds.includes(item.id),
   ).length;
+  // Groups keep first-seen kind order; items keep backend order.
+  const notificationGroups: {
+    kind: string;
+    label: string;
+    items: NotificationItem[];
+  }[] = [];
+  for (const item of notifications) {
+    const existing = notificationGroups.find(
+      (group) => group.kind === item.kind,
+    );
+    if (existing) {
+      existing.items.push(item);
+    } else {
+      notificationGroups.push({
+        kind: item.kind,
+        label: notificationKindLabel(item.kind),
+        items: [item],
+      });
+    }
+  }
   const tabs: { id: IslandTab; label: string }[] = [
     { id: "media", label: "Media" },
     { id: "stats", label: "Stats" },
@@ -363,19 +438,43 @@ function IslandApp() {
           <>
             {showNotifications ? (
               <div
-                className="notifications-panel"
+                className={`notifications-panel${
+                  density === "compact" ? " compact" : ""
+                }`}
                 role="region"
                 aria-label="Notifications"
               >
                 <div className="notifications-header">
                   <span className="notifications-title">Notifications</span>
-                  <button
-                    type="button"
-                    className="mini-btn"
-                    onClick={clearNotifications}
-                  >
-                    Clear all
-                  </button>
+                  <span className="notifications-actions">
+                    <button
+                      type="button"
+                      className="mini-btn"
+                      onClick={() =>
+                        setDensity(
+                          density === "compact"
+                            ? "comfortable"
+                            : "compact",
+                        )
+                      }
+                    >
+                      {density === "compact" ? "Comfortable" : "Compact"}
+                    </button>
+                    <button
+                      type="button"
+                      className="mini-btn"
+                      onClick={markAllNotificationsRead}
+                    >
+                      Mark all read
+                    </button>
+                    <button
+                      type="button"
+                      className="mini-btn"
+                      onClick={clearNotifications}
+                    >
+                      Clear all
+                    </button>
+                  </span>
                 </div>
                 {notifications.length === 0 ? (
                   <div className="notifications-empty">
@@ -383,29 +482,59 @@ function IslandApp() {
                   </div>
                 ) : (
                   <div className="notifications-list">
-                    {notifications.map((item) => (
-                      <div key={item.id} className="notification-item">
-                        <div className="notification-text">
-                          <span className="notification-title">
-                            {item.title}
+                    {notificationGroups.map((group) => (
+                      <div
+                        key={group.kind}
+                        className="notification-group"
+                      >
+                        <div className="notification-group-header">
+                          <span className="notification-group-label">
+                            {group.label}
                           </span>
-                          {item.body && (
-                            <span className="notification-body">
-                              {item.body}
-                            </span>
-                          )}
+                          <span className="notification-group-count">
+                            {group.items.length}
+                          </span>
+                          <button
+                            type="button"
+                            className="notification-group-clear"
+                            onClick={() =>
+                              clearNotificationGroup(group.kind)
+                            }
+                            aria-label={`Clear ${group.label} notifications`}
+                          >
+                            Clear
+                          </button>
                         </div>
-                        <span className="notification-time">
-                          {notificationTime(item.timestamp)}
-                        </span>
-                        <button
-                          type="button"
-                          className="notification-dismiss"
-                          onClick={() => dismissNotification(item.id)}
-                          aria-label="Dismiss notification"
-                        >
-                          ×
-                        </button>
+                        {group.items.map((item) => (
+                          <div key={item.id} className="notification-item">
+                            <div className="notification-text">
+                              <span className="notification-title">
+                                {item.title}
+                              </span>
+                              {item.body && (
+                                <span className="notification-body">
+                                  {item.body}
+                                </span>
+                              )}
+                            </div>
+                            <span className="notification-time">
+                              <span>
+                                {relativeTime(item.timestamp, now)}
+                              </span>
+                              <span className="notification-clock">
+                                {notificationTime(item.timestamp)}
+                              </span>
+                            </span>
+                            <button
+                              type="button"
+                              className="notification-dismiss"
+                              onClick={() => dismissNotification(item.id)}
+                              aria-label="Dismiss notification"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
                       </div>
                     ))}
                   </div>
@@ -447,7 +576,16 @@ function IslandApp() {
                       <img src={emblem} alt="" />
                     </span>
                   )}
-                  <div className="media-info">
+                  <div
+                    className="media-info"
+                    title={
+                      media
+                        ? `${media.artist} — ${media.title}${
+                            media.album ? ` (${media.album})` : ""
+                          }`
+                        : "No media playing"
+                    }
+                  >
                     <span className="media-track">
                       {media ? media.title : "—"}
                     </span>
@@ -509,19 +647,40 @@ function IslandApp() {
             {tab === "stats" && (
               <div className="island-panel" role="tabpanel">
                 <div className="stat-chips">
-                  <div className="stat-chip">
+                  <div
+                    className="stat-chip"
+                    title={
+                      stats
+                        ? `CPU usage: ${stats.cpu_percent.toFixed(1)}%`
+                        : "CPU usage: —"
+                    }
+                  >
                     <span className="stat-chip-label">CPU</span>
                     <span className="stat-chip-value">
                       {stats ? `${stats.cpu_percent.toFixed(0)}%` : "—"}
                     </span>
                   </div>
-                  <div className="stat-chip">
+                  <div
+                    className="stat-chip"
+                    title={
+                      stats
+                        ? `RAM usage: ${stats.memory_percent.toFixed(1)}%`
+                        : "RAM usage: —"
+                    }
+                  >
                     <span className="stat-chip-label">RAM</span>
                     <span className="stat-chip-value">
                       {stats ? `${stats.memory_percent.toFixed(0)}%` : "—"}
                     </span>
                   </div>
-                  <div className="stat-chip">
+                  <div
+                    className="stat-chip"
+                    title={
+                      stats?.gpu_percent !== undefined
+                        ? `GPU usage: ${stats.gpu_percent.toFixed(1)}%`
+                        : "GPU usage: —"
+                    }
+                  >
                     <span className="stat-chip-label">GPU</span>
                     <span className="stat-chip-value">
                       {stats?.gpu_percent !== undefined
@@ -531,13 +690,25 @@ function IslandApp() {
                   </div>
                 </div>
                 <div className="net-speed">
-                  <span>
+                  <span
+                    title={
+                      stats?.net_up_kbps !== undefined
+                        ? `Upload: ${stats.net_up_kbps.toFixed(2)} KB/s`
+                        : "Upload: —"
+                    }
+                  >
                     ↑{" "}
                     {stats?.net_up_kbps !== undefined
                       ? `${stats.net_up_kbps.toFixed(1)} KB/s`
                       : "—"}
                   </span>
-                  <span>
+                  <span
+                    title={
+                      stats?.net_down_kbps !== undefined
+                        ? `Download: ${stats.net_down_kbps.toFixed(2)} KB/s`
+                        : "Download: —"
+                    }
+                  >
                     ↓{" "}
                     {stats?.net_down_kbps !== undefined
                       ? `${stats.net_down_kbps.toFixed(1)} KB/s`
