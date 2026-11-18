@@ -39,7 +39,14 @@ jobs:
           TAG="v${VERSION}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists"
+            if git cat-file -e "$TAG:src-tauri/src/lib.rs" 2>/dev/null; then
+              echo "Tag $TAG already exists"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -f -a "$TAG" -m "Release $TAG"
+            git push -f origin "$TAG"
+          fi
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -57,7 +64,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare-tag.outputs.tag }}
-
+      - run: python .github/scripts/bootstrap.py
+      
       - uses: actions/setup-node@v4
         with:
           node-version: 24
