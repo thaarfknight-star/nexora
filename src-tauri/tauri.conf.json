@@ -20,6 +20,14 @@
         "alwaysOnTop": true,
         "resizable": false,
         "skipTaskbar": true
+      },
+      {
+        "label": "settings",
+        "title": "Nexora Settings",
+        "width": 480,
+        "height": 600,
+        "decorations": true,
+        "visible": false
       }
     ],
     "security": {

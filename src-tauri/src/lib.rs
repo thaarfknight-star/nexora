@@ -1,4 +1,4 @@
-use tauri::Manager;
+use tauri::{AppHandle, Manager};
 
 pub mod ipc;
 pub mod island;
@@ -10,10 +10,23 @@ pub mod tray;
 pub mod updater;
 pub mod watchdog;
 
+/// Shows the Settings window (defined in `tauri.conf.json` with label
+/// `"settings"`; created hidden at startup) and focuses it. Called by
+/// the `open_settings` command and by the tray menu item.
+pub fn open_settings_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("settings") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            // NOTE: every setup hook (settings, taskbar, island,
+            // watchdog, tray) lives in this one closure; do not
+            // add a second `.setup()`.
             // Settings: load the persisted settings and apply the values
             // the backend owns (currently: always_on_top on the main
             // window). The theme is applied by the frontend, which reads
@@ -55,6 +68,7 @@ pub fn run() {
             ipc::get_tray_status,
             ipc::get_settings,
             ipc::set_settings,
+            ipc::open_settings,
             ipc::check_updates,
             ipc::download_and_install_update,
         ])

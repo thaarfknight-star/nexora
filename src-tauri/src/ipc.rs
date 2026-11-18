@@ -1,3 +1,5 @@
+use tauri::Emitter;
+
 use crate::{island, media, settings, stats, taskbar, tray, updater, watchdog};
 
 #[tauri::command]
@@ -73,7 +75,16 @@ pub fn set_settings(
     app: tauri::AppHandle,
     settings: settings::NexoraSettings,
 ) -> Result<settings::NexoraSettings, String> {
-    settings::update(&app, settings).map_err(|e| e.to_string())
+    let stored = settings::update(&app, settings).map_err(|e| e.to_string())?;
+    // Tell every window the settings changed, so the island applies the
+    // new theme at once instead of waiting for a restart.
+    let _ = app.emit("settings-changed", &stored);
+    Ok(stored)
+}
+
+#[tauri::command]
+pub fn open_settings(app: tauri::AppHandle) {
+    crate::open_settings_window(&app);
 }
 
 #[tauri::command]

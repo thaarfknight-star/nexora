@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import emblem from "./assets/emblem.svg";
 import wordmark from "./assets/wordmark.png";
+import gear from "./assets/gear.png";
 import {
   THEMES,
   themeById,
@@ -45,17 +48,12 @@ interface WatchdogStatus {
   explorer_ok: boolean;
 }
 
-interface TrayStatus {
-  active: boolean;
-  items: number;
-}
-
 interface UpdateInfo {
   current_version: string;
   update_available: boolean;
 }
 
-type IslandTab = "media" | "stats" | "settings";
+type IslandTab = "media" | "stats";
 
 const STORAGE_KEY = "nexora-theme";
 
@@ -80,7 +78,7 @@ function onOff(value: boolean): string {
   return value ? "On" : "Off";
 }
 
-export function App() {
+function IslandApp() {
   const [state, setState] = useState<IslandState>({
     expanded: false,
     mode: "compact",
@@ -88,13 +86,10 @@ export function App() {
   });
   const [theme, setTheme] = useState<ThemeId>("obsidian");
   const [tab, setTab] = useState<IslandTab>("media");
-  const [settings, setSettings] = useState<NexoraSettings | null>(null);
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [media, setMedia] = useState<MediaInfo | null>(null);
   const [taskbar, setTaskbar] = useState<TaskbarStatus | null>(null);
   const [watchdog, setWatchdog] = useState<WatchdogStatus | null>(null);
-  const [tray, setTray] = useState<TrayStatus | null>(null);
-  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
 
   const applyTheme = (id: ThemeId) => {
     setTheme(id);
@@ -137,31 +132,30 @@ export function App() {
     invoke<WatchdogStatus>("get_watchdog_status")
       .then(setWatchdog)
       .catch(() => {});
-    invoke<TrayStatus>("get_tray_status")
-      .then(setTray)
-      .catch(() => {});
-    // Settings are shown read-only; the saved theme is never overridden
-    // here (localStorage wins, see the mount effect).
-    invoke<NexoraSettings>("get_settings")
-      .then(setSettings)
-      .catch(() => {});
-    invoke<UpdateInfo>("check_updates")
-      .then(setUpdateInfo)
-      .catch(() => {});
   };
 
   useEffect(() => {
     // Saved choice wins; the backend default is the fallback.
     const saved = readSavedTheme();
     invoke<NexoraSettings>("get_settings")
-      .then((loaded) => {
-        setSettings(loaded);
-        applyTheme(themeOrDefault(saved ?? loaded.theme));
-      })
+      .then((loaded) => applyTheme(themeOrDefault(saved ?? loaded.theme)))
       .catch(() => applyTheme(themeOrDefault(saved)));
     invoke<IslandState>("get_island_state")
       .then(setState)
       .catch(() => {});
+    // The Settings window persists a new theme with set_settings, which
+    // emits settings-changed — apply it here at once, no restart.
+    let unlisten: (() => void) | undefined;
+    listen<NexoraSettings>("settings-changed", (event) => {
+      applyTheme(themeOrDefault(event.payload.theme));
+    })
+      .then((stop) => {
+        unlisten = stop;
+      })
+      .catch(() => {});
+    return () => {
+      unlisten?.();
+    };
     // Runs once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -193,17 +187,16 @@ export function App() {
       );
   };
 
-  const checkForUpdates = () => {
-    invoke<UpdateInfo>("check_updates")
-      .then(setUpdateInfo)
-      .catch(() => {});
+  const openSettings = () => {
+    // The command lives on this branch (EAgent5); before it merges to
+    // main the invoke fails silently and the island stays as-is.
+    invoke("open_settings").catch(() => {});
   };
 
   const currentTheme = themeById(theme);
   const tabs: { id: IslandTab; label: string }[] = [
     { id: "media", label: "Media" },
     { id: "stats", label: "Stats" },
-    { id: "settings", label: "Settings" },
   ];
 
   return (
@@ -228,6 +221,15 @@ export function App() {
               </div>
             </div>
           </div>
+          <button
+            type="button"
+            className="gear-btn"
+            onClick={openSettings}
+            title="Open Settings"
+            aria-label="Open Settings"
+          >
+            <img src={gear} alt="" width={28} height={28} />
+          </button>
           <button className="island-btn" onClick={toggle} type="button">
             {state.expanded ? "Collapse" : "Expand"}
           </button>
@@ -329,69 +331,146 @@ export function App() {
                 </div>
               </div>
             )}
-            {tab === "settings" && (
-              <div className="island-panel" role="tabpanel">
-                <img
-                  className="island-wordmark"
-                  src={wordmark}
-                  alt="Nexora"
-                />
-                <div
-                  className="island-themes"
-                  role="group"
-                  aria-label="Island theme"
-                >
-                  <span className="theme-label">Theme:</span>
-                  {THEMES.map((candidate) => (
-                    <button
-                      key={candidate.id}
-                      type="button"
-                      className={`theme-swatch${
-                        candidate.id === theme ? " selected" : ""
-                      }`}
-                      style={{ background: candidate.swatch }}
-                      title={`${candidate.name} — ${candidate.description}`}
-                      aria-label={candidate.name}
-                      aria-pressed={candidate.id === theme}
-                      onClick={() => applyTheme(candidate.id)}
-                    />
-                  ))}
-                </div>
-                <div className="panel-line">
-                  <span>
-                    Always on top:{" "}
-                    {settings ? onOff(settings.always_on_top) : "—"} ·
-                    Auto-hide taskbar:{" "}
-                    {settings ? onOff(settings.auto_hide_taskbar) : "—"}
-                  </span>
-                  <span>
-                    Tray items: {tray ? tray.items : "—"} · v
-                    {updateInfo ? updateInfo.current_version : "—"}
-                  </span>
-                </div>
-                <div className="panel-line">
-                  <span>
-                    {updateInfo
-                      ? updateInfo.update_available
-                        ? "Update available"
-                        : "No update available"
-                      : "—"}
-                  </span>
-                  <button
-                    type="button"
-                    className="mini-btn"
-                    onClick={checkForUpdates}
-                  >
-                    Check for updates
-                  </button>
-                </div>
-              </div>
-            )}
           </>
         )}
       </section>
     </main>
   );
+}
+
+function SettingsView() {
+  const [settings, setSettings] = useState<NexoraSettings | null>(null);
+  const [theme, setTheme] = useState<ThemeId>("obsidian");
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+
+  const applyTheme = (id: ThemeId) => {
+    setTheme(id);
+    document.documentElement.dataset.theme = id;
+    saveTheme(id);
+  };
+
+  const saveSettings = (next: NexoraSettings) => {
+    invoke<NexoraSettings>("set_settings", { settings: next })
+      .then(setSettings)
+      .catch(() => {});
+  };
+
+  const pickTheme = (id: ThemeId) => {
+    applyTheme(id);
+    // Persist through the backend so set_settings emits
+    // settings-changed and the island applies the theme at once.
+    if (settings) {
+      saveSettings({ ...settings, theme: id });
+    }
+  };
+
+  const toggleSetting = (key: "auto_hide_taskbar" | "always_on_top") => {
+    if (!settings) {
+      return;
+    }
+    saveSettings({ ...settings, [key]: !settings[key] });
+  };
+
+  const checkForUpdates = () => {
+    invoke<UpdateInfo>("check_updates")
+      .then(setUpdateInfo)
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    const saved = readSavedTheme();
+    invoke<NexoraSettings>("get_settings")
+      .then((loaded) => {
+        setSettings(loaded);
+        applyTheme(themeOrDefault(saved ?? loaded.theme));
+      })
+      .catch(() => applyTheme(themeOrDefault(saved)));
+    invoke<UpdateInfo>("check_updates")
+      .then(setUpdateInfo)
+      .catch(() => {});
+    // Runs once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <main className="settings-shell">
+      <img className="settings-wordmark" src={wordmark} alt="Nexora" />
+      <h1 className="settings-title">Settings</h1>
+      <div className="island-themes" role="group" aria-label="Nexora theme">
+        <span className="theme-label">Theme:</span>
+        {THEMES.map((candidate) => (
+          <button
+            key={candidate.id}
+            type="button"
+            className={`theme-swatch${
+              candidate.id === theme ? " selected" : ""
+            }`}
+            style={{ background: candidate.swatch }}
+            title={`${candidate.name} — ${candidate.description}`}
+            aria-label={candidate.name}
+            aria-pressed={candidate.id === theme}
+            onClick={() => pickTheme(candidate.id)}
+          />
+        ))}
+      </div>
+      <div className="settings-row">
+        <span>Auto-hide taskbar</span>
+        <button
+          type="button"
+          className="mini-btn"
+          onClick={() => toggleSetting("auto_hide_taskbar")}
+        >
+          {settings ? onOff(settings.auto_hide_taskbar) : "—"}
+        </button>
+      </div>
+      <div className="settings-row">
+        <span>Always on top</span>
+        <button
+          type="button"
+          className="mini-btn"
+          onClick={() => toggleSetting("always_on_top")}
+        >
+          {settings ? onOff(settings.always_on_top) : "—"}
+        </button>
+      </div>
+      <div className="settings-row">
+        <span>
+          {updateInfo
+            ? updateInfo.update_available
+              ? "Update available"
+              : "No update available"
+            : "—"}
+        </span>
+        <button type="button" className="mini-btn" onClick={checkForUpdates}>
+          Check for updates
+        </button>
+      </div>
+      <div className="settings-version">
+        Nexora v{updateInfo ? updateInfo.current_version : "—"}
+      </div>
+    </main>
+  );
+}
+
+export function App() {
+  const [windowLabel, setWindowLabel] = useState<string | null>(null);
+
+  useEffect(() => {
+    // The settings window is opened by the backend with label "settings"
+    // (EAgent5); every other window renders the island.
+    try {
+      setWindowLabel(getCurrentWindow().label);
+    } catch {
+      setWindowLabel("main");
+    }
+    // Runs once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (windowLabel === null) {
+    return null;
+  }
+  return windowLabel === "settings" ? <SettingsView /> : <IslandApp />;
 }
 
 export default App;

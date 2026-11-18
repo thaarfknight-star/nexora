@@ -41,7 +41,7 @@
 
 ### Themes
 
-Six built-in themes, switchable from the island's Settings tab and persisted across restarts:
+Six built-in themes, switchable from the separate Settings window and persisted across restarts:
 
 | Theme | Style |
 | --- | --- |
@@ -60,7 +60,7 @@ Six built-in themes, switchable from the island's Settings tab and persisted acr
 ### Auto-update engine
 
 - Built-in updater powered by `tauri-plugin-updater`, fed by the rolling `update-feed` release.
-- Check for updates from the Settings tab; downloads are verified against the release signature before install.
+- Check for updates from the Settings window; downloads are verified against the release signature before install.
 - Every release ships signed installers (`.exe` and `.msi`, each with a `.sig` sidecar).
 
 ## Installation
@@ -80,7 +80,7 @@ Updates arrive automatically: Nexora checks the update feed and installs signed 
 - **Expand / collapse:** click the island.
 - **Media tab:** see what's playing and control playback (previous, play/pause, next).
 - **Stats tab:** live CPU/RAM plus taskbar, Watchdog, and Explorer status.
-- **Settings tab:** pick a theme, toggle auto-hide taskbar, check for updates, and see the app version.
+- **Settings window:** pick a theme, toggle auto-hide taskbar, check for updates, and see the app version.
 - **Tray:** left-click toggles the island; the menu offers Show/Hide and Quit (Quit restores the taskbar).
 
 ## Architecture
