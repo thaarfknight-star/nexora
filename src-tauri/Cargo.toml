@@ -1,0 +1,19 @@
+[package]
+name = "nexora"
+version = "0.1.0"
+description = "Floating Dynamic Island shell replacement for Windows 10/11"
+authors = ["Taha Arefi"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+
+[lib]
+name = "nexora_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
