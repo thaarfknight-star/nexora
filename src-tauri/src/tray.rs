@@ -9,10 +9,12 @@ use tauri::{
 
 /// Menu item ids.
 pub const MENU_SHOW_HIDE: &str = "show_hide";
+pub const MENU_SETTINGS: &str = "settings";
 pub const MENU_QUIT: &str = "quit";
 
-/// Number of entries in the tray menu (toggle, separator, quit).
-pub const MENU_ITEM_COUNT: usize = 3;
+/// Number of entries in the tray menu (toggle, separator, settings,
+/// separator, quit).
+pub const MENU_ITEM_COUNT: usize = 5;
 
 static TRAY_BUILT: AtomicBool = AtomicBool::new(false);
 
@@ -61,6 +63,7 @@ pub fn quit(app: &AppHandle) {
 fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     match event.id().0.as_str() {
         MENU_SHOW_HIDE => toggle_main_window(app),
+        MENU_SETTINGS => crate::open_settings_window(app),
         MENU_QUIT => quit(app),
         _ => {}
     }
@@ -70,10 +73,14 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
 /// hook in `lib.rs`.
 /// - Left-click toggles the island window; right-click opens the menu.
 /// - "Show / Hide Nexora" toggles the island window.
+/// - "Settings" opens the standalone Settings window (see
+///   `crate::open_settings_window`).
 /// - "Quit Nexora" restores the taskbar and exits.
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let menu = MenuBuilder::new(app)
         .text(MENU_SHOW_HIDE, "Show / Hide Nexora")
+        .separator()
+        .text(MENU_SETTINGS, "Settings")
         .separator()
         .text(MENU_QUIT, "Quit Nexora")
         .build()?;
