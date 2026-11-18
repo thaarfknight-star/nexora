@@ -15,9 +15,9 @@ pub fn current_state() -> IslandState {
     IslandState {
         expanded,
         mode: if expanded {
-            "expanded".into() 
-        } else { 
-             "compact".into() 
+            "expanded".into()
+        } else {
+            "compact".into()
         },
         title: "Nexora Island".into(),
     }
