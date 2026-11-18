@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import emblem from "./assets/emblem.svg";
 import wordmark from "./assets/wordmark.png";
 import gear from "./assets/gear.png";
+import bell from "./assets/bell.png";
 import {
   THEMES,
   themeById,
@@ -56,6 +57,15 @@ interface WatchdogStatus {
   explorer_ok: boolean;
 }
 
+interface NotificationItem {
+  id: string;
+  title: string;
+  body: string;
+  kind: string;
+  /** Unix timestamp (seconds or milliseconds) or an ISO string. */
+  timestamp: number | string;
+}
+
 interface UpdateInfo {
   current_version: string;
   update_available: boolean;
@@ -101,6 +111,21 @@ function clockDate(date: Date): string {
   });
 }
 
+function notificationTime(value: number | string): string {
+  const date =
+    typeof value === "number"
+      ? new Date(value > 1e11 ? value : value * 1000)
+      : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return typeof value === "string" ? value : "—";
+  }
+  return date.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 function IslandApp() {
   const [state, setState] = useState<IslandState>({
     expanded: false,
@@ -114,6 +139,9 @@ function IslandApp() {
   const [taskbar, setTaskbar] = useState<TaskbarStatus | null>(null);
   const [watchdog, setWatchdog] = useState<WatchdogStatus | null>(null);
   const [now, setNow] = useState(() => new Date());
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [seenIds, setSeenIds] = useState<string[]>([]);
 
   const applyTheme = (id: ThemeId) => {
     setTheme(id);
@@ -147,9 +175,18 @@ function IslandApp() {
       .catch(() => refreshMedia());
   };
 
+  const refreshNotifications = () => {
+    // The backend lands with EAgent5's feat/notifications; until then
+    // the invoke fails and the center stays empty — never fake items.
+    invoke<NotificationItem[]>("get_notifications")
+      .then(setNotifications)
+      .catch(() => setNotifications([]));
+  };
+
   const refreshAll = () => {
     refreshStats();
     refreshMedia();
+    refreshNotifications();
     invoke<TaskbarStatus>("get_taskbar_status")
       .then(setTaskbar)
       .catch(() => {});
@@ -177,8 +214,19 @@ function IslandApp() {
         unlisten = stop;
       })
       .catch(() => {});
+    // New notifications arrive as notifications-changed; re-read the
+    // list so the badge stays live. Absent backend, nothing fires.
+    let unlistenNotifications: (() => void) | undefined;
+    listen("notifications-changed", () => {
+      refreshNotifications();
+    })
+      .then((stop) => {
+        unlistenNotifications = stop;
+      })
+      .catch(() => {});
     return () => {
       unlisten?.();
+      unlistenNotifications?.();
     };
     // Runs once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -192,6 +240,7 @@ function IslandApp() {
     const id = window.setInterval(() => {
       refreshStats();
       refreshMedia();
+      refreshNotifications();
     }, 3000);
     const clockId = window.setInterval(() => setNow(new Date()), 1000);
     return () => {
@@ -221,7 +270,34 @@ function IslandApp() {
     invoke("open_settings").catch(() => {});
   };
 
+  const toggleNotifications = () => {
+    if (!state.expanded) {
+      // The center only renders expanded — open the island first.
+      toggle();
+    }
+    if (!showNotifications) {
+      refreshNotifications();
+      setSeenIds(notifications.map((item) => item.id));
+    }
+    setShowNotifications((prev) => !prev);
+  };
+
+  const dismissNotification = (id: string) => {
+    invoke("dismiss_notification", { id })
+      .then(() => refreshNotifications())
+      .catch(() => refreshNotifications());
+  };
+
+  const clearNotifications = () => {
+    invoke("clear_notifications")
+      .then(() => refreshNotifications())
+      .catch(() => refreshNotifications());
+  };
+
   const currentTheme = themeById(theme);
+  const unreadCount = notifications.filter(
+    (item) => !seenIds.includes(item.id),
+  ).length;
   const tabs: { id: IslandTab; label: string }[] = [
     { id: "media", label: "Media" },
     { id: "stats", label: "Stats" },
@@ -257,6 +333,21 @@ function IslandApp() {
           )}
           <button
             type="button"
+            className="bell-btn"
+            onClick={toggleNotifications}
+            title="Notifications"
+            aria-label="Notifications"
+            aria-expanded={showNotifications}
+          >
+            <img src={bell} alt="" width={28} height={28} />
+            {unreadCount > 0 && (
+              <span className="bell-badge">
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
             className="gear-btn"
             onClick={openSettings}
             title="Open Settings"
@@ -270,6 +361,58 @@ function IslandApp() {
         </div>
         {state.expanded && (
           <>
+            {showNotifications ? (
+              <div
+                className="notifications-panel"
+                role="region"
+                aria-label="Notifications"
+              >
+                <div className="notifications-header">
+                  <span className="notifications-title">Notifications</span>
+                  <button
+                    type="button"
+                    className="mini-btn"
+                    onClick={clearNotifications}
+                  >
+                    Clear all
+                  </button>
+                </div>
+                {notifications.length === 0 ? (
+                  <div className="notifications-empty">
+                    No notifications
+                  </div>
+                ) : (
+                  <div className="notifications-list">
+                    {notifications.map((item) => (
+                      <div key={item.id} className="notification-item">
+                        <div className="notification-text">
+                          <span className="notification-title">
+                            {item.title}
+                          </span>
+                          {item.body && (
+                            <span className="notification-body">
+                              {item.body}
+                            </span>
+                          )}
+                        </div>
+                        <span className="notification-time">
+                          {notificationTime(item.timestamp)}
+                        </span>
+                        <button
+                          type="button"
+                          className="notification-dismiss"
+                          onClick={() => dismissNotification(item.id)}
+                          aria-label="Dismiss notification"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
             <div
               className="island-tabs"
               role="tablist"
@@ -417,6 +560,8 @@ function IslandApp() {
                   </span>
                 </div>
               </div>
+            )}
+              </>
             )}
           </>
         )}
