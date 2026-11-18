@@ -27,6 +27,18 @@ interface NexoraSettings {
   island_blur_px: number | null;
   /** Island corner-radius override in px; null means the theme default. */
   island_radius_px: number | null;
+  /** Clock in 24-hour format (`false` is 12-hour). */
+  clock_24h: boolean;
+  /** Clock shows seconds. */
+  show_seconds: boolean;
+  /** Date format: "short" (Nov 16) or "full" (Sun, Nov 16, 2026). */
+  date_format: string;
+  /** Stats/media refresh interval in seconds. */
+  poll_interval_secs: number;
+  /** Speed unit: "auto" (MB/s above 1024 KB/s), "kb" or "mb". */
+  stats_speed_unit: string;
+  /** Percent style: "with" (24%) or "without" (24). */
+  stats_percent_style: string;
 }
 
 interface SystemStats {
@@ -100,19 +112,47 @@ function onOff(value: boolean): string {
   return value ? "On" : "Off";
 }
 
-function clockTime(date: Date): string {
+function clockTime(date: Date, use24h: boolean, showSeconds: boolean): string {
   return date.toLocaleTimeString("en-US", {
     hour: "2-digit",
     minute: "2-digit",
-    hour12: false,
+    ...(showSeconds ? { second: "2-digit" } : {}),
+    hour12: !use24h,
   });
 }
 
-function clockDate(date: Date): string {
+function clockDate(date: Date, format: string): string {
+  if (format === "full") {
+    return date.toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  }
   return date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
   });
+}
+
+// Refresh interval the poll slider offers (seconds); a stored value
+// outside it is clamped, never faster than 1s.
+function clampPollSecs(value: number): number {
+  return Math.min(5, Math.max(1, Math.round(value)));
+}
+
+function formatSpeed(kbps: number, unit: string): string {
+  if (unit === "mb") return `${(kbps / 1024).toFixed(1)} MB/s`;
+  if (unit === "kb") return `${kbps.toFixed(1)} KB/s`;
+  return kbps >= 1024
+    ? `${(kbps / 1024).toFixed(1)} MB/s`
+    : `${kbps.toFixed(1)} KB/s`;
+}
+
+function formatPercent(value: number, style: string): string {
+  const text = value.toFixed(0);
+  return style === "without" ? text : `${text}%`;
 }
 
 function notificationDate(value: number | string): Date | null {
@@ -192,6 +232,17 @@ function IslandApp() {
     blur: number | null;
     radius: number | null;
   }>({ blur: null, radius: null });
+  // Clock and performance display, from settings; the fallbacks are
+  // the backend defaults() so the island is right even before the
+  // first settings load.
+  const [displaySettings, setDisplaySettings] = useState({
+    clock24h: true,
+    showSeconds: false,
+    dateFormat: "short",
+    pollIntervalSecs: 3,
+    speedUnit: "auto",
+    percentStyle: "with",
+  });
 
   const applyTheme = (id: ThemeId) => {
     setTheme(id);
@@ -255,6 +306,14 @@ function IslandApp() {
           blur: loaded.island_blur_px ?? null,
           radius: loaded.island_radius_px ?? null,
         });
+        setDisplaySettings({
+          clock24h: loaded.clock_24h ?? true,
+          showSeconds: loaded.show_seconds ?? false,
+          dateFormat: loaded.date_format ?? "short",
+          pollIntervalSecs: clampPollSecs(loaded.poll_interval_secs ?? 3),
+          speedUnit: loaded.stats_speed_unit ?? "auto",
+          percentStyle: loaded.stats_percent_style ?? "with",
+        });
       })
       .catch(() => applyTheme(themeOrDefault(saved)));
     invoke<IslandState>("get_island_state")
@@ -268,6 +327,14 @@ function IslandApp() {
       setIslandStyle({
         blur: event.payload.island_blur_px ?? null,
         radius: event.payload.island_radius_px ?? null,
+      });
+      setDisplaySettings({
+        clock24h: event.payload.clock_24h ?? true,
+        showSeconds: event.payload.show_seconds ?? false,
+        dateFormat: event.payload.date_format ?? "short",
+        pollIntervalSecs: clampPollSecs(event.payload.poll_interval_secs ?? 3),
+        speedUnit: event.payload.stats_speed_unit ?? "auto",
+        percentStyle: event.payload.stats_percent_style ?? "with",
       });
     })
       .then((stop) => {
@@ -297,11 +364,14 @@ function IslandApp() {
       return;
     }
     refreshAll();
-    const id = window.setInterval(() => {
-      refreshStats();
-      refreshMedia();
-      refreshNotifications();
-    }, 3000);
+    const id = window.setInterval(
+      () => {
+        refreshStats();
+        refreshMedia();
+        refreshNotifications();
+      },
+      clampPollSecs(displaySettings.pollIntervalSecs) * 1000,
+    );
     const clockId = window.setInterval(() => setNow(new Date()), 1000);
     return () => {
       window.clearInterval(id);
@@ -309,7 +379,7 @@ function IslandApp() {
     };
     // Refresh helpers only use stable setters and invoke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.expanded]);
+  }, [state.expanded, displaySettings.pollIntervalSecs]);
 
   const toggle = () => {
     const next = !state.expanded;
@@ -429,8 +499,16 @@ function IslandApp() {
           </div>
           {state.expanded && (
             <div className="island-clock">
-              <div className="island-clock-time">{clockTime(now)}</div>
-              <div className="island-clock-date">{clockDate(now)}</div>
+              <div className="island-clock-time">
+                {clockTime(
+                  now,
+                  displaySettings.clock24h,
+                  displaySettings.showSeconds,
+                )}
+              </div>
+              <div className="island-clock-date">
+                {clockDate(now, displaySettings.dateFormat)}
+              </div>
             </div>
           )}
           <button
@@ -684,7 +762,12 @@ function IslandApp() {
                   >
                     <span className="stat-chip-label">CPU</span>
                     <span className="stat-chip-value">
-                      {stats ? `${stats.cpu_percent.toFixed(0)}%` : "—"}
+                      {stats
+                        ? formatPercent(
+                            stats.cpu_percent,
+                            displaySettings.percentStyle,
+                          )
+                        : "—"}
                     </span>
                   </div>
                   <div
@@ -697,7 +780,12 @@ function IslandApp() {
                   >
                     <span className="stat-chip-label">RAM</span>
                     <span className="stat-chip-value">
-                      {stats ? `${stats.memory_percent.toFixed(0)}%` : "—"}
+                      {stats
+                        ? formatPercent(
+                            stats.memory_percent,
+                            displaySettings.percentStyle,
+                          )
+                        : "—"}
                     </span>
                   </div>
                   <div
@@ -711,7 +799,10 @@ function IslandApp() {
                     <span className="stat-chip-label">GPU</span>
                     <span className="stat-chip-value">
                       {stats?.gpu_percent !== undefined
-                        ? `${stats.gpu_percent.toFixed(0)}%`
+                        ? formatPercent(
+                            stats.gpu_percent,
+                            displaySettings.percentStyle,
+                          )
                         : "—"}
                     </span>
                   </div>
@@ -726,7 +817,10 @@ function IslandApp() {
                   >
                     ↑{" "}
                     {stats?.net_up_kbps !== undefined
-                      ? `${stats.net_up_kbps.toFixed(1)} KB/s`
+                      ? formatSpeed(
+                          stats.net_up_kbps,
+                          displaySettings.speedUnit,
+                        )
                       : "—"}
                   </span>
                   <span
@@ -738,7 +832,10 @@ function IslandApp() {
                   >
                     ↓{" "}
                     {stats?.net_down_kbps !== undefined
-                      ? `${stats.net_down_kbps.toFixed(1)} KB/s`
+                      ? formatSpeed(
+                          stats.net_down_kbps,
+                          displaySettings.speedUnit,
+                        )
                       : "—"}
                   </span>
                 </div>
@@ -794,11 +891,51 @@ function SettingsView() {
     }
   };
 
-  const toggleSetting = (key: "auto_hide_taskbar" | "always_on_top") => {
+  const toggleSetting = (
+    key:
+      | "auto_hide_taskbar"
+      | "always_on_top"
+      | "clock_24h"
+      | "show_seconds",
+  ) => {
     if (!settings) {
       return;
     }
     saveSettings({ ...settings, [key]: !settings[key] });
+  };
+
+  const cycleDateFormat = () => {
+    if (!settings) {
+      return;
+    }
+    saveSettings({
+      ...settings,
+      date_format: settings.date_format === "full" ? "short" : "full",
+    });
+  };
+
+  const cycleSpeedUnit = () => {
+    if (!settings) {
+      return;
+    }
+    const next =
+      settings.stats_speed_unit === "auto"
+        ? "kb"
+        : settings.stats_speed_unit === "kb"
+          ? "mb"
+          : "auto";
+    saveSettings({ ...settings, stats_speed_unit: next });
+  };
+
+  const cyclePercentStyle = () => {
+    if (!settings) {
+      return;
+    }
+    saveSettings({
+      ...settings,
+      stats_percent_style:
+        settings.stats_percent_style === "with" ? "without" : "with",
+    });
   };
 
   // Slider range for the island style overrides (px). The backend
@@ -843,7 +980,9 @@ function SettingsView() {
 
   const resetToDefaults = () => {
     // Backend defaults (settings.rs defaults()): theme neon-glass,
-    // auto-hide off, always-on-top on, blur and radius unset (theme).
+    // auto-hide off, always-on-top on, blur and radius unset (theme),
+    // 24-hour clock, no seconds, short date, 3s poll, auto speed
+    // unit, percent with %.
     applyTheme("neon-glass");
     if (settings) {
       saveSettings({
@@ -853,6 +992,12 @@ function SettingsView() {
         always_on_top: true,
         island_blur_px: null,
         island_radius_px: null,
+        clock_24h: true,
+        show_seconds: false,
+        date_format: "short",
+        poll_interval_secs: 3,
+        stats_speed_unit: "auto",
+        stats_percent_style: "with",
       });
     }
   };
@@ -1035,6 +1180,138 @@ function SettingsView() {
             Default
           </button>
         </div>
+      </div>
+      <h2 className="settings-section-title">Clock</h2>
+      <p className="settings-section-desc">
+        How the island clock shows the time and date.
+      </p>
+      <div className="settings-row">
+        <span className="settings-row-text">
+          <span>24-hour clock</span>
+          <span className="settings-row-desc">
+            Show the time as 21:47 instead of 9:47 PM.
+          </span>
+        </span>
+        <button
+          type="button"
+          className="mini-btn"
+          onClick={() => toggleSetting("clock_24h")}
+        >
+          {settings ? onOff(settings.clock_24h) : "—"}
+        </button>
+      </div>
+      <div className="settings-row">
+        <span className="settings-row-text">
+          <span>Show seconds</span>
+          <span className="settings-row-desc">
+            Show seconds in the island clock.
+          </span>
+        </span>
+        <button
+          type="button"
+          className="mini-btn"
+          onClick={() => toggleSetting("show_seconds")}
+        >
+          {settings ? onOff(settings.show_seconds) : "—"}
+        </button>
+      </div>
+      <div className="settings-row">
+        <span className="settings-row-text">
+          <span>Date format</span>
+          <span className="settings-row-desc">
+            Short shows Nov 16; Full shows Sun, Nov 16, 2026.
+          </span>
+        </span>
+        <button
+          type="button"
+          className="mini-btn"
+          onClick={cycleDateFormat}
+          disabled={!settings}
+        >
+          {settings
+            ? settings.date_format === "full"
+              ? "Full"
+              : "Short"
+            : "—"}
+        </button>
+      </div>
+      <h2 className="settings-section-title">Performance</h2>
+      <p className="settings-section-desc">
+        How often stats and media refresh, and how the numbers look.
+      </p>
+      <div className="settings-slider-row">
+        <div className="settings-row-text">
+          <span>Refresh interval</span>
+          <span className="settings-row-desc">
+            How often stats and media refresh.
+          </span>
+        </div>
+        <div className="settings-slider-line">
+          <input
+            type="range"
+            className="settings-slider"
+            min={1}
+            max={5}
+            step={1}
+            value={settings ? clampPollSecs(settings.poll_interval_secs) : 3}
+            disabled={!settings}
+            aria-label="Refresh interval in seconds"
+            onChange={(event) =>
+              settings &&
+              saveSettings({
+                ...settings,
+                poll_interval_secs: clampPollSecs(
+                  Number(event.target.value),
+                ),
+              })
+            }
+          />
+          <span className="settings-slider-value">
+            {settings ? `${clampPollSecs(settings.poll_interval_secs)} s` : "—"}
+          </span>
+        </div>
+      </div>
+      <div className="settings-row">
+        <span className="settings-row-text">
+          <span>Speed unit</span>
+          <span className="settings-row-desc">
+            Auto switches to MB/s above 1024 KB/s.
+          </span>
+        </span>
+        <button
+          type="button"
+          className="mini-btn"
+          onClick={cycleSpeedUnit}
+          disabled={!settings}
+        >
+          {settings
+            ? settings.stats_speed_unit === "auto"
+              ? "Auto"
+              : settings.stats_speed_unit === "kb"
+                ? "KB/s"
+                : "MB/s"
+            : "—"}
+        </button>
+      </div>
+      <div className="settings-row">
+        <span className="settings-row-text">
+          <span>Percent style</span>
+          <span className="settings-row-desc">
+            Show or hide the % sign on stat chips.
+          </span>
+        </span>
+        <button
+          type="button"
+          className="mini-btn"
+          onClick={cyclePercentStyle}
+          disabled={!settings}
+        >
+          {settings
+            ? settings.stats_percent_style === "with"
+              ? "With %"
+              : "Without %"
+            : "—"}
+        </button>
       </div>
       <div className="settings-row">
         <span>
