@@ -23,6 +23,13 @@ pub struct NexoraSettings {
     pub always_on_top: bool,
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// Island blur in px; `None` means the theme default, `Some(v)` is a
+    /// user override (the frontend clamps the slider value).
+    #[serde(default)]
+    pub island_blur_px: Option<u8>,
+    /// Island corner radius in px; same `None`/`Some` meaning as blur.
+    #[serde(default)]
+    pub island_radius_px: Option<u8>,
 }
 
 impl Default for NexoraSettings {
@@ -36,6 +43,8 @@ pub fn defaults() -> NexoraSettings {
         auto_hide_taskbar: false,
         always_on_top: true,
         theme: "neon-glass".into(),
+        island_blur_px: None,
+        island_radius_px: None,
     }
 }
 
@@ -158,6 +167,8 @@ mod tests {
             auto_hide_taskbar: true,
             always_on_top: false,
             theme: "liquid-glass".into(),
+            island_blur_px: Some(12),
+            island_radius_px: Some(24),
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
         assert_eq!(load_from_dir(&dir), settings);
@@ -185,6 +196,8 @@ mod tests {
                 auto_hide_taskbar: false,
                 always_on_top: true,
                 theme: "sunset".into(),
+                island_blur_px: None,
+                island_radius_px: None,
             }
         );
         let _ = fs::remove_dir_all(&dir);
@@ -206,6 +219,8 @@ mod tests {
             auto_hide_taskbar: false,
             always_on_top: true,
             theme: "   ".into(),
+            island_blur_px: None,
+            island_radius_px: None,
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
         assert_eq!(load_from_dir(&dir).theme, "neon-glass");
