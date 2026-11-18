@@ -20,6 +20,7 @@ pub fn run() {
             watchdog::start_watchdog();
             Ok(())
         })
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             ipc::get_island_state,
             ipc::set_island_expanded,
@@ -30,6 +31,7 @@ pub fn run() {
             ipc::get_tray_status,
             ipc::get_settings,
             ipc::check_updates,
+            ipc::download_and_install_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while running Nexora Tauri application")

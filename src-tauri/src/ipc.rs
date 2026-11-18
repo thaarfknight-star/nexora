@@ -41,6 +41,11 @@ pub fn get_settings() -> settings::NexoraSettings {
 }
 
 #[tauri::command]
-pub fn check_updates() -> updater::UpdateInfo {
-    updater::check()
+pub async fn check_updates(app: tauri::AppHandle) -> Result<updater::UpdateInfo, String> {
+    updater::check(app).await
+}
+
+#[tauri::command]
+pub async fn download_and_install_update(app: tauri::AppHandle) -> Result<(), String> {
+    updater::download_and_install(app).await
 }
