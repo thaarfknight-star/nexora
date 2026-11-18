@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Album cover art in `MediaInfo.cover_art` (`media.rs`): the session thumbnail via `GetThumbnailAsync`, returned as a `data:` URI ready for the media card `<img>`; empty when the session has no thumbnail.
+
 ## [0.1.0] - 2026-11-18
 
 First public release. Nexora is a floating Dynamic Island shell for Windows 10/11

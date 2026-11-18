@@ -14,14 +14,17 @@
 //! - On non-Windows targets the module keeps the same public API and
 //!   always reports "no active media"; the `windows` crate is only a
 //!   Windows dependency (see `Cargo.toml`).
-//! - Cover art is deliberately out of scope for this share: the frozen
-//!   v0.1.0 plan lists it as "if the session provides it", after the
-//!   core transport controls land and are reviewed.
+//! - Album cover art comes from the session thumbnail
+//!   (`GetThumbnailAsync`): the bytes are returned as a `data:` URI in
+//!   `MediaInfo.cover_art` (empty when the session has no thumbnail). The
+//!   frontend uses it directly as the `<img>` source.
 //! - Transport commands are separate play and pause (DEVagent's confirmed
 //!   names): `media_play`, `media_pause`, `media_next`, `media_previous`.
 //!   This module exposes the matching `play` / `pause` / `next` /
 //!   `previous` functions; the IPC share registers them in `ipc.rs`.
 
+#[cfg(any(target_os = "windows", test))]
+use base64::Engine;
 use serde::Serialize;
 
 #[cfg(target_os = "windows")]
@@ -30,12 +33,16 @@ use windows::{
     Media::Control::{
         GlobalSystemMediaTransportControlsSession,
         GlobalSystemMediaTransportControlsSessionManager,
+        GlobalSystemMediaTransportControlsSessionMediaProperties,
         GlobalSystemMediaTransportControlsSessionPlaybackStatus,
     },
+    Storage::Streams::DataReader,
     Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED},
 };
 
 /// What is currently playing, as reported by the system media session.
+/// `cover_art` is a `data:` URI with the album cover art, ready to use as an
+/// `<img>` source; empty when the session has no thumbnail.
 #[derive(Debug, Clone, Serialize)]
 pub struct MediaInfo {
     pub playing: bool,
@@ -44,6 +51,7 @@ pub struct MediaInfo {
     pub album: String,
     pub source_app: String,
     pub playback_status: String,
+    pub cover_art: String,
 }
 
 impl Default for MediaInfo {
@@ -55,6 +63,7 @@ impl Default for MediaInfo {
             album: String::new(),
             source_app: String::new(),
             playback_status: "none".into(),
+            cover_art: String::new(),
         }
     }
 }
@@ -70,22 +79,25 @@ pub async fn now_playing() -> MediaInfo {
         .GetPlaybackInfo()
         .and_then(|info| info.PlaybackStatus())
         .unwrap_or(GlobalSystemMediaTransportControlsSessionPlaybackStatus::Stopped);
-    let (title, artist, album) = match session.TryGetMediaPropertiesAsync() {
+    let (title, artist, album, cover_art) = match session.TryGetMediaPropertiesAsync() {
         Ok(operation) => match operation.await {
             Ok(properties) => (
                 hstring_or(properties.Title(), "Unknown title"),
                 hstring_or(properties.Artist(), "Unknown artist"),
                 hstring_or(properties.AlbumTitle(), ""),
+                read_cover(&properties).await,
             ),
             Err(_) => (
                 "Unknown title".into(),
                 "Unknown artist".into(),
+                String::new(),
                 String::new(),
             ),
         },
         Err(_) => (
             "Unknown title".into(),
             "Unknown artist".into(),
+            String::new(),
             String::new(),
         ),
     };
@@ -94,6 +106,7 @@ pub async fn now_playing() -> MediaInfo {
         title,
         artist,
         album,
+        cover_art,
         source_app: hstring_or(session.SourceAppUserModelId(), ""),
         playback_status: status_label(status).to_string(),
     }
@@ -183,6 +196,68 @@ where
     }
 }
 
+/// Album cover art as a `data:` URI (`data:<mime>;base64,...`), or the
+/// empty string when the session has no thumbnail or any step fails.
+/// Thumbnails over 1 MiB are skipped: the island only shows a small card.
+#[cfg(target_os = "windows")]
+async fn read_cover(
+    properties: &GlobalSystemMediaTransportControlsSessionMediaProperties,
+) -> String {
+    let Ok(thumbnail) = properties.Thumbnail() else {
+        return String::new();
+    };
+    let Ok(operation) = thumbnail.OpenReadAsync() else {
+        return String::new();
+    };
+    let Ok(stream) = operation.await else {
+        return String::new();
+    };
+    let content_type = hstring_or(stream.ContentType(), "image/jpeg");
+    let Ok(size) = stream.Size() else {
+        return String::new();
+    };
+    if size == 0 || size > 1_048_576 {
+        return String::new();
+    }
+    let Ok(reader) = DataReader::CreateDataReader(&stream) else {
+        return String::new();
+    };
+    let Ok(loaded) = reader.LoadAsync(size as u32) else {
+        return String::new();
+    };
+    let Ok(loaded) = loaded.await else {
+        return String::new();
+    };
+    if loaded as u64 != size {
+        return String::new();
+    }
+    let mut bytes = vec![0u8; size as usize];
+    if reader.ReadBytes(&mut bytes).is_err() {
+        return String::new();
+    }
+    cover_data_uri(&bytes, &content_type)
+}
+
+/// Build the `data:` URI the frontend uses as the `<img>` source for the
+/// album cover. Empty bytes mean "no cover" and stay the empty string;
+/// an empty content type falls back to JPEG, the format GSMTC thumbnails
+/// almost always use.
+#[cfg(any(target_os = "windows", test))]
+fn cover_data_uri(bytes: &[u8], content_type: &str) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+    let mime = if content_type.is_empty() {
+        "image/jpeg"
+    } else {
+        content_type
+    };
+    format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    )
+}
+
 #[cfg(target_os = "windows")]
 fn ensure_winrt() {
     // Best effort: already initialised (or initialised differently) is
@@ -261,6 +336,21 @@ mod tests {
             info.playback_status.as_str(),
             "playing" | "paused" | "stopped" | "closed" | "changing" | "none"
         ));
+        assert!(info.cover_art.is_empty() || info.cover_art.starts_with("data:image/"));
+    }
+
+    #[test]
+    fn cover_data_uri_builds_a_usable_img_source() {
+        assert_eq!(cover_data_uri(&[], "image/jpeg"), "");
+        assert_eq!(
+            cover_data_uri(b"hi", "image/jpeg"),
+            "data:image/jpeg;base64,aGk="
+        );
+        assert_eq!(cover_data_uri(b"hi", ""), "data:image/jpeg;base64,aGk=");
+        assert_eq!(
+            cover_data_uri(&[0x89, 0x50], "image/png"),
+            "data:image/png;base64,iVA="
+        );
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -271,6 +361,7 @@ mod tests {
         assert_eq!(info.title, "No active media");
         assert_eq!(info.artist, "Nexora");
         assert_eq!(info.playback_status, "none");
+        assert_eq!(info.cover_art, "");
     }
 
     #[cfg(not(target_os = "windows"))]
