@@ -11,13 +11,14 @@ pub mod watchdog;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .setup(|_app| {
+        .setup(|app| {
             // Watchdog: a separate process watches Nexora and restores the
             // taskbar if Nexora crashes or is killed; a monitor thread also
             // watches explorer.exe while Nexora runs. See watchdog.rs.
             // NOTE: taskbar hide/restore hooks (feat/taskbar-hide-restore)
             // extend this same setup closure; do not add a second one.
             watchdog::start_watchdog();
+            tray::setup(app.handle())?;
             Ok(())
         })
         .plugin(tauri_plugin_updater::Builder::new().build())
