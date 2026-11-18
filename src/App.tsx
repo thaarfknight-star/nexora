@@ -30,6 +30,9 @@ interface MediaInfo {
   playing: boolean;
   title: string;
   artist: string;
+  album: string;
+  source_app: string;
+  playback_status: string;
 }
 
 interface TaskbarStatus {
@@ -109,6 +112,20 @@ export function App() {
     invoke<MediaInfo>("get_now_playing")
       .then(setMedia)
       .catch(() => {});
+  };
+
+  type MediaCommand =
+    | "media_play"
+    | "media_pause"
+    | "media_next"
+    | "media_previous";
+
+  const sendMediaCommand = (command: MediaCommand) => {
+    // The four commands are registered by EAgent5's IPC wiring; until
+    // then a failed invoke just re-reads the current state.
+    invoke<boolean>(command)
+      .then(() => refreshMedia())
+      .catch(() => refreshMedia());
   };
 
   const refreshAll = () => {
@@ -247,24 +264,25 @@ export function App() {
                     <button
                       type="button"
                       className="mini-btn"
-                      disabled
-                      title="Playback controls arrive with the media engine"
+                      onClick={() => sendMediaCommand("media_previous")}
                     >
                       Prev
                     </button>
                     <button
                       type="button"
                       className="mini-btn"
-                      disabled
-                      title="Playback controls arrive with the media engine"
+                      onClick={() =>
+                        sendMediaCommand(
+                          media?.playing ? "media_pause" : "media_play",
+                        )
+                      }
                     >
                       {media?.playing ? "Pause" : "Play"}
                     </button>
                     <button
                       type="button"
                       className="mini-btn"
-                      disabled
-                      title="Playback controls arrive with the media engine"
+                      onClick={() => sendMediaCommand("media_next")}
                     >
                       Next
                     </button>
@@ -275,6 +293,13 @@ export function App() {
                     >
                       Refresh
                     </button>
+                  </span>
+                </div>
+                <div className="panel-line">
+                  <span>
+                    {media?.album ? `${media.album} · ` : ""}
+                    {media?.source_app ? media.source_app : "—"} ·{" "}
+                    {media ? media.playback_status : "—"}
                   </span>
                 </div>
               </div>
