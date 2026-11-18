@@ -16,8 +16,8 @@ pub fn get_system_stats() -> stats::SystemStats {
 }
 
 #[tauri::command]
-pub fn get_now_playing() -> media::MediaInfo {
-    media::now_playing()
+pub async fn get_now_playing() -> media::MediaInfo {
+    media::now_playing().await
 }
 
 #[tauri::command]

@@ -10,5 +10,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial project structure and configuration for Nexora (Tauri v2 + Rust + React).
 - Update engine (tauri-plugin-updater): in-app update check, download and install from the rolling update-feed release.
+- Real GSMTC media controls: live now-playing (title, artist, album, source app, playback status) plus play/pause, next and previous track through the Windows Global System Media Transport Controls session manager (`src-tauri/src/media.rs`).
 - Dual licensing under MIT and Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`, `COPYRIGHT`).
 - Repository documentation (`README.md`, `CHANGELOG.md`, `THIRD_PARTY_LICENSES.md`).
