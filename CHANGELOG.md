@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Album cover art in `MediaInfo.cover_art` (`media.rs`): the session thumbnail via `GetThumbnailAsync`, returned as a `data:` URI ready for the media card `<img>`; empty when the session has no thumbnail.
-- Source app icon in `MediaInfo.source_icon` (`media.rs`): the playing app's package logo via its GSMTC AUMID, returned as a PNG `data:` URI ready for the media card `<img>`; empty when the app has no package or no logo file.
+- Source app icon in `MediaInfo.source_icon` (`media.rs`): the playing app's package logo via its GSMTC AUMID, returned as a `data:` URI ready for the media card `<img>`; empty when the app has no package or no logo file.
 
 ## [0.1.0] - 2026-11-18
 
