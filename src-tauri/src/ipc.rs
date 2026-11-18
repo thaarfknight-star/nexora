@@ -36,8 +36,16 @@ pub fn get_tray_status() -> tray::TrayStatus {
 }
 
 #[tauri::command]
-pub fn get_settings() -> settings::NexoraSettings {
-    settings::defaults()
+pub fn get_settings(app: tauri::AppHandle) -> settings::NexoraSettings {
+    settings::load(&app)
+}
+
+#[tauri::command]
+pub fn set_settings(
+    app: tauri::AppHandle,
+    settings: settings::NexoraSettings,
+) -> Result<settings::NexoraSettings, String> {
+    settings::update(&app, settings).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

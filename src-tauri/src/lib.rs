@@ -12,6 +12,12 @@ pub mod watchdog;
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            // Settings: load the persisted settings and apply the values
+            // the backend owns (currently: always_on_top on the main
+            // window). The theme is applied by the frontend, which reads
+            // it through `get_settings`.
+            let settings = settings::load(app.handle());
+            settings::apply(app.handle(), &settings);
             // Watchdog: a separate process watches Nexora and restores the
             // taskbar if Nexora crashes or is killed; a monitor thread also
             // watches explorer.exe while Nexora runs. See watchdog.rs.
@@ -31,6 +37,7 @@ pub fn run() {
             ipc::get_watchdog_status,
             ipc::get_tray_status,
             ipc::get_settings,
+            ipc::set_settings,
             ipc::check_updates,
             ipc::download_and_install_update,
         ])
