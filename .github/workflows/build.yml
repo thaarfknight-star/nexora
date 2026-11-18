@@ -39,7 +39,7 @@ jobs:
           TAG="v${VERSION}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           if git rev-parse "$TAG" >/dev/null 2>&1; then
-            if git cat-file -e "$TAG:src-tauri/src/lib.rs" 2>/dev/null; then
+            if [ "$(git rev-parse "${TAG}^{commit}" 2>/dev/null)" = "$(git rev-parse HEAD)" ]; then
               echo "Tag $TAG already exists"
           else
             git config user.name "github-actions[bot]"
