@@ -3,6 +3,88 @@
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
 }
 
+/* Theme variables. The active theme is selected by
+   `:root[data-theme="<id>"]` (see `src/themes.ts` for the six ids).
+   Obsidian is the default and matches the original hardcoded pill. */
+:root,
+:root[data-theme="obsidian"] {
+  --island-bg: rgba(15, 23, 42, 0.92);
+  --island-border: rgba(148, 163, 184, 0.25);
+  --island-text: #f8fafc;
+  --island-subtext: #94a3b8;
+  --island-accent: #38bdf8;
+  --island-accent-text: #7dd3fc;
+  --island-dot: #38bdf8;
+  --island-btn-bg: rgba(56, 189, 248, 0.16);
+  --island-btn-border: rgba(56, 189, 248, 0.35);
+  --island-blur: 18px;
+}
+
+:root[data-theme="liquid-glass"] {
+  --island-bg: rgba(255, 255, 255, 0.16);
+  --island-border: rgba(255, 255, 255, 0.45);
+  --island-text: #ffffff;
+  --island-subtext: rgba(255, 255, 255, 0.72);
+  --island-accent: #ffffff;
+  --island-accent-text: #e0f2fe;
+  --island-dot: #ffffff;
+  --island-btn-bg: rgba(255, 255, 255, 0.22);
+  --island-btn-border: rgba(255, 255, 255, 0.5);
+  --island-blur: 24px;
+}
+
+:root[data-theme="aurora"] {
+  --island-bg: rgba(4, 47, 46, 0.94);
+  --island-border: rgba(45, 212, 191, 0.35);
+  --island-text: #f0fdfa;
+  --island-subtext: #99f6e4;
+  --island-accent: #2dd4bf;
+  --island-accent-text: #5eead4;
+  --island-dot: #2dd4bf;
+  --island-btn-bg: rgba(45, 212, 191, 0.16);
+  --island-btn-border: rgba(45, 212, 191, 0.4);
+  --island-blur: 18px;
+}
+
+:root[data-theme="sunset"] {
+  --island-bg: rgba(69, 26, 3, 0.94);
+  --island-border: rgba(251, 146, 60, 0.4);
+  --island-text: #fff7ed;
+  --island-subtext: #fdba74;
+  --island-accent: #fb923c;
+  --island-accent-text: #fdba74;
+  --island-dot: #f97316;
+  --island-btn-bg: rgba(251, 146, 60, 0.18);
+  --island-btn-border: rgba(251, 146, 60, 0.45);
+  --island-blur: 18px;
+}
+
+:root[data-theme="midnight"] {
+  --island-bg: rgba(15, 10, 40, 0.94);
+  --island-border: rgba(167, 139, 250, 0.35);
+  --island-text: #f5f3ff;
+  --island-subtext: #c4b5fd;
+  --island-accent: #a78bfa;
+  --island-accent-text: #c4b5fd;
+  --island-dot: #8b5cf6;
+  --island-btn-bg: rgba(167, 139, 250, 0.16);
+  --island-btn-border: rgba(167, 139, 250, 0.4);
+  --island-blur: 18px;
+}
+
+:root[data-theme="forest"] {
+  --island-bg: rgba(12, 46, 26, 0.94);
+  --island-border: rgba(74, 222, 128, 0.35);
+  --island-text: #f0fdf4;
+  --island-subtext: #86efac;
+  --island-accent: #4ade80;
+  --island-accent-text: #86efac;
+  --island-dot: #22c55e;
+  --island-btn-bg: rgba(74, 222, 128, 0.16);
+  --island-btn-border: rgba(74, 222, 128, 0.4);
+  --island-blur: 18px;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -32,14 +114,28 @@ body,
   width: 100%;
   height: 100%;
   border-radius: 28px;
-  background: rgba(15, 23, 42, 0.92);
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  color: #f8fafc;
+  background: var(--island-bg);
+  border: 1px solid var(--island-border);
+  color: var(--island-text);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
-  backdrop-filter: blur(18px);
+  backdrop-filter: blur(var(--island-blur));
+}
+
+.island-pill.expanded {
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 20px;
+}
+
+.island-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .island-brand {
@@ -52,7 +148,7 @@ body,
   width: 10px;
   height: 10px;
   border-radius: 9999px;
-  background: #38bdf8;
+  background: var(--island-dot);
 }
 
 .island-title {
@@ -62,15 +158,42 @@ body,
 
 .island-sub {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--island-subtext);
 }
 
 .island-btn {
-  background: rgba(56, 189, 248, 0.16);
-  color: #7dd3fc;
-  border: 1px solid rgba(56, 189, 248, 0.35);
+  background: var(--island-btn-bg);
+  color: var(--island-accent-text);
+  border: 1px solid var(--island-btn-border);
   border-radius: 9999px;
   padding: 6px 14px;
   font-size: 12px;
   cursor: pointer;
+}
+
+.island-themes {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.theme-label {
+  font-size: 11px;
+  color: var(--island-subtext);
+}
+
+.theme-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+.theme-swatch.selected {
+  border-color: var(--island-text);
+  box-shadow: 0 0 0 2px var(--island-btn-border);
 }
