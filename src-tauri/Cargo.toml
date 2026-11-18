@@ -30,3 +30,7 @@ windows = { version = "0.61", features = ["Foundation", "Media", "Media_Control"
 # default-features off, but awaiting IAsyncOperation needs its `std`
 # feature (the IntoFuture impls). Feature unification turns it on.
 windows-future = "0.2"
+# Windows-only: stats.rs reads GPU utilization through NVML (NVIDIA
+# driver). nvml-wrapper loads nvml.dll dynamically with libloading, so
+# machines without an NVIDIA GPU/driver just get `None` from init.
+nvml-wrapper = "0.12"
