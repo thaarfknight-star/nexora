@@ -1,3 +1,5 @@
+use tauri::Manager;
+
 pub mod ipc;
 pub mod island;
 pub mod media;
@@ -18,11 +20,21 @@ pub fn run() {
             // it through `get_settings`.
             let settings = settings::load(app.handle());
             settings::apply(app.handle(), &settings);
+            // Taskbar: hide it at startup when the user asked for it.
+            // The RunEvent handler restores it on exit, and the watchdog
+            // covers a crash. No-op off Windows.
+            if settings.auto_hide_taskbar {
+                taskbar::set_hidden(true);
+            }
+            // Island: place the window at its startup position (compact
+            // size, top-center). Skipped when the main window is missing.
+            if let Some(webview_window) = app.get_webview_window("main") {
+                let window = webview_window.as_ref().window();
+                island::setup_window(&window)?;
+            }
             // Watchdog: a separate process watches Nexora and restores the
             // taskbar if Nexora crashes or is killed; a monitor thread also
             // watches explorer.exe while Nexora runs. See watchdog.rs.
-            // NOTE: taskbar hide/restore hooks (feat/taskbar-hide-restore)
-            // extend this same setup closure; do not add a second one.
             watchdog::start_watchdog();
             tray::setup(app.handle())?;
             Ok(())
@@ -33,7 +45,12 @@ pub fn run() {
             ipc::set_island_expanded,
             ipc::get_system_stats,
             ipc::get_now_playing,
+            ipc::media_play,
+            ipc::media_pause,
+            ipc::media_next,
+            ipc::media_previous,
             ipc::get_taskbar_status,
+            ipc::set_taskbar_hidden,
             ipc::get_watchdog_status,
             ipc::get_tray_status,
             ipc::get_settings,

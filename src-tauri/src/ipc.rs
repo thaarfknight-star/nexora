@@ -6,8 +6,11 @@ pub fn get_island_state() -> island::IslandState {
 }
 
 #[tauri::command]
-pub fn set_island_expanded(expanded: bool) -> island::IslandState {
-    island::set_expanded(expanded)
+pub fn set_island_expanded(
+    window: tauri::Window,
+    expanded: bool,
+) -> Result<island::IslandState, String> {
+    island::set_expanded_on_window(&window, expanded).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -21,8 +24,33 @@ pub async fn get_now_playing() -> media::MediaInfo {
 }
 
 #[tauri::command]
+pub async fn media_play() -> bool {
+    media::play().await
+}
+
+#[tauri::command]
+pub async fn media_pause() -> bool {
+    media::pause().await
+}
+
+#[tauri::command]
+pub async fn media_next() -> bool {
+    media::next().await
+}
+
+#[tauri::command]
+pub async fn media_previous() -> bool {
+    media::previous().await
+}
+
+#[tauri::command]
 pub fn get_taskbar_status() -> taskbar::TaskbarStatus {
     taskbar::status()
+}
+
+#[tauri::command]
+pub fn set_taskbar_hidden(hidden: bool) -> taskbar::TaskbarStatus {
+    taskbar::set_hidden(hidden)
 }
 
 #[tauri::command]
