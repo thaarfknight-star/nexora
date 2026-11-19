@@ -37,17 +37,28 @@ pub fn run() {
             // it through `get_settings`.
             let settings = settings::load(app.handle());
             settings::apply(app.handle(), &settings);
-            // Taskbar: hide it at startup when the user asked for it.
-            // The RunEvent handler restores it on exit, and the watchdog
-            // covers a crash. No-op off Windows.
-            if settings.auto_hide_taskbar {
-                taskbar::set_hidden(true);
-            }
             // Island: place the window at its startup position (compact
             // size, top-center). Skipped when the main window is missing.
             if let Some(webview_window) = app.get_webview_window("main") {
                 let window = webview_window.as_ref().window();
                 island::setup_window(&window)?;
+                // AppBar: hand the island window handle to the taskbar
+                // module so hide() can register it with SHAppBarMessage
+                // (maximized windows stay below the island).
+                // Windows-only; when the handle is unknown hide() still
+                // works, just without the reservation.
+                #[cfg(target_os = "windows")]
+                if let Ok(hwnd) = window.hwnd() {
+                    taskbar::set_appbar_window(hwnd.0 as isize);
+                }
+            }
+            // Taskbar: hide it at startup when the user asked for it.
+            // hide() registers the island as a top AppBar and starts the
+            // monitor that re-hides the taskbar if Windows shows it
+            // again. The RunEvent handler restores it on exit, and the
+            // watchdog covers a crash. No-op off Windows.
+            if settings.auto_hide_taskbar {
+                taskbar::set_hidden(true);
             }
             // Watchdog: a separate process watches Nexora and restores the
             // taskbar if Nexora crashes or is killed; a monitor thread also
@@ -86,8 +97,11 @@ pub fn run() {
                 event,
                 tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
             ) {
-                // Clean exit: restore the taskbar synchronously first, then
+                // Clean exit: drop the AppBar reservation first (otherwise
+                // the work-area reservation outlives Nexora until Explorer
+                // restarts), then restore the taskbar synchronously, then
                 // stop the external watchdog (it would restore anyway).
+                taskbar::unregister_appbar();
                 watchdog::restore_taskbar();
                 watchdog::stop_watchdog();
             }
