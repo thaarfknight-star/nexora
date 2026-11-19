@@ -96,6 +96,13 @@ pub fn open_start_menu() -> bool {
     taskbar_content::open_start_menu()
 }
 
+/// Launch a pinned app by its resolved target path. `true` means the
+/// launch was invoked; `false` means it was not (empty path or error).
+#[tauri::command]
+pub fn launch_pinned_app(target: String) -> bool {
+    taskbar_content::launch_pinned_app(&target)
+}
+
 #[tauri::command]
 pub fn get_watchdog_status() -> watchdog::WatchdogStatus {
     watchdog::check_health()

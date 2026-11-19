@@ -198,13 +198,31 @@ pub fn open_start_menu() -> bool {
     }
 }
 
+/// Launch a pinned app by its resolved target path — the same `target`
+/// a `PinnedApp` carries. `true` means the launch was invoked;
+/// `false` means it was not (empty path, or the launch failed).
+/// `false` off Windows. Opens nothing else and logs nothing.
+pub fn launch_pinned_app(target: &str) -> bool {
+    if target.is_empty() {
+        return false;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        win::launch_pinned_app(target)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
 #[cfg(target_os = "windows")]
 mod win {
     use super::*;
     use base64::Engine as _;
     use std::ffi::c_void;
     use windows::core::{Interface as _, BOOL, PCWSTR, PWSTR};
-    use windows::Win32::Foundation::{HWND, LPARAM};
+    use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM};
     use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
     use windows::Win32::Graphics::Gdi::{
         CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject, BITMAPINFO,
@@ -219,13 +237,13 @@ mod win {
         VK_LWIN,
     };
     use windows::Win32::UI::Shell::{
-        ExtractIconExW, FOLDERID_RoamingAppData, IShellLinkW, SHGetKnownFolderPath, ShellLink,
-        KF_FLAG_DEFAULT, SLR_NOSEARCH, SLR_NOUPDATE, SLR_NO_UI,
+        ExtractIconExW, FOLDERID_RoamingAppData, IShellLinkW, SHGetKnownFolderPath, ShellExecuteW,
+        ShellLink, KF_FLAG_DEFAULT, SLR_NOSEARCH, SLR_NOUPDATE, SLR_NO_UI,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         DestroyIcon, DrawIconEx, EnumWindows, GetForegroundWindow, GetWindow, GetWindowLongPtrW,
         GetWindowModuleFileNameW, GetWindowTextW, IsIconic, IsWindow, SetForegroundWindow,
-        ShowWindow, DI_NORMAL, GWL_EXSTYLE, GW_OWNER, SW_MINIMIZE, SW_RESTORE,
+        ShowWindow, DI_NORMAL, GWL_EXSTYLE, GW_OWNER, SW_MINIMIZE, SW_RESTORE, SW_SHOWNORMAL,
     };
 
     /// One enumerated window before filtering.
@@ -661,6 +679,26 @@ mod win {
         let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
         sent == inputs.len() as u32
     }
+
+    pub fn launch_pinned_app(target: &str) -> bool {
+        let wide_target = wide(target);
+        let wide_open = wide("open");
+        // SAFETY: both wide buffers outlive the call; no owner window,
+        // no parameters, no working directory. `ShellExecuteW` returns
+        // an HINSTANCE whose value is above 32 on success — at or
+        // below 32 is an error code, never a handle.
+        let instance: HINSTANCE = unsafe {
+            ShellExecuteW(
+                None,
+                PCWSTR::from_raw(wide_open.as_ptr()),
+                PCWSTR::from_raw(wide_target.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        instance.0 as isize > 32
+    }
 }
 
 #[cfg(test)]
@@ -747,6 +785,16 @@ mod tests {
         assert_eq!(file_stem("C:/a/b/notepad.exe"), "notepad");
     }
 
+    #[test]
+    fn launch_empty_target_is_false() {
+        assert!(!launch_pinned_app(""));
+    }
+
+    #[test]
+    fn launch_nonexistent_target_is_false() {
+        assert!(!launch_pinned_app("C:\\does\\not\\exist\\app.exe"));
+    }
+
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn non_windows_is_a_noop() {
@@ -754,5 +802,6 @@ mod tests {
         assert!(list_pinned().is_empty());
         assert!(!activate_window(12345));
         assert!(!open_start_menu());
+        assert!(!launch_pinned_app("C:\\Windows\\notepad.exe"));
     }
 }
