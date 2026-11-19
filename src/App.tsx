@@ -372,6 +372,11 @@ function IslandApp() {
   // Stage height duration: open ~320 ms, close ~220 ms (design
   // artifact). Set per transition; the CSS default is the close one.
   const [stageMs, setStageMs] = useState(220);
+  // Easing follows the motion sheet: open is the spring
+  // cubic-bezier(.34,1.4,.64,1), close is cubic-bezier(.4,0,1,1).
+  const [stageEasing, setStageEasing] = useState(
+    "cubic-bezier(0.34, 1.4, 0.64, 1)",
+  );
   const [keepOpen, setKeepOpen] = useState(false);
   const visibleRef = useRef<IslandVisible>("hidden");
   const keepOpenRef = useRef(false);
@@ -390,6 +395,11 @@ function IslandApp() {
       (visibleRef.current === "hidden" && next === "compact") ||
       (visibleRef.current === "compact" && next === "expanded");
     setStageMs(opening ? 320 : 220);
+    setStageEasing(
+      opening
+        ? "cubic-bezier(0.34, 1.4, 0.64, 1)"
+        : "cubic-bezier(0.4, 0, 1, 1)",
+    );
     visibleRef.current = next;
     setVisibleState(next);
     // Keep the backend flag in sync: it drives the poll loop.
@@ -887,6 +897,7 @@ function IslandApp() {
         className={`island-stage ${visible}`}
         style={{
           transitionDuration: `${stageMs}ms`,
+          transitionTimingFunction: stageEasing,
           // Geometry comes from the backend (island.rs), one source of truth.
           left: state.content_x,
           top: state.content_y,
@@ -910,6 +921,8 @@ function IslandApp() {
         <section
           className={`island-pill${visible === "expanded" ? " expanded" : ""}`}
         style={{
+          transitionDuration: `${stageMs}ms`,
+          transitionTimingFunction: stageEasing,
           ...(islandStyle.blur !== null
             ? { backdropFilter: `blur(${islandStyle.blur}px)` }
             : {}),

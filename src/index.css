@@ -1,6 +1,8 @@
 :root {
   color-scheme: dark;
-  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-family:
+    "Segoe UI Variable", "Segoe UI", Inter, "Vazirmatn", system-ui,
+    sans-serif;
 }
 
 /* Theme variables. The active theme is selected by
@@ -126,28 +128,32 @@ body,
 
 /* Stage: the fixed content box (40, 40, 560, 360 — island.rs) the
    pill animates inside. The window never resizes; only the stage
-   height changes between states. Open ~320 ms, close ~220 ms,
-   spring easing (design artifact). */
+   height changes between states. Motion sheet: open 320 ms with the
+   spring cubic-bezier(.34,1.4,.64,1), close 220 ms with
+   cubic-bezier(.4,0,1,1) — duration and easing are set per
+   transition from App.tsx; the CSS values are the fallback. */
 .island-stage {
   position: absolute;
   overflow: hidden;
-  transition: height 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: height 220ms cubic-bezier(0.34, 1.4, 0.64, 1);
 }
 
 .island-pill {
   width: 100%;
   height: 100%;
-  border-radius: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--island-border);
   background: var(--island-bg);
   color: var(--island-text);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 20px;
+  padding: 8px 12px;
   backdrop-filter: blur(var(--island-blur));
   transition:
-    opacity 220ms ease,
-    transform 220ms ease;
+    opacity 220ms cubic-bezier(0.4, 0, 1, 1),
+    transform 220ms cubic-bezier(0.4, 0, 1, 1),
+    border-radius 220ms cubic-bezier(0.4, 0, 1, 1);
 }
 
 .island-stage.hidden .island-pill {
@@ -197,12 +203,13 @@ body,
   padding-top: 4px;
 }
 
-/* Staged content reveal when the panel opens. */
+/* Staged content reveal when the panel opens: tab content fades
+   in at 120 ms (motion sheet). */
 .island-pill.expanded .island-clock,
 .island-pill.expanded .island-tabs,
 .island-pill.expanded .island-panel,
 .island-pill.expanded .notifications-panel {
-  animation: island-reveal 240ms ease 60ms both;
+  animation: island-reveal 240ms ease 120ms both;
 }
 
 @keyframes island-reveal {
@@ -216,7 +223,8 @@ body,
   }
 }
 
-/* Reduce motion: fade only, no slide, spring, or pulse. */
+/* Reduce motion: fade only, 150 ms (motion sheet), no slide,
+   spring, or pulse. */
 @media (prefers-reduced-motion: reduce) {
   .island-stage,
   .island-pill,
@@ -225,7 +233,7 @@ body,
   .island-pill.expanded .island-tabs,
   .island-pill.expanded .island-panel,
   .island-pill.expanded .notifications-panel {
-    transition-duration: 120ms !important;
+    transition-duration: 150ms !important;
     transition-timing-function: ease !important;
     animation: none !important;
   }
@@ -240,6 +248,7 @@ body,
   justify-content: center;
   gap: 6px;
   padding: 6px 16px;
+  border-radius: 20px;
 }
 
 .island-tabs {
@@ -346,17 +355,17 @@ body,
 }
 
 .taskbar-start {
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 10px;
   color: var(--island-accent-text);
-  font-size: 18px;
+  font-size: 20px;
   line-height: 1;
   cursor: pointer;
   padding: 0;
@@ -369,15 +378,15 @@ body,
 
 .taskbar-app {
   position: relative;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 0;
   cursor: pointer;
 }
@@ -399,17 +408,17 @@ body,
 }
 
 .taskbar-icon {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
 }
 
 .taskbar-icon-placeholder {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--island-btn-bg);
   color: var(--island-text);
   font-size: 13px;
@@ -432,7 +441,7 @@ body,
 
 .compact-stat-label {
   color: var(--island-subtext);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.06em;
   margin-inline-end: 3px;
 }
@@ -447,16 +456,16 @@ body,
 }
 
 .compact-media-cover {
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   border-radius: 8px;
   object-fit: cover;
   flex: none;
 }
 
 .compact-media-btn {
-  width: 28px;
-  height: 28px;
+  width: 38px;
+  height: 38px;
   flex: none;
   display: flex;
   align-items: center;
@@ -465,7 +474,7 @@ body,
   border: 1px solid var(--island-btn-border);
   border-radius: 9999px;
   color: var(--island-accent-text);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1;
   cursor: pointer;
   padding: 0;
@@ -476,6 +485,7 @@ body,
   align-items: center;
   gap: 10px;
   cursor: pointer;
+  flex: none;
 }
 
 .island-emblem {
@@ -492,7 +502,7 @@ body,
 }
 
 .island-title {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
 }
 
@@ -523,7 +533,7 @@ body,
   flex-direction: column;
   gap: 8px;
   padding: 10px;
-  border-radius: 14px;
+  border-radius: 16px;
   border: 1px solid var(--island-border);
   background: var(--island-btn-bg);
   color: var(--island-text);
@@ -614,8 +624,8 @@ body,
   font-size: 13px;
   line-height: 1.5;
   text-align: start;
-  padding: 10px 12px;
-  border-radius: 12px;
+  padding: 12px;
+  border-radius: 16px;
   background: rgba(34, 197, 94, 0.15);
   border: 1px solid rgba(34, 197, 94, 0.4);
   max-width: 420px;
@@ -623,7 +633,7 @@ body,
 
 .onboarding-btn {
   font-size: 13px;
-  padding: 8px 18px;
+  padding: 8px 16px;
   margin-top: 4px;
 }
 
@@ -717,13 +727,13 @@ body,
 }
 
 .settings-sidebar {
-  width: 220px;
+  width: 210px;
   flex: none;
   height: 100%;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 20px 16px;
+  padding: 24px 16px;
   border-inline-end: 1px solid var(--island-border);
 }
 
@@ -734,7 +744,7 @@ body,
 }
 
 .settings-title {
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 600;
   margin-top: 8px;
 }
@@ -750,12 +760,12 @@ body,
 .settings-nav-btn {
   text-align: start;
   padding: 8px 12px;
-  border-radius: 10px;
+  border-radius: 12px;
   background: transparent;
   border: 1px solid transparent;
   color: var(--island-text);
   font: inherit;
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -798,7 +808,7 @@ body,
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .settings-version {
@@ -813,6 +823,11 @@ body,
   cursor: pointer;
   flex: none;
   line-height: 0;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .gear-btn img {
@@ -836,7 +851,7 @@ body,
 }
 
 .island-clock-time {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
 }
 
@@ -859,13 +874,13 @@ body,
   align-items: center;
   gap: 2px;
   padding: 8px 4px;
-  border-radius: 12px;
+  border-radius: 16px;
   background: var(--island-btn-bg);
   border: 1px solid var(--island-btn-border);
 }
 
 .stat-chip-label {
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   color: var(--island-subtext);
 }
@@ -890,23 +905,23 @@ body,
   align-items: center;
   gap: 10px;
   padding: 8px;
-  border-radius: 14px;
+  border-radius: 16px;
   background: var(--island-btn-bg);
   border: 1px solid var(--island-btn-border);
 }
 
 .media-cover {
-  width: 48px;
-  height: 48px;
-  border-radius: 8px;
+  width: 96px;
+  height: 96px;
+  border-radius: 14px;
   object-fit: cover;
   flex: none;
 }
 
 .media-cover-placeholder {
-  width: 48px;
-  height: 48px;
-  border-radius: 8px;
+  width: 96px;
+  height: 96px;
+  border-radius: 14px;
   flex: none;
   display: flex;
   align-items: center;
@@ -916,8 +931,8 @@ body,
 }
 
 .media-cover-placeholder img {
-  width: 28px;
-  height: 28px;
+  width: 48px;
+  height: 48px;
 }
 
 .media-info {
@@ -968,6 +983,11 @@ body,
   flex: none;
   line-height: 0;
   position: relative;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .bell-btn img {
@@ -987,7 +1007,7 @@ body,
   border-radius: 8px;
   background: var(--island-accent);
   color: #fff;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   line-height: 16px;
   text-align: center;
@@ -1080,7 +1100,7 @@ body,
 }
 
 .notifications-panel.compact .notification-body {
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .notifications-panel.compact .notifications-list {
@@ -1093,7 +1113,7 @@ body,
   align-items: center;
   gap: 8px;
   padding: 8px;
-  border-radius: 12px;
+  border-radius: 16px;
   background: var(--island-btn-bg);
   border: 1px solid var(--island-btn-border);
 }
@@ -1133,7 +1153,7 @@ body,
 }
 
 .notification-clock {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.8;
 }
 
