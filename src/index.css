@@ -382,10 +382,6 @@ body,
   cursor: pointer;
 }
 
-.taskbar-app.pinned {
-  cursor: default;
-}
-
 .taskbar-app.minimized {
   opacity: 0.55;
 }

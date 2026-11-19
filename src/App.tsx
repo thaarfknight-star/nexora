@@ -514,6 +514,14 @@ function IslandApp() {
       .catch(() => refreshTaskbar());
   };
 
+  const launchPinnedApp = (target: string) => {
+    // After the launch — accepted or not — re-read the lists so the
+    // newly opened window shows up in the taskbar zone.
+    invoke<boolean>("launch_pinned_app", { target })
+      .then(() => refreshTaskbar())
+      .catch(() => refreshTaskbar());
+  };
+
   const openStartMenu = () => {
     invoke<boolean>("open_start_menu").catch(() => {});
   };
@@ -948,17 +956,20 @@ function IslandApp() {
               ⊞
             </button>
             {pinnedApps.map((app) => (
-              <span
+              <button
                 key={app.target}
+                type="button"
                 className="taskbar-app pinned"
+                onClick={() => launchPinnedApp(app.target)}
                 title={app.name}
+                aria-label={app.name}
               >
                 <RgbaIcon
                   rgbaBase64={app.icon_rgba_base64}
                   size={app.icon_size}
                   title={app.name}
                 />
-              </span>
+              </button>
             ))}
             {taskbarWindows.map((win) => (
               <button
