@@ -3,8 +3,10 @@
 //! The island window never resizes: it is always one fixed transparent
 //! canvas, top-center, and the pill / panel animate inside it with CSS
 //! (frontend). The canvas is bigger than the panel so the glow is never
-//! clipped: the expanded panel (560x340 today, 560x360 in the sheet)
-//! sits in a content box inset by `GLOW_PADDING` on every side.
+//! clipped: the expanded panel (560x360, approved design) sits in a
+//! content box inset by `GLOW_PADDING` on every side. The compact pill
+//! (~64px tall) and the hidden-state handle (120x4) render inside the
+//! same window; only CSS moves them.
 //!
 //! Two runtime behaviors live here as well:
 //!
@@ -25,18 +27,26 @@ use std::time::Duration;
 use tauri::{Emitter, Manager};
 
 /// Fixed window size, in logical pixels: expanded panel 560x360
-/// (sheet) plus `GLOW_PADDING` on every side. The current 560x340
-/// panel fits with room to spare, so the states branch needs no
-/// further window change.
+/// (approved design) plus `GLOW_PADDING` on every side.
 pub const WINDOW_WIDTH: u32 = 640;
 pub const WINDOW_HEIGHT: u32 = 440;
 /// Glow room around the content box, in logical pixels.
 pub const GLOW_PADDING: u32 = 40;
-/// Content box inside the window: the pill / panel live here.
+/// Content box inside the window: the expanded panel lives here
+/// (560x360, approved design).
 pub const CONTENT_X: u32 = GLOW_PADDING;
 pub const CONTENT_Y: u32 = GLOW_PADDING;
 pub const CONTENT_WIDTH: u32 = WINDOW_WIDTH - 2 * GLOW_PADDING;
 pub const CONTENT_HEIGHT: u32 = WINDOW_HEIGHT - 2 * GLOW_PADDING;
+/// Compact pill height, in logical pixels (approved design). The pill
+/// renders inside the same fixed window; its width is bounded by the
+/// content box.
+pub const COMPACT_HEIGHT: u32 = 64;
+/// Hidden-state handle size, in logical pixels (approved design):
+/// a 120x4 strip at the top edge. It renders inside the same fixed
+/// window; the hot-zone watcher (not a click) wakes the island.
+pub const HANDLE_WIDTH: u32 = 120;
+pub const HANDLE_HEIGHT: u32 = 4;
 /// Top edge of the window, in logical pixels from the monitor top.
 /// The window sits flush at the top; the content inset provides the
 /// visual gap (previously `TOP_MARGIN`, removed with the resize).
@@ -63,6 +73,11 @@ pub struct IslandState {
     pub content_y: u32,
     pub content_width: u32,
     pub content_height: u32,
+    /// Compact pill height and hidden-state handle size (approved
+    /// design), so the frontend reads the numbers from one place.
+    pub compact_height: u32,
+    pub handle_width: u32,
+    pub handle_height: u32,
 }
 
 /// Payload of the [`HOT_ZONE_EVENT`] event.
@@ -100,6 +115,9 @@ pub fn current_state() -> IslandState {
         content_y: CONTENT_Y,
         content_width: CONTENT_WIDTH,
         content_height: CONTENT_HEIGHT,
+        compact_height: COMPACT_HEIGHT,
+        handle_width: HANDLE_WIDTH,
+        handle_height: HANDLE_HEIGHT,
     }
 }
 
@@ -287,15 +305,13 @@ mod tests {
     #[test]
     fn fixed_window_fits_panel_with_glow() {
         assert_eq!(window_size(), (640, 440));
+        // The content box IS the expanded panel (560x360, approved
+        // design), with equal glow padding on every side.
         assert_eq!(content_rect(), (40, 40, 560, 360));
-        // Glow padding is equal on every side.
         assert_eq!(CONTENT_X, GLOW_PADDING);
         assert_eq!(CONTENT_Y, GLOW_PADDING);
         assert_eq!(WINDOW_WIDTH - (CONTENT_X + CONTENT_WIDTH), GLOW_PADDING);
         assert_eq!(WINDOW_HEIGHT - (CONTENT_Y + CONTENT_HEIGHT), GLOW_PADDING);
-        // The current 560x340 panel also fits inside the content box.
-        assert!(CONTENT_WIDTH >= 560);
-        assert!(CONTENT_HEIGHT >= 340);
     }
 
     #[test]
@@ -311,6 +327,8 @@ mod tests {
             ),
             (40, 40, 560, 360)
         );
+        assert_eq!(state.compact_height, 64);
+        assert_eq!((state.handle_width, state.handle_height), (120, 4));
     }
 
     #[test]
