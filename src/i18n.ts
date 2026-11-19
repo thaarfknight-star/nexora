@@ -132,6 +132,7 @@ const EN = {
   languageDesc: "The language of the whole app — island, panel, and Settings.",
   languageEnglish: "English",
   languagePersian: "فارسی",
+  startMenu: "Start menu",
 } as const;
 
 type StringKey = keyof typeof EN;
@@ -240,6 +241,7 @@ const FA: Record<StringKey, string> = {
   languageDesc: "زبان کل برنامه — جزیره، پنل و تنظیمات.",
   languageEnglish: "English",
   languagePersian: "فارسی",
+  startMenu: "منوی استارت",
 };
 
 export function t(lang: Language, key: StringKey): string {

@@ -308,6 +308,164 @@ body,
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
+}
+
+/* Thin divider between the compact bar's zones. */
+.island-divider {
+  width: 1px;
+  height: 32px;
+  align-self: center;
+  background: var(--island-border);
+  opacity: 0.7;
+  flex: none;
+}
+
+/* Taskbar replacement zone: Start button, pinned apps, open windows.
+   It takes the free space and scrolls instead of pushing the bar
+   past the 560px content box. */
+.taskbar-zone {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.taskbar-zone::-webkit-scrollbar {
+  display: none;
+}
+
+.taskbar-start {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--island-accent-text);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.taskbar-start:hover,
+.taskbar-app:hover {
+  background: var(--island-btn-bg);
+}
+
+.taskbar-app {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.taskbar-app.pinned {
+  cursor: default;
+}
+
+.taskbar-app.minimized {
+  opacity: 0.55;
+}
+
+.taskbar-app.active::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: -2px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--island-accent);
+  box-shadow: 0 0 6px var(--island-accent);
+}
+
+.taskbar-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.taskbar-icon-placeholder {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--island-btn-bg);
+  color: var(--island-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Compact stat chips: label + value on one line. */
+.compact-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.compact-stat {
+  font-size: 11px;
+  color: var(--island-text);
+  white-space: nowrap;
+}
+
+.compact-stat-label {
+  color: var(--island-subtext);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  margin-inline-end: 3px;
+}
+
+/* Compact now-playing: cover + play/pause only. Hidden when
+   nothing plays (the whole block is conditional). */
+.compact-media {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.compact-media-cover {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex: none;
+}
+
+.compact-media-btn {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--island-btn-bg);
+  border: 1px solid var(--island-btn-border);
+  border-radius: 9999px;
+  color: var(--island-accent-text);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
 }
 
 .island-brand {
@@ -532,6 +690,12 @@ body,
 
 /* Neon Glass sheet layout: stat chips, media card, clock. */
 .island-clock {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
   text-align: end;
   line-height: 1.2;
   flex: none;

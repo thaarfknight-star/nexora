@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -92,6 +92,25 @@ interface TaskbarStatus {
 interface WatchdogStatus {
   healthy: boolean;
   explorer_ok: boolean;
+}
+
+/** One open window for the compact bar's taskbar zone. Icons are
+ * raw RGBA pixels as base64 (32x32), not PNG data-URLs. */
+interface TaskbarWindow {
+  id: number;
+  title: string;
+  minimized: boolean;
+  active: boolean;
+  icon_size: number;
+  icon_rgba_base64: string;
+}
+
+/** One app pinned to the user's taskbar. Same icon format. */
+interface PinnedApp {
+  name: string;
+  target: string;
+  icon_size: number;
+  icon_rgba_base64: string;
 }
 
 interface NotificationItem {
@@ -237,6 +256,79 @@ function notificationKindLabel(kind: string, lang: Language): string {
   );
 }
 
+/** Decode a base64 raw-RGBA icon into pixels, or null when the
+ * backend sent no icon (icon_size 0) or the data is unusable. */
+function decodeRgbaIcon(
+  rgbaBase64: string,
+  size: number,
+): Uint8ClampedArray | null {
+  if (!rgbaBase64 || size <= 0) {
+    return null;
+  }
+  try {
+    const bytes = Uint8Array.from(atob(rgbaBase64), (c) => c.charCodeAt(0));
+    if (bytes.length !== size * size * 4) {
+      return null;
+    }
+    return new Uint8ClampedArray(bytes);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A taskbar icon from raw RGBA pixels: drawn on a canvas (the
+ * backend sends pixels, not PNG). No icon data renders a placeholder
+ * square with the title's first letter — never a fake app icon.
+ */
+function RgbaIcon({
+  rgbaBase64,
+  size,
+  title,
+}: {
+  rgbaBase64: string;
+  size: number;
+  title: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const pixels = useMemo(
+    () => decodeRgbaIcon(rgbaBase64, size),
+    [rgbaBase64, size],
+  );
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !pixels) {
+      return;
+    }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return;
+    }
+    ctx.putImageData(new ImageData(pixels, size, size), 0, 0);
+  }, [pixels, size]);
+  if (!pixels) {
+    return (
+      <span
+        className="taskbar-icon-placeholder"
+        title={title}
+        aria-label={title}
+      >
+        {title ? title.charAt(0) : "—"}
+      </span>
+    );
+  }
+  return (
+    <canvas
+      ref={canvasRef}
+      width={size}
+      height={size}
+      className="taskbar-icon"
+      title={title}
+      aria-label={title}
+    />
+  );
+}
+
 function IslandApp() {
   const [state, setState] = useState<IslandState>({
     expanded: false,
@@ -321,6 +413,9 @@ function IslandApp() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [seenIds, setSeenIds] = useState<string[]>([]);
+  // Compact bar's taskbar zone: open windows + pinned apps.
+  const [taskbarWindows, setTaskbarWindows] = useState<TaskbarWindow[]>([]);
+  const [pinnedApps, setPinnedApps] = useState<PinnedApp[]>([]);
   const [density, setDensity] = useState<"comfortable" | "compact">(
     "comfortable",
   );
@@ -388,10 +483,32 @@ function IslandApp() {
       .catch(() => setNotifications([]));
   };
 
+  const refreshTaskbar = () => {
+    invoke<TaskbarWindow[]>("get_taskbar_windows")
+      .then(setTaskbarWindows)
+      .catch(() => setTaskbarWindows([]));
+    invoke<PinnedApp[]>("get_pinned_apps")
+      .then(setPinnedApps)
+      .catch(() => setPinnedApps([]));
+  };
+
+  const activateTaskbarWindow = (id: number) => {
+    // After the click — accepted or not — re-read the list so the
+    // active/minimized marks never disagree with the backend.
+    invoke<boolean>("activate_taskbar_window", { id })
+      .then(() => refreshTaskbar())
+      .catch(() => refreshTaskbar());
+  };
+
+  const openStartMenu = () => {
+    invoke<boolean>("open_start_menu").catch(() => {});
+  };
+
   const refreshAll = () => {
     refreshStats();
     refreshMedia();
     refreshNotifications();
+    refreshTaskbar();
     invoke<TaskbarStatus>("get_taskbar_status")
       .then(setTaskbar)
       .catch(() => {});
@@ -502,7 +619,10 @@ function IslandApp() {
   }, []);
 
   useEffect(() => {
-    if (visible !== "expanded") {
+    // The compact bar shows live stats, media and taskbar icons, so
+    // the poll runs whenever the island is visible — not only when
+    // the panel is expanded. Hidden stays silent (click-through).
+    if (visible === "hidden") {
       return;
     }
     refreshAll();
@@ -511,6 +631,7 @@ function IslandApp() {
         refreshStats();
         refreshMedia();
         refreshNotifications();
+        refreshTaskbar();
       },
       clampPollSecs(displaySettings.pollIntervalSecs) * 1000,
     );
@@ -706,22 +827,158 @@ function IslandApp() {
               <div className="island-sub">{currentTheme.name}</div>
             </div>
           </div>
-          {visible === "expanded" && (
-            <div className="island-clock">
-              <div className="island-clock-time">
-                {clockTime(
-                  now,
-                  displaySettings.clock24h,
-                  displaySettings.showSeconds,
+          <span className="island-divider" aria-hidden="true" />
+          <div
+            className="taskbar-zone"
+            role="group"
+            aria-label={t(language, "taskbarLabel")}
+          >
+            <button
+              type="button"
+              className="taskbar-start"
+              onClick={openStartMenu}
+              title={t(language, "startMenu")}
+              aria-label={t(language, "startMenu")}
+            >
+              ⊞
+            </button>
+            {pinnedApps.map((app) => (
+              <span
+                key={app.target}
+                className="taskbar-app pinned"
+                title={app.name}
+              >
+                <RgbaIcon
+                  rgbaBase64={app.icon_rgba_base64}
+                  size={app.icon_size}
+                  title={app.name}
+                />
+              </span>
+            ))}
+            {taskbarWindows.map((win) => (
+              <button
+                key={win.id}
+                type="button"
+                className={`taskbar-app${win.active ? " active" : ""}${
+                  win.minimized ? " minimized" : ""
+                }`}
+                onClick={() => activateTaskbarWindow(win.id)}
+                title={win.title}
+                aria-label={win.title}
+              >
+                <RgbaIcon
+                  rgbaBase64={win.icon_rgba_base64}
+                  size={win.icon_size}
+                  title={win.title}
+                />
+              </button>
+            ))}
+          </div>
+          <span className="island-divider" aria-hidden="true" />
+          <div className="compact-stats">
+            <span
+              className="compact-stat"
+              title={
+                stats
+                  ? tf(language, "cpuUsageValue", {
+                      v: stats.cpu_percent.toFixed(1),
+                    })
+                  : t(language, "cpuUsageEmpty")
+              }
+            >
+              <span className="compact-stat-label">CPU</span>
+              {stats
+                ? formatPercent(
+                    stats.cpu_percent,
+                    displaySettings.percentStyle,
+                  )
+                : "—"}
+            </span>
+            <span
+              className="compact-stat"
+              title={
+                stats
+                  ? tf(language, "ramUsageValue", {
+                      v: stats.memory_percent.toFixed(1),
+                    })
+                  : t(language, "ramUsageEmpty")
+              }
+            >
+              <span className="compact-stat-label">RAM</span>
+              {stats
+                ? formatPercent(
+                    stats.memory_percent,
+                    displaySettings.percentStyle,
+                  )
+                : "—"}
+            </span>
+          </div>
+          {media && (
+            <>
+              <span className="island-divider" aria-hidden="true" />
+              <div className="compact-media">
+                {media.cover_art && (
+                  <img
+                    className="compact-media-cover"
+                    src={media.cover_art}
+                    alt=""
+                  />
                 )}
+                <button
+                  type="button"
+                  className="compact-media-btn"
+                  onClick={() =>
+                    sendMediaCommand(
+                      media.playing ? "media_pause" : "media_play",
+                    )
+                  }
+                  title={
+                    media.playing
+                      ? t(language, "mediaPause")
+                      : t(language, "mediaPlay")
+                  }
+                  aria-label={
+                    media.playing
+                      ? t(language, "mediaPause")
+                      : t(language, "mediaPlay")
+                  }
+                >
+                  {media.playing ? "⏸" : "▶"}
+                </button>
               </div>
+            </>
+          )}
+          <span className="island-divider" aria-hidden="true" />
+          <button
+            type="button"
+            className="island-clock"
+            onClick={toggleExpand}
+            title={
+              visible === "expanded"
+                ? t(language, "collapse")
+                : t(language, "expand")
+            }
+            aria-label={
+              visible === "expanded"
+                ? t(language, "collapse")
+                : t(language, "expand")
+            }
+          >
+            <div className="island-clock-time">
+              {clockTime(
+                now,
+                displaySettings.clock24h,
+                displaySettings.showSeconds,
+              )}
+            </div>
+            {visible === "expanded" && (
               <div className="island-clock-date">
                 <span dir="ltr">{clockParts.gregorian}</span>
                 {" · "}
                 <span dir="rtl">{clockParts.jalali}</span>
               </div>
-            </div>
-          )}
+            )}
+          </button>
           <button
             type="button"
             className="bell-btn"
