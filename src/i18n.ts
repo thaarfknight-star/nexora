@@ -32,6 +32,20 @@ const EN = {
   tabMedia: "Media",
   tabStats: "Stats",
   tabQuick: "Quick settings",
+  onboardingWelcomeTitle: "Welcome to Nexora",
+  onboardingWelcomeText:
+    "A small island at the top of your screen replaces your taskbar — your apps, music, stats and clock, all in one place.",
+  onboardingGetStarted: "Get started →",
+  onboardingTaskbarTitle: "Your taskbar, replaced — safely",
+  onboardingTaskbarText:
+    "Nexora hides the Windows taskbar and shows your pinned & open apps in the island instead, so you never lose a way to switch apps.",
+  onboardingTaskbarSafe:
+    "🛡️ Your taskbar always comes back when Nexora closes",
+  onboardingContinue: "Continue →",
+  onboardingLookTitle: "Pick your look",
+  onboardingLookText:
+    "You can change this any time in Settings → Appearance.",
+  onboardingStart: "Start using Nexora ✓",
   quickTheme: "Theme",
   notifications: "Notifications",
   openSettings: "Open Settings",
@@ -147,6 +161,20 @@ const FA: Record<StringKey, string> = {
   tabMedia: "مدیا",
   tabStats: "آمار",
   tabQuick: "تنظیمات سریع",
+  onboardingWelcomeTitle: "به Nexora خوش آمدید",
+  onboardingWelcomeText:
+    "جزیره‌ای کوچک در بالای صفحه‌ات جای تسک‌بار را می‌گیرد — اپ‌ها، موزیک، آمار و ساعت، همه در یک جا.",
+  onboardingGetStarted: "شروع کن ←",
+  onboardingTaskbarTitle: "تسک‌بارت، با خیال راحت جایگزین شد",
+  onboardingTaskbarText:
+    "Nexora تسک‌بار ویندوز را پنهان می‌کند و اپ‌های پین‌شده و باز را به‌جایش در جزیره نشان می‌دهد، پس هیچ‌وقت راه جابه‌جایی بین اپ‌ها را از دست نمی‌دهی.",
+  onboardingTaskbarSafe:
+    "🛡️ تسک‌بارت همیشه با بستن Nexora برمی‌گردد",
+  onboardingContinue: "ادامه ←",
+  onboardingLookTitle: "ظاهرت را انتخاب کن",
+  onboardingLookText:
+    "هر وقت خواستی، از بخش ظاهر در تنظیمات می‌توانی عوضش کنی.",
+  onboardingStart: "شروع استفاده از Nexora ✓",
   quickTheme: "تم",
   notifications: "اعلان‌ها",
   openSettings: "باز کردن تنظیمات",

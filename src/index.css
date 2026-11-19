@@ -585,6 +585,75 @@ body,
   color: var(--island-subtext);
 }
 
+/* First-run onboarding (design artifact): three pages in the
+   expanded panel instead of the tabs. */
+.onboarding-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px 16px;
+  text-align: center;
+}
+
+.onboarding-emblem {
+  width: 52px;
+  height: 52px;
+  display: block;
+}
+
+.onboarding-title {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.onboarding-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--island-subtext);
+  max-width: 420px;
+}
+
+.onboarding-callout {
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: start;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(34, 197, 94, 0.15);
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  max-width: 420px;
+}
+
+.onboarding-btn {
+  font-size: 13px;
+  padding: 8px 18px;
+  margin-top: 4px;
+}
+
+.onboarding-themes {
+  margin-top: 4px;
+}
+
+.onboarding-dots {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.onboarding-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--island-subtext);
+  opacity: 0.5;
+}
+
+.onboarding-dot.on {
+  background: var(--island-accent);
+  opacity: 1;
+}
+
 .settings-section-desc {
   width: 100%;
   max-width: 420px;

@@ -347,6 +347,13 @@ function IslandApp() {
   });
   const [theme, setTheme] = useState<ThemeId>("neon-glass");
   const [tab, setTab] = useState<IslandTab>("media");
+  // First-run onboarding (design artifact): three pages shown in the
+  // expanded panel instead of the tabs, until the user finishes page
+  // 3. Completion lives in localStorage only — no settings field.
+  const [onboardingPage, setOnboardingPage] = useState<number | null>(null);
+  // Ref mirror for the once-registered listeners (Esc, hot zone):
+  // they only ever see the first render's closure.
+  const onboardingRef = useRef<number | null>(null);
   // Full settings object, for the Quick settings tab: every change
   // goes through set_settings (rule 18), never local storage.
   const [settings, setSettings] = useState<NexoraSettings | null>(null);
@@ -399,6 +406,11 @@ function IslandApp() {
 
   const armAutoClose = () => {
     clearAutoCloseTimer();
+    // While the onboarding is open, auto-close stays off so the
+    // island never vanishes mid-read.
+    if (onboardingRef.current !== null) {
+      return;
+    }
     if (keepOpenRef.current || hoveringRef.current) {
       return;
     }
@@ -601,6 +613,10 @@ function IslandApp() {
       if (event.key !== "Escape" || keepOpenRef.current) {
         return;
       }
+      // Esc never dismisses the onboarding mid-read.
+      if (onboardingRef.current !== null) {
+        return;
+      }
       if (visibleRef.current === "expanded") {
         showIsland("compact");
       } else if (visibleRef.current === "compact") {
@@ -611,6 +627,14 @@ function IslandApp() {
     // The island starts hidden: the fixed canvas lets clicks pass
     // through until the hot zone wakes it.
     invoke("set_island_click_through", { ignore: true }).catch(() => {});
+    // First run: the onboarding has not been finished — open the
+    // island expanded on the welcome page. This runs after the
+    // click-through line above, so the island receives clicks.
+    if (window.localStorage.getItem("nexora-onboarding-done") !== "1") {
+      onboardingRef.current = 0;
+      setOnboardingPage(0);
+      showIsland("expanded");
+    }
     return () => {
       clearAutoCloseTimer();
       window.removeEventListener("keydown", onKeyDown);
@@ -732,6 +756,39 @@ function IslandApp() {
     const next = THEMES[(currentIndex + 1) % THEMES.length];
     applyTheme(next.id);
     saveSettings({ ...settings, theme: next.id });
+  };
+
+  // Onboarding navigation. The four theme cards on page 3 are the
+  // design's picks, in its order; Neon Glass reads as preselected
+  // because it is the default theme (theme state starts there).
+  const ONBOARDING_THEMES: ThemeId[] = [
+    "neon-glass",
+    "obsidian",
+    "aurora",
+    "liquid-glass",
+  ];
+
+  const goOnboardingPage = (next: number) => {
+    onboardingRef.current = next;
+    setOnboardingPage(next);
+  };
+
+  const pickOnboardingTheme = (id: ThemeId) => {
+    if (!settings) {
+      return;
+    }
+    applyTheme(id);
+    saveSettings({ ...settings, theme: id });
+  };
+
+  const finishOnboarding = () => {
+    try {
+      window.localStorage.setItem("nexora-onboarding-done", "1");
+    } catch {
+      // Storage blocked: the onboarding just shows once more.
+    }
+    onboardingRef.current = null;
+    setOnboardingPage(null);
   };
 
   // Selecting a tab; opening Notifications also marks everything
@@ -1069,6 +1126,114 @@ function IslandApp() {
         </div>
         {visible === "expanded" && (
           <>
+            {onboardingPage !== null ? (
+              <div className="onboarding-panel">
+                {onboardingPage === 0 && (
+                  <>
+                    <img
+                      className="onboarding-emblem"
+                      src={emblem}
+                      alt="Nexora"
+                      width={52}
+                      height={52}
+                    />
+                    <h2 className="onboarding-title">
+                      {t(language, "onboardingWelcomeTitle")}
+                    </h2>
+                    <p className="onboarding-text">
+                      {t(language, "onboardingWelcomeText")}
+                    </p>
+                    <button
+                      type="button"
+                      className="mini-btn onboarding-btn"
+                      onClick={() => goOnboardingPage(1)}
+                    >
+                      {t(language, "onboardingGetStarted")}
+                    </button>
+                  </>
+                )}
+                {onboardingPage === 1 && (
+                  <>
+                    <h2 className="onboarding-title">
+                      {t(language, "onboardingTaskbarTitle")}
+                    </h2>
+                    <p className="onboarding-text">
+                      {t(language, "onboardingTaskbarText")}
+                    </p>
+                    <div className="onboarding-callout">
+                      {t(language, "onboardingTaskbarSafe")}
+                    </div>
+                    <button
+                      type="button"
+                      className="mini-btn onboarding-btn"
+                      onClick={() => goOnboardingPage(2)}
+                    >
+                      {t(language, "onboardingContinue")}
+                    </button>
+                  </>
+                )}
+                {onboardingPage === 2 && (
+                  <>
+                    <h2 className="onboarding-title">
+                      {t(language, "onboardingLookTitle")}
+                    </h2>
+                    <div className="theme-cards onboarding-themes">
+                      {ONBOARDING_THEMES.map((candidate) => {
+                        const definition = themeById(candidate);
+                        return (
+                          <button
+                            key={candidate}
+                            type="button"
+                            className={`theme-card${
+                              candidate === theme ? " selected" : ""
+                            }`}
+                            data-theme={candidate}
+                            aria-label={definition.name}
+                            aria-pressed={candidate === theme}
+                            onClick={() => pickOnboardingTheme(candidate)}
+                            disabled={!settings}
+                          >
+                            <span
+                              className="theme-card-preview"
+                              aria-hidden="true"
+                            >
+                              <span className="theme-card-dot" />
+                              <span className="theme-card-bar" />
+                              <span className="theme-card-bar short" />
+                            </span>
+                            <span className="theme-card-name">
+                              {definition.name}
+                              {candidate === theme ? " ✓" : ""}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="onboarding-text">
+                      {t(language, "onboardingLookText")}
+                    </p>
+                    <button
+                      type="button"
+                      className="mini-btn onboarding-btn"
+                      onClick={finishOnboarding}
+                    >
+                      {t(language, "onboardingStart")}
+                    </button>
+                  </>
+                )}
+                <div className="onboarding-dots" aria-hidden="true">
+                  {[0, 1, 2].map((index) => (
+                    <i
+                      key={index}
+                      className={`onboarding-dot${
+                        onboardingPage === index ? " on" : ""
+                      }`}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <>
             <div
               className="island-tabs"
               role="tablist"
@@ -1492,6 +1657,8 @@ function IslandApp() {
                   </button>
                 </div>
               </div>
+            )}
+              </>
             )}
           </>
         )}
