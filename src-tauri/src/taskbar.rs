@@ -272,6 +272,16 @@ pub fn start_monitor() {
                 monitor_tick(&mut prev);
             }
             MONITOR_RUNNING.store(false, Ordering::SeqCst);
+            // Close the race DEVagent flagged: hide() may have run between
+            // the loop's intent check above and this store, seen
+            // MONITOR_RUNNING still set and skipped spawning — so re-check
+            // the intent here and restart the monitor instead of leaving
+            // none running. (hide()'s own start_monitor() covers the
+            // other interleavings; either call is a no-op when a monitor
+            // is already running.)
+            if hidden_by_nexora() {
+                start_monitor();
+            }
         });
     }
 }

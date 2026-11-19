@@ -7,6 +7,7 @@ pub mod notifications;
 pub mod settings;
 pub mod stats;
 pub mod taskbar;
+pub mod taskbar_content;
 pub mod tray;
 pub mod updater;
 pub mod watchdog;
