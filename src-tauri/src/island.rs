@@ -220,7 +220,7 @@ pub fn setup_window(window: &tauri::Window) -> Result<IslandState, tauri::Error>
 /// `monitor_width` logical pixels wide is inside the hot zone: the
 /// strip `0..=HOT_ZONE_HEIGHT` along the top edge.
 pub fn is_in_hot_zone(cursor_x: f64, cursor_y: f64, monitor_width: f64) -> bool {
-    cursor_x >= 0.0 && cursor_x <= monitor_width && cursor_y >= 0.0 && cursor_y <= HOT_ZONE_HEIGHT
+    (0.0..=monitor_width).contains(&cursor_x) && (0.0..=HOT_ZONE_HEIGHT).contains(&cursor_y)
 }
 
 /// Whether the cursor is currently inside the hot zone of the
