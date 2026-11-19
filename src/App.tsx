@@ -21,6 +21,7 @@ import {
   tf,
   type Language,
 } from "./i18n";
+import { jalaliDate } from "./jalali";
 
 interface IslandState {
   expanded: boolean;
@@ -154,6 +155,19 @@ function clockDate(date: Date, format: string): string {
     month: "short",
     day: "numeric",
   });
+}
+
+// Both halves of the island clock: Gregorian first, then Jalali.
+// The Settings date format applies to both — short is day + month,
+// full adds the weekday and the year on both sides.
+function clockDateParts(date: Date, format: string): {
+  gregorian: string;
+  jalali: string;
+} {
+  return {
+    gregorian: clockDate(date, format),
+    jalali: jalaliDate(date, format),
+  };
 }
 
 // Refresh interval the poll slider offers (seconds); a stored value
@@ -599,6 +613,7 @@ function IslandApp() {
   };
 
   const currentTheme = themeById(theme);
+  const clockParts = clockDateParts(now, displaySettings.dateFormat);
   const unreadCount = notifications.filter(
     (item) => !seenIds.includes(item.id),
   ).length;
@@ -701,7 +716,9 @@ function IslandApp() {
                 )}
               </div>
               <div className="island-clock-date">
-                {clockDate(now, displaySettings.dateFormat)}
+                <span dir="ltr">{clockParts.gregorian}</span>
+                {" · "}
+                <span dir="rtl">{clockParts.jalali}</span>
               </div>
             </div>
           )}
