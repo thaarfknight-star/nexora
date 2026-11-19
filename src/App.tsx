@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -221,6 +221,64 @@ function IslandApp() {
   const [taskbar, setTaskbar] = useState<TaskbarStatus | null>(null);
   const [watchdog, setWatchdog] = useState<WatchdogStatus | null>(null);
   const [now, setNow] = useState(() => new Date());
+  // Island visibility state machine (design artifact): the window
+  // never resizes — the pill animates inside the fixed canvas.
+  type IslandVisible = "hidden" | "compact" | "expanded";
+  // Delay after the pointer leaves the island before it steps one
+  // level down (expanded -> compact -> hidden).
+  const AUTO_CLOSE_DELAY_MS = 2500;
+  const [visible, setVisibleState] = useState<IslandVisible>("hidden");
+  // Stage height duration: open ~320 ms, close ~220 ms (design
+  // artifact). Set per transition; the CSS default is the close one.
+  const [stageMs, setStageMs] = useState(220);
+  const [keepOpen, setKeepOpen] = useState(false);
+  const visibleRef = useRef<IslandVisible>("hidden");
+  const keepOpenRef = useRef(false);
+  const hoveringRef = useRef(false);
+  const autoCloseTimer = useRef<number | undefined>(undefined);
+
+  const clearAutoCloseTimer = () => {
+    if (autoCloseTimer.current !== undefined) {
+      window.clearTimeout(autoCloseTimer.current);
+      autoCloseTimer.current = undefined;
+    }
+  };
+
+  const showIsland = (next: IslandVisible) => {
+    const opening =
+      (visibleRef.current === "hidden" && next === "compact") ||
+      (visibleRef.current === "compact" && next === "expanded");
+    setStageMs(opening ? 320 : 220);
+    visibleRef.current = next;
+    setVisibleState(next);
+    // Keep the backend flag in sync: it drives the poll loop.
+    invoke<IslandState>("set_island_expanded", {
+      expanded: next === "expanded",
+    })
+      .then(setState)
+      .catch(() => {});
+    // Click-through policy: hidden -> ignore, visible -> receive.
+    invoke("set_island_click_through", { ignore: next === "hidden" }).catch(
+      () => {},
+    );
+  };
+
+  const armAutoClose = () => {
+    clearAutoCloseTimer();
+    if (keepOpenRef.current || hoveringRef.current) {
+      return;
+    }
+    autoCloseTimer.current = window.setTimeout(() => {
+      const current = visibleRef.current;
+      if (current === "expanded") {
+        showIsland("compact");
+        armAutoClose();
+      } else if (current === "compact") {
+        showIsland("hidden");
+      }
+    }, AUTO_CLOSE_DELAY_MS);
+  };
+
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [seenIds, setSeenIds] = useState<string[]>([]);
@@ -351,16 +409,52 @@ function IslandApp() {
         unlistenNotifications = stop;
       })
       .catch(() => {});
+    // Hot zone (backend watcher, 100 ms poll of the monitor top edge):
+    // entering wakes the island from hidden; leaving arms the
+    // auto-close timer. The watcher also fires once at startup.
+    let unlistenHotZone: (() => void) | undefined;
+    listen<{ in_hot_zone: boolean }>("island-hot-zone", (event) => {
+      if (event.payload.in_hot_zone) {
+        clearAutoCloseTimer();
+        if (visibleRef.current === "hidden") {
+          showIsland("compact");
+        }
+      } else if (visibleRef.current === "compact") {
+        armAutoClose();
+      }
+    })
+      .then((stop) => {
+        unlistenHotZone = stop;
+      })
+      .catch(() => {});
+    // Esc steps one level down, unless the island is pinned open.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || keepOpenRef.current) {
+        return;
+      }
+      if (visibleRef.current === "expanded") {
+        showIsland("compact");
+      } else if (visibleRef.current === "compact") {
+        showIsland("hidden");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    // The island starts hidden: the fixed canvas lets clicks pass
+    // through until the hot zone wakes it.
+    invoke("set_island_click_through", { ignore: true }).catch(() => {});
     return () => {
+      clearAutoCloseTimer();
+      window.removeEventListener("keydown", onKeyDown);
       unlisten?.();
       unlistenNotifications?.();
+      unlistenHotZone?.();
     };
     // Runs once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (!state.expanded) {
+    if (visible !== "expanded") {
       return;
     }
     refreshAll();
@@ -379,19 +473,51 @@ function IslandApp() {
     };
     // Refresh helpers only use stable setters and invoke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.expanded, displaySettings.pollIntervalSecs]);
+  }, [visible, displaySettings.pollIntervalSecs]);
 
-  const toggle = () => {
-    const next = !state.expanded;
-    invoke<IslandState>("set_island_expanded", { expanded: next })
-      .then(setState)
-      .catch(() =>
-        setState((prev) => ({
-          ...prev,
-          expanded: next,
-          mode: next ? "expanded" : "compact",
-        }))
-      );
+  // Clicking the island itself toggles expand / collapse; the bell
+  // and gear buttons are siblings, so their clicks do not toggle.
+  const toggleExpand = () => {
+    if (visible === "compact") {
+      showIsland("expanded");
+    } else if (visible === "expanded") {
+      showIsland("compact");
+    }
+  };
+
+  // Clicking the empty canvas around the pill steps one level down.
+  const onShellClick = (event: React.MouseEvent<HTMLElement>) => {
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+    if (visible === "expanded") {
+      showIsland("compact");
+    } else if (visible === "compact") {
+      showIsland("hidden");
+    }
+  };
+
+  const onShellMouseEnter = () => {
+    hoveringRef.current = true;
+    clearAutoCloseTimer();
+  };
+
+  const onShellMouseLeave = () => {
+    hoveringRef.current = false;
+    if (visibleRef.current !== "hidden") {
+      armAutoClose();
+    }
+  };
+
+  const toggleKeepOpen = () => {
+    const next = !keepOpen;
+    keepOpenRef.current = next;
+    setKeepOpen(next);
+    if (next) {
+      clearAutoCloseTimer();
+    } else if (!hoveringRef.current && visibleRef.current !== "hidden") {
+      armAutoClose();
+    }
   };
 
   const openSettings = () => {
@@ -401,9 +527,9 @@ function IslandApp() {
   };
 
   const toggleNotifications = () => {
-    if (!state.expanded) {
+    if (visible !== "expanded") {
       // The center only renders expanded — open the island first.
-      toggle();
+      showIsland("expanded");
     }
     if (!showNotifications) {
       refreshNotifications();
@@ -468,9 +594,19 @@ function IslandApp() {
   ];
 
   return (
-    <main className="island-shell">
-      <section
-        className={`island-pill${state.expanded ? " expanded" : ""}`}
+    <main
+      className="island-shell"
+      onMouseEnter={onShellMouseEnter}
+      onMouseLeave={onShellMouseLeave}
+      onClick={onShellClick}
+    >
+      <div
+        className={`island-stage ${visible}`}
+        style={{ transitionDuration: `${stageMs}ms` }}
+      >
+        <div className="island-handle" aria-hidden="true" />
+        <section
+          className={`island-pill${visible === "expanded" ? " expanded" : ""}`}
         style={{
           ...(islandStyle.blur !== null
             ? { backdropFilter: `blur(${islandStyle.blur}px)` }
@@ -481,7 +617,11 @@ function IslandApp() {
         }}
       >
         <div className="island-row">
-          <div className="island-brand">
+          <div
+            className="island-brand"
+            onClick={toggleExpand}
+            title={visible === "expanded" ? "Collapse" : "Expand"}
+          >
             <img
               className="island-emblem"
               src={emblem}
@@ -491,12 +631,10 @@ function IslandApp() {
             />
             <div>
               <div className="island-title">{state.title}</div>
-              <div className="island-sub">
-                Mode: {state.mode} · {currentTheme.name}
-              </div>
+              <div className="island-sub">{currentTheme.name}</div>
             </div>
           </div>
-          {state.expanded && (
+          {visible === "expanded" && (
             <div className="island-clock">
               <div className="island-clock-time">
                 {clockTime(
@@ -534,11 +672,23 @@ function IslandApp() {
           >
             <img src={gear} alt="" width={28} height={28} />
           </button>
-          <button className="island-btn" onClick={toggle} type="button">
-            {state.expanded ? "Collapse" : "Expand"}
-          </button>
+          {visible === "expanded" && (
+            <button
+              type="button"
+              className={`mini-btn${keepOpen ? " pinned" : ""}`}
+              onClick={toggleKeepOpen}
+              title={
+                keepOpen
+                  ? "Keep open is on — auto-close is off"
+                  : "Keep open — stop auto-close"
+              }
+              aria-pressed={keepOpen}
+            >
+              {keepOpen ? "Pinned ✓" : "Keep open"}
+            </button>
+          )}
         </div>
-        {state.expanded && (
+        {visible === "expanded" && (
           <>
             {showNotifications ? (
               <div
@@ -859,7 +1009,8 @@ function IslandApp() {
             )}
           </>
         )}
-      </section>
+        </section>
+      </div>
     </main>
   );
 }
