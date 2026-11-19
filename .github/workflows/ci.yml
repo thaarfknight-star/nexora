@@ -41,6 +41,41 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Diagnose test-binary loader error (temporary)
+        working-directory: src-tauri
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          Write-Host '=== build test binaries without running them ==='
+          cargo test --no-run
+          Write-Host '=== locate dumpbin ==='
+          $dumpbin = $null
+          try {
+            $dumpbin = Get-ChildItem 'C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe' -ErrorAction Stop | Select-Object -First 1 -ExpandProperty FullName
+            Write-Host "dumpbin: $dumpbin"
+          } catch { Write-Host "dumpbin not found: $_" }
+          if ($dumpbin) {
+            $exes = Get-ChildItem 'target\debug\build\nexora\*\out\nexora_lib-*.exe' -ErrorAction SilentlyContinue
+            foreach ($exe in $exes) {
+              Write-Host "=== imports of $($exe.FullName) ==="
+              & $dumpbin /imports $exe.FullName
+            }
+          }
+          Write-Host '=== WebView2Loader.dll hunt ==='
+          $paths = @('C:\Windows\System32\WebView2Loader.dll', 'C:\Windows\SysWOW64\WebView2Loader.dll', 'target\debug\WebView2Loader.dll')
+          $edge = Get-ChildItem 'C:\Program Files (x86)\Microsoft\EdgeWebView\Application\*\WebView2Loader.dll' -ErrorAction SilentlyContinue | Select-Object -First 2 -ExpandProperty FullName
+          if ($edge) { $paths += $edge }
+          foreach ($p in $paths) {
+            if (Test-Path $p) {
+              Write-Host "--- found: $p ---"
+              (Get-Item $p).VersionInfo | Format-List FileVersion, ProductVersion | Out-String | Write-Host
+              if ($dumpbin) { & $dumpbin /exports $p | Select-String 'GetAvailableCoreWebView2BrowserVersionString|CreateCoreWebView2Environment' }
+            } else {
+              Write-Host "missing: $p"
+            }
+          }
+          Write-Host '=== diagnostic done (this step never fails the job) ==='
+
       - name: Run Cargo tests
         working-directory: src-tauri
         run: cargo test
