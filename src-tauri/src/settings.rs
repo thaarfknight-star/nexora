@@ -19,6 +19,10 @@ fn default_theme() -> String {
     "neon-glass".into()
 }
 
+fn default_language() -> String {
+    "en".into()
+}
+
 fn default_clock_24h() -> bool {
     true
 }
@@ -47,6 +51,10 @@ pub struct NexoraSettings {
     pub always_on_top: bool,
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// UI language: `"en"` or `"fa"`. Any other value falls back to `"en"`
+    /// in `normalized()`.
+    #[serde(default = "default_language")]
+    pub language: String,
     /// Island blur in px; `None` means the theme default, `Some(v)` is a
     /// user override (the frontend clamps the slider value).
     #[serde(default)]
@@ -85,6 +93,7 @@ pub fn defaults() -> NexoraSettings {
         auto_hide_taskbar: true,
         always_on_top: true,
         theme: "neon-glass".into(),
+        language: "en".into(),
         island_blur_px: None,
         island_radius_px: None,
         clock_24h: true,
@@ -98,13 +107,17 @@ pub fn defaults() -> NexoraSettings {
 
 impl NexoraSettings {
     /// Repairs values that cannot be applied: an empty theme falls back
-    /// to the default theme. Theme names are not restricted here on
-    /// purpose — the theme list lives in the frontend (`src/themes.ts`).
+    /// to the default theme, and an unsupported language falls back to
+    /// English. Theme names are not restricted here on purpose — the
+    /// theme list lives in the frontend (`src/themes.ts`).
     fn normalized(mut self) -> Self {
         if self.theme.trim().is_empty() {
             self.theme = default_theme();
         } else {
             self.theme = self.theme.trim().to_string();
+        }
+        if self.language != "en" && self.language != "fa" {
+            self.language = default_language();
         }
         self
     }
@@ -223,6 +236,7 @@ mod tests {
             poll_interval_secs: 5,
             stats_speed_unit: "mb".into(),
             stats_percent_style: "without".into(),
+            language: "fa".into(),
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
         assert_eq!(load_from_dir(&dir), settings);
@@ -258,6 +272,7 @@ mod tests {
                 poll_interval_secs: 3,
                 stats_speed_unit: "auto".into(),
                 stats_percent_style: "with".into(),
+                language: "en".into(),
             }
         );
         let _ = fs::remove_dir_all(&dir);
@@ -287,9 +302,32 @@ mod tests {
             poll_interval_secs: 3,
             stats_speed_unit: "auto".into(),
             stats_percent_style: "with".into(),
+            language: "en".into(),
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
         assert_eq!(load_from_dir(&dir).theme, "neon-glass");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unsupported_language_falls_back_to_english() {
+        let dir = test_dir();
+        let settings = NexoraSettings {
+            auto_hide_taskbar: true,
+            always_on_top: true,
+            theme: "neon-glass".into(),
+            island_blur_px: None,
+            island_radius_px: None,
+            clock_24h: true,
+            show_seconds: false,
+            date_format: "short".into(),
+            poll_interval_secs: 3,
+            stats_speed_unit: "auto".into(),
+            stats_percent_style: "with".into(),
+            language: "de".into(),
+        };
+        save_to_dir(&dir, &settings).expect("save must succeed");
+        assert_eq!(load_from_dir(&dir).language, "en");
         let _ = fs::remove_dir_all(&dir);
     }
 }
