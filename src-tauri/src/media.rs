@@ -33,7 +33,7 @@ use serde::Serialize;
 
 #[cfg(target_os = "windows")]
 use windows::{
-    core::{Result as WinResult, HSTRING},
+    core::{AgileReference, Result as WinResult, HSTRING},
     ApplicationModel::Package,
     Foundation::Uri,
     Management::Deployment::PackageManager,
@@ -216,29 +216,44 @@ where
 async fn read_cover(
     properties: &GlobalSystemMediaTransportControlsSessionMediaProperties,
 ) -> String {
-    let Ok(thumbnail) = properties.Thumbnail() else {
+    // `IRandomAccessStreamReference` is not Send, so it never becomes a
+    // local of this async fn: it is created and consumed inside this
+    // closure, which only returns the (Send) read operation.
+    let Some(operation) = (|| {
+        let thumbnail = properties.Thumbnail().ok()?;
+        thumbnail.OpenReadAsync().ok()
+    })() else {
         return String::new();
     };
-    let Ok(operation) = thumbnail.OpenReadAsync() else {
+    // `IRandomAccessStreamWithContentType` is not Send either, so the
+    // stream is wrapped in an agile reference the moment it comes out
+    // of the await; the raw interface never becomes a local here.
+    // (Moving or dropping the raw interface before an await does NOT
+    // satisfy the compiler — it stays in the future's state.)
+    let Ok(stream) = operation
+        .await
+        .map(|s| AgileReference::new(&s))
+        .and_then(|r| r)
+    else {
         return String::new();
     };
-    let Ok(stream) = operation.await else {
+    // All stream work happens inside this closure: it resolves the
+    // agile reference, reads the metadata, and starts the load. Only
+    // Send values come back out.
+    let Some((content_type, size, reader, loaded_op)) = (|| {
+        let stream = stream.resolve().ok()?;
+        let content_type = hstring_or(stream.ContentType(), "image/jpeg");
+        let size = stream.Size().ok()?;
+        if size == 0 || size > 1_048_576 {
+            return None;
+        }
+        let reader = DataReader::CreateDataReader(&stream).ok()?;
+        let op = reader.LoadAsync(size as u32).ok()?;
+        Some((content_type, size, reader, op))
+    })() else {
         return String::new();
     };
-    let content_type = hstring_or(stream.ContentType(), "image/jpeg");
-    let Ok(size) = stream.Size() else {
-        return String::new();
-    };
-    if size == 0 || size > 1_048_576 {
-        return String::new();
-    }
-    let Ok(reader) = DataReader::CreateDataReader(&stream) else {
-        return String::new();
-    };
-    let Ok(loaded) = reader.LoadAsync(size as u32) else {
-        return String::new();
-    };
-    let Ok(loaded) = loaded.await else {
+    let Ok(loaded) = loaded_op.await else {
         return String::new();
     };
     if loaded as u64 != size {
@@ -420,16 +435,29 @@ fn logo_candidates(path: &str) -> Vec<String> {
 /// over 1 MiB are rejected, like the cover art.
 #[cfg(target_os = "windows")]
 async fn read_file_bytes(path: &str) -> Option<Vec<u8>> {
+    // `IBuffer` is not Send, so it is wrapped in an agile reference
+    // the moment it comes out of the await; the raw interface never
+    // becomes a local of this async fn.
     let buffer = PathIO::ReadBufferAsync(&HSTRING::from(path))
         .ok()?
         .await
+        .map(|b| AgileReference::new(&b))
+        .and_then(|r| r)
         .ok()?;
-    let len = buffer.Length().ok()? as usize;
-    if len == 0 || len > 1_048_576 {
-        return None;
-    }
-    let reader = DataReader::FromBuffer(&buffer).ok()?;
-    let loaded = reader.LoadAsync(len as u32).ok()?.await.ok()?;
+    let len = (|| {
+        let buffer = buffer.resolve().ok()?;
+        buffer.Length().ok().map(|l| l as usize)
+    })()
+    .filter(|&l| l != 0 && l <= 1_048_576)?;
+    // The reader and the load operation are built inside this closure
+    // from the resolved buffer; only Send values come back out.
+    let (reader, loaded_op) = (|| {
+        let buffer = buffer.resolve().ok()?;
+        let reader = DataReader::FromBuffer(&buffer).ok()?;
+        let op = reader.LoadAsync(len as u32).ok()?;
+        Some((reader, op))
+    })()?;
+    let loaded = loaded_op.await.ok()?;
     if loaded as usize != len {
         return None;
     }
@@ -477,6 +505,21 @@ mod tests {
         assert!(!is_playing(Status::Stopped));
         assert!(!is_playing(Status::Closed));
         assert!(!is_playing(Status::Changing));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn media_futures_are_send() {
+        // Every async media function is awaited by a `#[tauri::command]`,
+        // which requires the future to be Send. This pins that down at
+        // compile time, so a non-Send capture fails here instead of
+        // only in CI.
+        fn assert_send<T: Send>(_: T) {}
+        assert_send(now_playing());
+        assert_send(play());
+        assert_send(pause());
+        assert_send(next());
+        assert_send(previous());
     }
 
     #[cfg(target_os = "windows")]

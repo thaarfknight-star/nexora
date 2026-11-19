@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Album cover art in `MediaInfo.cover_art` (`media.rs`): the session thumbnail via `GetThumbnailAsync`, returned as a `data:` URI ready for the media card `<img>`; empty when the session has no thumbnail.
 - Source app icon in `MediaInfo.source_icon` (`media.rs`): the playing app's package logo via its GSMTC AUMID, returned as a `data:` URI ready for the media card `<img>`; empty when the app has no package or no logo file.
 
+### Fixed
+- Media commands no longer fail to compile on Windows: the GSMTC thumbnail stream and the icon file buffer are WinRT interfaces that are not `Send`, so they are wrapped in `AgileReference` the moment they come out of an await instead of living across one (`media.rs`); a compile-time test now pins that every async media future is `Send`.
+
 ## [0.1.0] - 2026-11-18
 
 First public release. Nexora is a floating Dynamic Island shell for Windows 10/11
