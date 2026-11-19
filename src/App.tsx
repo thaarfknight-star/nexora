@@ -1505,6 +1505,18 @@ function SettingsView() {
   const [settings, setSettings] = useState<NexoraSettings | null>(null);
   const [theme, setTheme] = useState<ThemeId>("neon-glass");
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  // The sidebar section on screen. The window is 900x620 with a
+  // 7-section sidebar (design artifact); the frameless frame itself
+  // comes from EAgent5 — this branch is the content only.
+  type SettingsSection =
+    | "language"
+    | "appearance"
+    | "taskbar"
+    | "islandStyle"
+    | "clock"
+    | "performance"
+    | "updates";
+  const [section, setSection] = useState<SettingsSection>("language");
   // UI language, derived from the settings object (backend `language`
   // field, "en" default). The whole window — strings and reading
   // direction — follows it.
@@ -1680,10 +1692,52 @@ function SettingsView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const sections: { id: SettingsSection; label: string }[] = [
+    { id: "language", label: t(language, "sectionLanguage") },
+    { id: "appearance", label: t(language, "sectionAppearance") },
+    { id: "taskbar", label: t(language, "sectionTaskbar") },
+    { id: "islandStyle", label: t(language, "sectionIslandStyle") },
+    { id: "clock", label: t(language, "sectionClock") },
+    { id: "performance", label: t(language, "sectionPerformance") },
+    { id: "updates", label: t(language, "sectionUpdates") },
+  ];
+
   return (
     <main className="settings-shell">
-      <img className="settings-wordmark" src={wordmark} alt="Nexora" />
-      <h1 className="settings-title">{t(language, "settingsTitle")}</h1>
+      <aside className="settings-sidebar">
+        <img className="settings-wordmark" src={wordmark} alt="Nexora" />
+        <h1 className="settings-title">{t(language, "settingsTitle")}</h1>
+        <nav
+          className="settings-nav"
+          aria-label={t(language, "settingsTitle")}
+        >
+          {sections.map((candidate) => (
+            <button
+              key={candidate.id}
+              type="button"
+              className={`settings-nav-btn${
+                section === candidate.id ? " active" : ""
+              }`}
+              aria-current={section === candidate.id}
+              onClick={() => setSection(candidate.id)}
+            >
+              {candidate.label}
+            </button>
+          ))}
+        </nav>
+        <div className="settings-sidebar-footer">
+          <button
+            type="button"
+            className="mini-btn settings-reset"
+            onClick={resetToDefaults}
+          >
+            {t(language, "resetToDefaults")}
+          </button>
+        </div>
+      </aside>
+      <div className="settings-content">
+      {section === "language" && (
+        <>
       <h2 className="settings-section-title">
         {t(language, "sectionLanguage")}
       </h2>
@@ -1708,6 +1762,10 @@ function SettingsView() {
             : "—"}
         </button>
       </div>
+        </>
+      )}
+      {section === "appearance" && (
+        <>
       <h2 className="settings-section-title">
         {t(language, "sectionAppearance")}
       </h2>
@@ -1750,6 +1808,16 @@ function SettingsView() {
           </button>
         ))}
       </div>
+        </>
+      )}
+      {section === "taskbar" && (
+        <>
+      <h2 className="settings-section-title">
+        {t(language, "sectionTaskbar")}
+      </h2>
+      <p className="settings-section-desc">
+        {t(language, "taskbarDesc")}
+      </p>
       <div className="settings-row">
         <span className="settings-row-text">
           <span>{t(language, "autoHideTaskbar")}</span>
@@ -1780,6 +1848,10 @@ function SettingsView() {
           {settings ? onOff(settings.always_on_top, language) : "—"}
         </button>
       </div>
+        </>
+      )}
+      {section === "islandStyle" && (
+        <>
       <h2 className="settings-section-title">
         {t(language, "sectionIslandStyle")}
       </h2>
@@ -1870,6 +1942,10 @@ function SettingsView() {
           </button>
         </div>
       </div>
+        </>
+      )}
+      {section === "clock" && (
+        <>
       <h2 className="settings-section-title">{t(language, "sectionClock")}</h2>
       <p className="settings-section-desc">{t(language, "clockDesc")}</p>
       <div className="settings-row">
@@ -1922,6 +1998,10 @@ function SettingsView() {
             : "—"}
         </button>
       </div>
+        </>
+      )}
+      {section === "performance" && (
+        <>
       <h2 className="settings-section-title">
         {t(language, "sectionPerformance")}
       </h2>
@@ -2006,6 +2086,16 @@ function SettingsView() {
             : "—"}
         </button>
       </div>
+        </>
+      )}
+      {section === "updates" && (
+        <>
+      <h2 className="settings-section-title">
+        {t(language, "sectionUpdates")}
+      </h2>
+      <p className="settings-section-desc">
+        {t(language, "updatesDesc")}
+      </p>
       <div className="settings-row">
         <span>
           {updateInfo
@@ -2018,15 +2108,11 @@ function SettingsView() {
           {t(language, "checkForUpdates")}
         </button>
       </div>
-      <button
-        type="button"
-        className="mini-btn settings-reset"
-        onClick={resetToDefaults}
-      >
-        {t(language, "resetToDefaults")}
-      </button>
       <div className="settings-version">
         Nexora v{updateInfo ? updateInfo.current_version : "—"}
+      </div>
+        </>
+      )}
       </div>
     </main>
   );

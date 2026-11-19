@@ -638,30 +638,92 @@ body,
   text-align: end;
 }
 
-/* Settings window (label "settings"): a plain centered column that
-   follows the active theme, reusing the island's swatches/buttons. */
+/* Settings window (label "settings"): 900x620, 7-section sidebar
+   (design artifact). The frameless frame comes from EAgent5; this
+   is the content layout, filling whatever window it is given. */
 .settings-shell {
   width: 100%;
   height: 100%;
-  overflow-y: auto;
+  overflow: hidden;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-  padding: 24px;
+  flex-direction: row;
   background: var(--island-bg);
   color: var(--island-text);
 }
 
+.settings-sidebar {
+  width: 220px;
+  flex: none;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 20px 16px;
+  border-inline-end: 1px solid var(--island-border);
+}
+
 .settings-wordmark {
-  width: 160px;
+  width: 120px;
   height: auto;
   display: block;
 }
 
 .settings-title {
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 600;
+  margin-top: 8px;
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+  flex: 1;
+}
+
+.settings-nav-btn {
+  text-align: start;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--island-text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.settings-nav-btn:hover {
+  background: var(--island-btn-bg);
+}
+
+.settings-nav-btn.active {
+  background: var(--island-btn-bg);
+  border-color: var(--island-btn-border);
+}
+
+.settings-sidebar-footer .settings-reset {
+  width: 100%;
+}
+
+.settings-content {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+}
+
+/* The content area is wider than the old centered column (and the
+   island's Quick tab, which reuses .settings-row): rows and theme
+   cards get more room here, and only here. */
+.settings-content .settings-row,
+.settings-content .theme-cards {
+  max-width: 560px;
 }
 
 .settings-row {
