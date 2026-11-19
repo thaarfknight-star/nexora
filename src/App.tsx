@@ -980,7 +980,7 @@ function SettingsView() {
 
   const resetToDefaults = () => {
     // Backend defaults (settings.rs defaults()): theme neon-glass,
-    // auto-hide off, always-on-top on, blur and radius unset (theme),
+    // auto-hide on, always-on-top on, blur and radius unset (theme),
     // 24-hour clock, no seconds, short date, 3s poll, auto speed
     // unit, percent with %.
     applyTheme("neon-glass");
@@ -988,7 +988,7 @@ function SettingsView() {
       saveSettings({
         ...settings,
         theme: "neon-glass",
-        auto_hide_taskbar: false,
+        auto_hide_taskbar: true,
         always_on_top: true,
         island_blur_px: null,
         island_radius_px: null,

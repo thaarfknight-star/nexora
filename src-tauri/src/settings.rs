@@ -11,6 +11,10 @@ fn default_always_on_top() -> bool {
     true
 }
 
+fn default_auto_hide_taskbar() -> bool {
+    true
+}
+
 fn default_theme() -> String {
     "neon-glass".into()
 }
@@ -37,7 +41,7 @@ fn default_stats_percent_style() -> String {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NexoraSettings {
-    #[serde(default)]
+    #[serde(default = "default_auto_hide_taskbar")]
     pub auto_hide_taskbar: bool,
     #[serde(default = "default_always_on_top")]
     pub always_on_top: bool,
@@ -78,7 +82,7 @@ impl Default for NexoraSettings {
 
 pub fn defaults() -> NexoraSettings {
     NexoraSettings {
-        auto_hide_taskbar: false,
+        auto_hide_taskbar: true,
         always_on_top: true,
         theme: "neon-glass".into(),
         island_blur_px: None,
@@ -243,7 +247,7 @@ mod tests {
         assert_eq!(
             load_from_dir(&dir),
             NexoraSettings {
-                auto_hide_taskbar: false,
+                auto_hide_taskbar: true,
                 always_on_top: true,
                 theme: "sunset".into(),
                 island_blur_px: None,
