@@ -1,6 +1,9 @@
 use tauri::Emitter;
 
-use crate::{island, media, notifications, settings, stats, taskbar, tray, updater, watchdog};
+use crate::{
+    island, media, notifications, settings, stats, taskbar, taskbar_content, tray, updater,
+    watchdog,
+};
 
 #[tauri::command]
 pub fn get_island_state() -> island::IslandState {
@@ -62,6 +65,35 @@ pub fn get_taskbar_status() -> taskbar::TaskbarStatus {
 #[tauri::command]
 pub fn set_taskbar_hidden(hidden: bool) -> taskbar::TaskbarStatus {
     taskbar::set_hidden(hidden)
+}
+
+/// All open windows for the compact bar, in Z-order (frontmost first).
+/// Icons are raw RGBA pixels as base64 (32x32, row-major top-down) —
+/// not PNG data-URLs; `icon_size` is 0 when a window has no icon.
+#[tauri::command]
+pub fn get_taskbar_windows() -> Vec<taskbar_content::TaskbarWindow> {
+    taskbar_content::list_windows()
+}
+
+/// All apps pinned to the user's taskbar, in file-name order. Same raw
+/// RGBA icon format as `get_taskbar_windows`.
+#[tauri::command]
+pub fn get_pinned_apps() -> Vec<taskbar_content::PinnedApp> {
+    taskbar_content::list_pinned()
+}
+
+/// Click on a taskbar window: minimize it when it is the foreground
+/// window, otherwise bring it to the front. `id` is the `id` of a
+/// `TaskbarWindow` from `get_taskbar_windows`.
+#[tauri::command]
+pub fn activate_taskbar_window(id: i64) -> bool {
+    taskbar_content::activate_window(id)
+}
+
+/// Press the Windows key, which opens (or closes) the Start menu.
+#[tauri::command]
+pub fn open_start_menu() -> bool {
+    taskbar_content::open_start_menu()
 }
 
 #[tauri::command]
