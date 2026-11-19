@@ -1696,9 +1696,16 @@ function SettingsView() {
   const [settings, setSettings] = useState<NexoraSettings | null>(null);
   const [theme, setTheme] = useState<ThemeId>("neon-glass");
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  // Window controls (frameless frame): the title bar is the drag
+  // region and the × button closes this window. The close button
+  // must stay OUTSIDE the drag region, or the drag eats its clicks.
+  const closeSettingsWindow = () => {
+    getCurrentWindow().close().catch(() => undefined);
+  };
   // The sidebar section on screen. The window is 900x620 with a
-  // 7-section sidebar (design artifact); the frameless frame itself
-  // comes from EAgent5 — this branch is the content only.
+  // 7-section sidebar (design artifact); the title bar above it is
+  // the window's drag region + close button (frameless frame from
+  // EAgent5).
   type SettingsSection =
     | "language"
     | "appearance"
@@ -1895,6 +1902,21 @@ function SettingsView() {
 
   return (
     <main className="settings-shell">
+      <div className="settings-titlebar">
+        <div className="settings-titlebar-drag" data-tauri-drag-region>
+          <span>◈ Nexora Settings</span>
+        </div>
+        <button
+          type="button"
+          className="settings-close-btn"
+          onClick={closeSettingsWindow}
+          title={t(language, "closeWindow")}
+          aria-label={t(language, "closeWindow")}
+        >
+          ✕
+        </button>
+      </div>
+      <div className="settings-body">
       <aside className="settings-sidebar">
         <img className="settings-wordmark" src={wordmark} alt="Nexora" />
         <h1 className="settings-title">{t(language, "settingsTitle")}</h1>
@@ -2304,6 +2326,7 @@ function SettingsView() {
       </div>
         </>
       )}
+      </div>
       </div>
     </main>
   );
