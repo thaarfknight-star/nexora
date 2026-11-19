@@ -1,6 +1,6 @@
 use tauri::Emitter;
 
-use crate::{island, media, settings, stats, taskbar, tray, updater, watchdog};
+use crate::{island, media, notifications, settings, stats, taskbar, tray, updater, watchdog};
 
 #[tauri::command]
 pub fn get_island_state() -> island::IslandState {
@@ -66,6 +66,21 @@ pub fn get_tray_status() -> tray::TrayStatus {
 }
 
 #[tauri::command]
+pub fn get_notifications() -> Vec<notifications::Notification> {
+    notifications::list()
+}
+
+#[tauri::command]
+pub fn clear_notifications() {
+    notifications::clear();
+}
+
+#[tauri::command]
+pub fn dismiss_notification(id: String) -> bool {
+    notifications::dismiss(&id)
+}
+
+#[tauri::command]
 pub fn get_settings(app: tauri::AppHandle) -> settings::NexoraSettings {
     settings::load(&app)
 }
@@ -89,7 +104,17 @@ pub fn open_settings(app: tauri::AppHandle) {
 
 #[tauri::command]
 pub async fn check_updates(app: tauri::AppHandle) -> Result<updater::UpdateInfo, String> {
-    updater::check(app).await
+    let info = updater::check(app).await?;
+    if info.update_available {
+        if let Some(version) = &info.available_version {
+            crate::notifications::add(
+                &format!("Update available: {version}"),
+                "A new Nexora version is ready to download.",
+                crate::notifications::KIND_UPDATE,
+            );
+        }
+    }
+    Ok(info)
 }
 
 #[tauri::command]

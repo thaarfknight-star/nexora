@@ -3,6 +3,7 @@ use tauri::{AppHandle, Manager};
 pub mod ipc;
 pub mod island;
 pub mod media;
+pub mod notifications;
 pub mod settings;
 pub mod stats;
 pub mod taskbar;
@@ -27,6 +28,9 @@ pub fn run() {
             // NOTE: every setup hook (settings, taskbar, island,
             // watchdog, tray) lives in this one closure; do not
             // add a second `.setup()`.
+            // Notifications: wire the emitter once, so backend producers
+            // (updater, watchdog) can add notifications from anywhere.
+            crate::notifications::set_emitter(app.handle());
             // Settings: load the persisted settings and apply the values
             // the backend owns (currently: always_on_top on the main
             // window). The theme is applied by the frontend, which reads
@@ -71,6 +75,9 @@ pub fn run() {
             ipc::open_settings,
             ipc::check_updates,
             ipc::download_and_install_update,
+            ipc::get_notifications,
+            ipc::clear_notifications,
+            ipc::dismiss_notification,
         ])
         .build(tauri::generate_context!())
         .expect("error while running Nexora Tauri application")

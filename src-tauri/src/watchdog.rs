@@ -159,6 +159,13 @@ fn start_monitor() {
                     let running = explorer_running();
                     if !was_running && running {
                         EXPLORER_RESTARTS.fetch_add(1, Ordering::Relaxed);
+                        // Explorer came back: it recreates the taskbar
+                        // visible, so the taskbar is restored.
+                        crate::notifications::add(
+                            "Taskbar restored",
+                            "Explorer restarted — the taskbar is visible again.",
+                            crate::notifications::KIND_TASKBAR,
+                        );
                     }
                     was_running = running;
                 }
