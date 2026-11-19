@@ -1875,6 +1875,13 @@ function SettingsView() {
       .catch(() => {});
   };
 
+  // The Restore-taskbar row (Taskbar section): bring the Windows
+  // taskbar back right now. The result is the taskbar itself coming
+  // back, so there is nothing to show here.
+  const restoreTaskbarNow = () => {
+    invoke<boolean>("restore_taskbar_now").catch(() => {});
+  };
+
   useEffect(() => {
     const saved = readSavedTheme();
     invoke<NexoraSettings>("get_settings")
@@ -2059,6 +2066,21 @@ function SettingsView() {
           onClick={() => toggleSetting("always_on_top")}
         >
           {settings ? onOff(settings.always_on_top, language) : "—"}
+        </button>
+      </div>
+      <div className="settings-row">
+        <span className="settings-row-text">
+          <span>{t(language, "restoreTaskbar")}</span>
+          <span className="settings-row-desc">
+            {t(language, "restoreTaskbarDesc")}
+          </span>
+        </span>
+        <button
+          type="button"
+          className="mini-btn"
+          onClick={restoreTaskbarNow}
+        >
+          {t(language, "restoreTaskbarBtn")}
         </button>
       </div>
         </>

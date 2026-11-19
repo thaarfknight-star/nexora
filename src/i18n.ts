@@ -40,7 +40,7 @@ const EN = {
   onboardingTaskbarText:
     "Nexora hides the Windows taskbar and shows your pinned & open apps in the island instead, so you never lose a way to switch apps.",
   onboardingTaskbarSafe:
-    "🛡️ Your taskbar always comes back when Nexora closes",
+    "🛡️ Your taskbar always comes back when Nexora closes — and there's a “Restore taskbar now” button in Settings → Taskbar.",
   onboardingContinue: "Continue →",
   onboardingLookTitle: "Pick your look",
   onboardingLookText:
@@ -107,6 +107,10 @@ const EN = {
   autoHideTaskbarDesc: "Hide the Windows taskbar while Nexora runs.",
   alwaysOnTop: "Always on top",
   alwaysOnTopDesc: "Keep the island above other windows.",
+  restoreTaskbar: "Restore taskbar",
+  restoreTaskbarDesc:
+    "Bring the Windows taskbar back right now, without closing Nexora.",
+  restoreTaskbarBtn: "↩ Restore taskbar now",
   sectionIslandStyle: "Island style",
   islandStyleDesc:
     "Blur and corner radius override the theme defaults — set them back to Default to follow the theme again.",
@@ -170,7 +174,7 @@ const FA: Record<StringKey, string> = {
   onboardingTaskbarText:
     "Nexora تسک‌بار ویندوز را پنهان می‌کند و اپ‌های پین‌شده و باز را به‌جایش در جزیره نشان می‌دهد، پس هیچ‌وقت راه جابه‌جایی بین اپ‌ها را از دست نمی‌دهی.",
   onboardingTaskbarSafe:
-    "🛡️ تسک‌بارت همیشه با بستن Nexora برمی‌گردد",
+    "🛡️ تسک‌بارت همیشه با بستن Nexora برمی‌گردد — و دکمه‌ی «بازگرداندن تسک‌بار» در بخش تسک‌بارِ تنظیمات هست.",
   onboardingContinue: "ادامه ←",
   onboardingLookTitle: "ظاهرت را انتخاب کن",
   onboardingLookText:
@@ -237,6 +241,10 @@ const FA: Record<StringKey, string> = {
   autoHideTaskbarDesc: "تسک‌بار ویندوز را در مدت اجرای Nexora مخفی کن.",
   alwaysOnTop: "همیشه روی همه",
   alwaysOnTopDesc: "جزیره را بالای بقیه‌ی پنجره‌ها نگه دار.",
+  restoreTaskbar: "بازگرداندن تسک‌بار",
+  restoreTaskbarDesc:
+    "تسک‌بار ویندوز را همین حالا برگردان، بدون بستن Nexora.",
+  restoreTaskbarBtn: "↩ بازگرداندن تسک‌بار",
   sectionIslandStyle: "سبک جزیره",
   islandStyleDesc:
     "بلور و گردی گوشه روی پیش‌فرض تم می‌نشینند — برای اینکه دوباره از تم پیروی کنند، آن‌ها را به «پیش‌فرض» برگردان.",
