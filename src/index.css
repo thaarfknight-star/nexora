@@ -367,7 +367,7 @@ body,
   background: var(--island-btn-bg);
   color: var(--island-text);
   cursor: pointer;
-  text-align: left;
+  text-align: start;
   font-family: inherit;
 }
 
@@ -470,7 +470,7 @@ body,
   color: var(--island-subtext);
   flex: none;
   min-width: 52px;
-  text-align: right;
+  text-align: end;
 }
 
 /* Settings window (label "settings"): a plain centered column that
@@ -532,7 +532,7 @@ body,
 
 /* Neon Glass sheet layout: stat chips, media card, clock. */
 .island-clock {
-  text-align: right;
+  text-align: end;
   line-height: 1.2;
   flex: none;
 }
@@ -682,7 +682,7 @@ body,
 .bell-badge {
   position: absolute;
   top: -5px;
-  right: -5px;
+  inset-inline-end: -5px;
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
@@ -769,7 +769,7 @@ body,
   font-size: 11px;
   cursor: pointer;
   padding: 2px 4px;
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 /* Compact density: tighter items, smaller text, a little more room. */

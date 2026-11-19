@@ -12,6 +12,15 @@ import {
   themeOrDefault,
   type ThemeId,
 } from "./themes";
+import {
+  NOTIFICATION_KIND_LABELS,
+  THEME_DESCRIPTIONS,
+  applyLanguageToDocument,
+  normalizeLanguage,
+  t,
+  tf,
+  type Language,
+} from "./i18n";
 
 interface IslandState {
   expanded: boolean;
@@ -48,6 +57,8 @@ interface NexoraSettings {
   stats_speed_unit: string;
   /** Percent style: "with" (24%) or "without" (24). */
   stats_percent_style: string;
+  /** UI language: "en" (default) or "fa". */
+  language: string;
 }
 
 interface SystemStats {
@@ -117,8 +128,8 @@ function saveTheme(id: ThemeId) {
   }
 }
 
-function onOff(value: boolean): string {
-  return value ? "On" : "Off";
+function onOff(value: boolean, lang: Language): string {
+  return t(lang, value ? "on" : "off");
 }
 
 function clockTime(date: Date, use24h: boolean, showSeconds: boolean): string {
@@ -184,7 +195,7 @@ function notificationTime(value: number | string): string {
   });
 }
 
-function relativeTime(value: number | string, now: Date): string {
+function relativeTime(value: number | string, now: Date, lang: Language): string {
   const date = notificationDate(value);
   if (!date) {
     return typeof value === "string" ? value : "—";
@@ -193,27 +204,22 @@ function relativeTime(value: number | string, now: Date): string {
     0,
     Math.floor((now.getTime() - date.getTime()) / 1000),
   );
-  if (seconds < 60) return "just now";
+  if (seconds < 60) return t(lang, "relativeJustNow");
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 60) return tf(lang, "relativeMin", { n: minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} h ago`;
-  return `${Math.floor(hours / 24)} d ago`;
+  if (hours < 24) return tf(lang, "relativeHour", { n: hours });
+  return tf(lang, "relativeDay", { n: Math.floor(hours / 24) });
 }
 
 // Display labels for the notification kinds the backend emits
 // (update found, taskbar restored). Any other kind falls back to
 // its own name, capitalized, so grouping never depends on the
 // backend's exact vocabulary.
-const NOTIFICATION_KIND_LABELS: Record<string, string> = {
-  update: "Updates",
-  taskbar: "Taskbar",
-};
-
-function notificationKindLabel(kind: string): string {
+function notificationKindLabel(kind: string, lang: Language): string {
   return (
-    NOTIFICATION_KIND_LABELS[kind] ??
-    (kind ? kind.charAt(0).toUpperCase() + kind.slice(1) : "Other")
+    NOTIFICATION_KIND_LABELS[lang][kind] ??
+    (kind ? kind.charAt(0).toUpperCase() + kind.slice(1) : t(lang, "kindOther"))
   );
 }
 
@@ -320,6 +326,13 @@ function IslandApp() {
     speedUnit: "auto",
     percentStyle: "with",
   });
+  // UI language, from settings ("en" default). The whole island —
+  // strings and reading direction — follows it.
+  const [language, setLanguage] = useState<Language>("en");
+
+  useEffect(() => {
+    applyLanguageToDocument(language);
+  }, [language]);
 
   const applyTheme = (id: ThemeId) => {
     setTheme(id);
@@ -379,6 +392,7 @@ function IslandApp() {
     invoke<NexoraSettings>("get_settings")
       .then((loaded) => {
         applyTheme(themeOrDefault(saved ?? loaded.theme));
+        setLanguage(normalizeLanguage(loaded.language));
         setIslandStyle({
           blur: loaded.island_blur_px ?? null,
           radius: loaded.island_radius_px ?? null,
@@ -401,6 +415,7 @@ function IslandApp() {
     let unlisten: (() => void) | undefined;
     listen<NexoraSettings>("settings-changed", (event) => {
       applyTheme(themeOrDefault(event.payload.theme));
+      setLanguage(normalizeLanguage(event.payload.language));
       setIslandStyle({
         blur: event.payload.island_blur_px ?? null,
         radius: event.payload.island_radius_px ?? null,
@@ -602,14 +617,14 @@ function IslandApp() {
     } else {
       notificationGroups.push({
         kind: item.kind,
-        label: notificationKindLabel(item.kind),
+        label: notificationKindLabel(item.kind, language),
         items: [item],
       });
     }
   }
   const tabs: { id: IslandTab; label: string }[] = [
-    { id: "media", label: "Media" },
-    { id: "stats", label: "Stats" },
+    { id: "media", label: t(language, "tabMedia") },
+    { id: "stats", label: t(language, "tabStats") },
   ];
 
   return (
@@ -658,7 +673,11 @@ function IslandApp() {
           <div
             className="island-brand"
             onClick={toggleExpand}
-            title={visible === "expanded" ? "Collapse" : "Expand"}
+            title={
+              visible === "expanded"
+                ? t(language, "collapse")
+                : t(language, "expand")
+            }
           >
             <img
               className="island-emblem"
@@ -690,8 +709,8 @@ function IslandApp() {
             type="button"
             className="bell-btn"
             onClick={toggleNotifications}
-            title="Notifications"
-            aria-label="Notifications"
+            title={t(language, "notifications")}
+            aria-label={t(language, "notifications")}
             aria-expanded={showNotifications}
           >
             <img src={bell} alt="" width={28} height={28} />
@@ -705,8 +724,8 @@ function IslandApp() {
             type="button"
             className="gear-btn"
             onClick={openSettings}
-            title="Open Settings"
-            aria-label="Open Settings"
+            title={t(language, "openSettings")}
+            aria-label={t(language, "openSettings")}
           >
             <img src={gear} alt="" width={28} height={28} />
           </button>
@@ -717,12 +736,12 @@ function IslandApp() {
               onClick={toggleKeepOpen}
               title={
                 keepOpen
-                  ? "Keep open is on — auto-close is off"
-                  : "Keep open — stop auto-close"
+                  ? t(language, "keepOpenOn")
+                  : t(language, "keepOpenOff")
               }
               aria-pressed={keepOpen}
             >
-              {keepOpen ? "Pinned ✓" : "Keep open"}
+              {keepOpen ? t(language, "pinned") : t(language, "keepOpen")}
             </button>
           )}
         </div>
@@ -734,10 +753,12 @@ function IslandApp() {
                   density === "compact" ? " compact" : ""
                 }`}
                 role="region"
-                aria-label="Notifications"
+                aria-label={t(language, "notifications")}
               >
                 <div className="notifications-header">
-                  <span className="notifications-title">Notifications</span>
+                  <span className="notifications-title">
+                    {t(language, "notifications")}
+                  </span>
                   <span className="notifications-actions">
                     <button
                       type="button"
@@ -750,27 +771,29 @@ function IslandApp() {
                         )
                       }
                     >
-                      {density === "compact" ? "Comfortable" : "Compact"}
+                      {density === "compact"
+                        ? t(language, "densityComfortable")
+                        : t(language, "densityCompact")}
                     </button>
                     <button
                       type="button"
                       className="mini-btn"
                       onClick={markAllNotificationsRead}
                     >
-                      Mark all read
+                      {t(language, "markAllRead")}
                     </button>
                     <button
                       type="button"
                       className="mini-btn"
                       onClick={clearNotifications}
                     >
-                      Clear all
+                      {t(language, "clearAll")}
                     </button>
                   </span>
                 </div>
                 {notifications.length === 0 ? (
                   <div className="notifications-empty">
-                    No notifications
+                    {t(language, "noNotifications")}
                   </div>
                 ) : (
                   <div className="notifications-list">
@@ -792,9 +815,11 @@ function IslandApp() {
                             onClick={() =>
                               clearNotificationGroup(group.kind)
                             }
-                            aria-label={`Clear ${group.label} notifications`}
+                            aria-label={tf(language, "clearKind", {
+                              kind: group.label,
+                            })}
                           >
-                            Clear
+                            {t(language, "clearGroup")}
                           </button>
                         </div>
                         {group.items.map((item) => (
@@ -811,7 +836,7 @@ function IslandApp() {
                             </div>
                             <span className="notification-time">
                               <span>
-                                {relativeTime(item.timestamp, now)}
+                                {relativeTime(item.timestamp, now, language)}
                               </span>
                               <span className="notification-clock">
                                 {notificationTime(item.timestamp)}
@@ -821,7 +846,7 @@ function IslandApp() {
                               type="button"
                               className="notification-dismiss"
                               onClick={() => dismissNotification(item.id)}
-                              aria-label="Dismiss notification"
+                              aria-label={t(language, "dismissNotification")}
                             >
                               ×
                             </button>
@@ -837,7 +862,7 @@ function IslandApp() {
             <div
               className="island-tabs"
               role="tablist"
-              aria-label="Island panels"
+              aria-label={t(language, "islandPanels")}
             >
               {tabs.map((candidate) => (
                 <button
@@ -861,7 +886,7 @@ function IslandApp() {
                     <img
                       className="media-cover"
                       src={media.cover_art}
-                      alt={media.album || "Album cover"}
+                      alt={media.album || t(language, "albumCover")}
                     />
                   ) : (
                     <span className="media-cover-placeholder">
@@ -875,7 +900,7 @@ function IslandApp() {
                         ? `${media.artist} — ${media.title}${
                             media.album ? ` (${media.album})` : ""
                           }`
-                        : "No media playing"
+                        : t(language, "noMedia")
                     }
                   >
                     <span className="media-track">
@@ -901,7 +926,7 @@ function IslandApp() {
                       className="mini-btn"
                       onClick={() => sendMediaCommand("media_previous")}
                     >
-                      Prev
+                      {t(language, "mediaPrev")}
                     </button>
                     <button
                       type="button"
@@ -912,21 +937,23 @@ function IslandApp() {
                         )
                       }
                     >
-                      {media?.playing ? "Pause" : "Play"}
+                      {media?.playing
+                        ? t(language, "mediaPause")
+                        : t(language, "mediaPlay")}
                     </button>
                     <button
                       type="button"
                       className="mini-btn"
                       onClick={() => sendMediaCommand("media_next")}
                     >
-                      Next
+                      {t(language, "mediaNext")}
                     </button>
                     <button
                       type="button"
                       className="mini-btn"
                       onClick={refreshMedia}
                     >
-                      Refresh
+                      {t(language, "mediaRefresh")}
                     </button>
                   </span>
                   <span>
@@ -943,8 +970,10 @@ function IslandApp() {
                     className="stat-chip"
                     title={
                       stats
-                        ? `CPU usage: ${stats.cpu_percent.toFixed(1)}%`
-                        : "CPU usage: —"
+                        ? tf(language, "cpuUsageValue", {
+                            v: stats.cpu_percent.toFixed(1),
+                          })
+                        : t(language, "cpuUsageEmpty")
                     }
                   >
                     <span className="stat-chip-label">CPU</span>
@@ -961,8 +990,10 @@ function IslandApp() {
                     className="stat-chip"
                     title={
                       stats
-                        ? `RAM usage: ${stats.memory_percent.toFixed(1)}%`
-                        : "RAM usage: —"
+                        ? tf(language, "ramUsageValue", {
+                            v: stats.memory_percent.toFixed(1),
+                          })
+                        : t(language, "ramUsageEmpty")
                     }
                   >
                     <span className="stat-chip-label">RAM</span>
@@ -979,8 +1010,10 @@ function IslandApp() {
                     className="stat-chip"
                     title={
                       stats?.gpu_percent !== undefined
-                        ? `GPU usage: ${stats.gpu_percent.toFixed(1)}%`
-                        : "GPU usage: —"
+                        ? tf(language, "gpuUsageValue", {
+                            v: stats.gpu_percent.toFixed(1),
+                          })
+                        : t(language, "gpuUsageEmpty")
                     }
                   >
                     <span className="stat-chip-label">GPU</span>
@@ -998,8 +1031,10 @@ function IslandApp() {
                   <span
                     title={
                       stats?.net_up_kbps !== undefined
-                        ? `Upload: ${stats.net_up_kbps.toFixed(2)} KB/s`
-                        : "Upload: —"
+                        ? tf(language, "uploadValue", {
+                            v: stats.net_up_kbps.toFixed(2),
+                          })
+                        : t(language, "uploadEmpty")
                     }
                   >
                     ↑{" "}
@@ -1013,8 +1048,10 @@ function IslandApp() {
                   <span
                     title={
                       stats?.net_down_kbps !== undefined
-                        ? `Download: ${stats.net_down_kbps.toFixed(2)} KB/s`
-                        : "Download: —"
+                        ? tf(language, "downloadValue", {
+                            v: stats.net_down_kbps.toFixed(2),
+                          })
+                        : t(language, "downloadEmpty")
                     }
                   >
                     ↓{" "}
@@ -1028,17 +1065,30 @@ function IslandApp() {
                 </div>
                 <div className="panel-line">
                   <span>
-                    Taskbar: {taskbar ? (taskbar.hidden ? "hidden" : "shown") : "—"}
+                    {t(language, "taskbarLabel")}:{" "}
+                    {taskbar
+                      ? t(
+                          language,
+                          taskbar.hidden ? "taskbarHidden" : "taskbarShown",
+                        )
+                      : "—"}
                   </span>
                   <span>
-                    Watchdog:{" "}
-                    {watchdog ? (watchdog.healthy ? "healthy" : "unhealthy") : "—"}
+                    {t(language, "watchdogLabel")}:{" "}
+                    {watchdog
+                      ? t(language, watchdog.healthy ? "healthy" : "unhealthy")
+                      : "—"}
                   </span>
                 </div>
                 <div className="panel-line">
                   <span>
-                    Explorer:{" "}
-                    {watchdog ? (watchdog.explorer_ok ? "ok" : "down") : "—"}
+                    {t(language, "explorerLabel")}:{" "}
+                    {watchdog
+                      ? t(
+                          language,
+                          watchdog.explorer_ok ? "explorerOk" : "explorerDown",
+                        )
+                      : "—"}
                   </span>
                 </div>
               </div>
@@ -1057,6 +1107,14 @@ function SettingsView() {
   const [settings, setSettings] = useState<NexoraSettings | null>(null);
   const [theme, setTheme] = useState<ThemeId>("neon-glass");
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  // UI language, derived from the settings object (backend `language`
+  // field, "en" default). The whole window — strings and reading
+  // direction — follows it.
+  const language = normalizeLanguage(settings?.language);
+
+  useEffect(() => {
+    applyLanguageToDocument(language);
+  }, [language]);
 
   const applyTheme = (id: ThemeId) => {
     setTheme(id);
@@ -1126,6 +1184,18 @@ function SettingsView() {
     });
   };
 
+  const cycleLanguage = () => {
+    // The switch persists through set_settings, so settings-changed
+    // carries it to the island at once (rule 18).
+    if (!settings) {
+      return;
+    }
+    saveSettings({
+      ...settings,
+      language: language === "en" ? "fa" : "en",
+    });
+  };
+
   // Slider range for the island style overrides (px). The backend
   // stores Option<u8>; the frontend clamps to this range so a stale
   // or out-of-range stored value never breaks the slider.
@@ -1170,7 +1240,7 @@ function SettingsView() {
     // Backend defaults (settings.rs defaults()): theme neon-glass,
     // auto-hide on, always-on-top on, blur and radius unset (theme),
     // 24-hour clock, no seconds, short date, 3s poll, auto speed
-    // unit, percent with %.
+    // unit, percent with %, English.
     applyTheme("neon-glass");
     if (settings) {
       saveSettings({
@@ -1186,6 +1256,7 @@ function SettingsView() {
         poll_interval_secs: 3,
         stats_speed_unit: "auto",
         stats_percent_style: "with",
+        language: "en",
       });
     }
   };
@@ -1214,13 +1285,42 @@ function SettingsView() {
   return (
     <main className="settings-shell">
       <img className="settings-wordmark" src={wordmark} alt="Nexora" />
-      <h1 className="settings-title">Settings</h1>
-      <h2 className="settings-section-title">Appearance</h2>
+      <h1 className="settings-title">{t(language, "settingsTitle")}</h1>
+      <h2 className="settings-section-title">
+        {t(language, "sectionLanguage")}
+      </h2>
       <p className="settings-section-desc">
-        Themes apply live to the island — hover a card to preview it
-        here, click to keep it.
+        {t(language, "languageDesc")}
       </p>
-      <div className="theme-cards" role="group" aria-label="Nexora theme">
+      <div className="settings-row">
+        <span className="settings-row-text">
+          <span>{t(language, "sectionLanguage")}</span>
+        </span>
+        <button
+          type="button"
+          className="mini-btn"
+          onClick={cycleLanguage}
+          disabled={!settings}
+        >
+          {settings
+            ? t(
+                language,
+                language === "fa" ? "languagePersian" : "languageEnglish",
+              )
+            : "—"}
+        </button>
+      </div>
+      <h2 className="settings-section-title">
+        {t(language, "sectionAppearance")}
+      </h2>
+      <p className="settings-section-desc">
+        {t(language, "appearanceDesc")}
+      </p>
+      <div
+        className="theme-cards"
+        role="group"
+        aria-label={t(language, "themeGroupLabel")}
+      >
         {THEMES.map((candidate) => (
           <button
             key={candidate.id}
@@ -1247,16 +1347,16 @@ function SettingsView() {
               {candidate.id === theme ? " ✓" : ""}
             </span>
             <span className="theme-card-desc">
-              {candidate.description}
+              {THEME_DESCRIPTIONS[language][candidate.id]}
             </span>
           </button>
         ))}
       </div>
       <div className="settings-row">
         <span className="settings-row-text">
-          <span>Auto-hide taskbar</span>
+          <span>{t(language, "autoHideTaskbar")}</span>
           <span className="settings-row-desc">
-            Hide the Windows taskbar while Nexora runs.
+            {t(language, "autoHideTaskbarDesc")}
           </span>
         </span>
         <button
@@ -1264,14 +1364,14 @@ function SettingsView() {
           className="mini-btn"
           onClick={() => toggleSetting("auto_hide_taskbar")}
         >
-          {settings ? onOff(settings.auto_hide_taskbar) : "—"}
+          {settings ? onOff(settings.auto_hide_taskbar, language) : "—"}
         </button>
       </div>
       <div className="settings-row">
         <span className="settings-row-text">
-          <span>Always on top</span>
+          <span>{t(language, "alwaysOnTop")}</span>
           <span className="settings-row-desc">
-            Keep the island above other windows.
+            {t(language, "alwaysOnTopDesc")}
           </span>
         </span>
         <button
@@ -1279,21 +1379,22 @@ function SettingsView() {
           className="mini-btn"
           onClick={() => toggleSetting("always_on_top")}
         >
-          {settings ? onOff(settings.always_on_top) : "—"}
+          {settings ? onOff(settings.always_on_top, language) : "—"}
         </button>
       </div>
-      <h2 className="settings-section-title">Island style</h2>
+      <h2 className="settings-section-title">
+        {t(language, "sectionIslandStyle")}
+      </h2>
       <p className="settings-section-desc">
-        Blur and corner radius override the theme defaults — set them
-        back to Default to follow the theme again.
+        {t(language, "islandStyleDesc")}
       </p>
       <div className="settings-slider-row">
         <div className="settings-row-text">
-          <span>Island blur</span>
+          <span>{t(language, "islandBlur")}</span>
           <span className="settings-row-desc">
             {settings?.island_blur_px != null
-              ? `Override: ${settings.island_blur_px} px.`
-              : `Theme default: ${themeBlurPx()} px.`}
+              ? tf(language, "overridePx", { n: settings.island_blur_px })
+              : tf(language, "themeDefaultPx", { n: themeBlurPx() })}
           </span>
         </div>
         <div className="settings-slider-line">
@@ -1305,7 +1406,7 @@ function SettingsView() {
             step={1}
             value={settings?.island_blur_px ?? themeBlurPx()}
             disabled={!settings}
-            aria-label="Island blur in pixels"
+            aria-label={t(language, "blurAria")}
             onChange={(event) =>
               setStyleField(
                 "island_blur_px",
@@ -1315,8 +1416,8 @@ function SettingsView() {
           />
           <span className="settings-slider-value">
             {settings?.island_blur_px != null
-              ? `${settings.island_blur_px} px`
-              : "Default"}
+              ? tf(language, "valuePx", { n: settings.island_blur_px })
+              : t(language, "defaultLabel")}
           </span>
           <button
             type="button"
@@ -1324,17 +1425,19 @@ function SettingsView() {
             disabled={!settings || settings?.island_blur_px == null}
             onClick={() => setStyleField("island_blur_px", null)}
           >
-            Default
+            {t(language, "defaultLabel")}
           </button>
         </div>
       </div>
       <div className="settings-slider-row">
         <div className="settings-row-text">
-          <span>Corner radius</span>
+          <span>{t(language, "cornerRadius")}</span>
           <span className="settings-row-desc">
             {settings?.island_radius_px != null
-              ? `Override: ${settings.island_radius_px} px.`
-              : `Theme default: ${ISLAND_RADIUS_DEFAULT_PX} px.`}
+              ? tf(language, "overridePx", { n: settings.island_radius_px })
+              : tf(language, "themeDefaultPx", {
+                  n: ISLAND_RADIUS_DEFAULT_PX,
+                })}
           </span>
         </div>
         <div className="settings-slider-line">
@@ -1346,7 +1449,7 @@ function SettingsView() {
             step={1}
             value={settings?.island_radius_px ?? ISLAND_RADIUS_DEFAULT_PX}
             disabled={!settings}
-            aria-label="Island corner radius in pixels"
+            aria-label={t(language, "radiusAria")}
             onChange={(event) =>
               setStyleField(
                 "island_radius_px",
@@ -1356,8 +1459,8 @@ function SettingsView() {
           />
           <span className="settings-slider-value">
             {settings?.island_radius_px != null
-              ? `${settings.island_radius_px} px`
-              : "Default"}
+              ? tf(language, "valuePx", { n: settings.island_radius_px })
+              : t(language, "defaultLabel")}
           </span>
           <button
             type="button"
@@ -1365,19 +1468,17 @@ function SettingsView() {
             disabled={!settings || settings?.island_radius_px == null}
             onClick={() => setStyleField("island_radius_px", null)}
           >
-            Default
+            {t(language, "defaultLabel")}
           </button>
         </div>
       </div>
-      <h2 className="settings-section-title">Clock</h2>
-      <p className="settings-section-desc">
-        How the island clock shows the time and date.
-      </p>
+      <h2 className="settings-section-title">{t(language, "sectionClock")}</h2>
+      <p className="settings-section-desc">{t(language, "clockDesc")}</p>
       <div className="settings-row">
         <span className="settings-row-text">
-          <span>24-hour clock</span>
+          <span>{t(language, "clock24h")}</span>
           <span className="settings-row-desc">
-            Show the time as 21:47 instead of 9:47 PM.
+            {t(language, "clock24hDesc")}
           </span>
         </span>
         <button
@@ -1385,14 +1486,14 @@ function SettingsView() {
           className="mini-btn"
           onClick={() => toggleSetting("clock_24h")}
         >
-          {settings ? onOff(settings.clock_24h) : "—"}
+          {settings ? onOff(settings.clock_24h, language) : "—"}
         </button>
       </div>
       <div className="settings-row">
         <span className="settings-row-text">
-          <span>Show seconds</span>
+          <span>{t(language, "showSeconds")}</span>
           <span className="settings-row-desc">
-            Show seconds in the island clock.
+            {t(language, "showSecondsDesc")}
           </span>
         </span>
         <button
@@ -1400,14 +1501,14 @@ function SettingsView() {
           className="mini-btn"
           onClick={() => toggleSetting("show_seconds")}
         >
-          {settings ? onOff(settings.show_seconds) : "—"}
+          {settings ? onOff(settings.show_seconds, language) : "—"}
         </button>
       </div>
       <div className="settings-row">
         <span className="settings-row-text">
-          <span>Date format</span>
+          <span>{t(language, "dateFormat")}</span>
           <span className="settings-row-desc">
-            Short shows Nov 16; Full shows Sun, Nov 16, 2026.
+            {t(language, "dateFormatDesc")}
           </span>
         </span>
         <button
@@ -1418,20 +1519,22 @@ function SettingsView() {
         >
           {settings
             ? settings.date_format === "full"
-              ? "Full"
-              : "Short"
+              ? t(language, "dateFull")
+              : t(language, "dateShort")
             : "—"}
         </button>
       </div>
-      <h2 className="settings-section-title">Performance</h2>
+      <h2 className="settings-section-title">
+        {t(language, "sectionPerformance")}
+      </h2>
       <p className="settings-section-desc">
-        How often stats and media refresh, and how the numbers look.
+        {t(language, "performanceDesc")}
       </p>
       <div className="settings-slider-row">
         <div className="settings-row-text">
-          <span>Refresh interval</span>
+          <span>{t(language, "refreshInterval")}</span>
           <span className="settings-row-desc">
-            How often stats and media refresh.
+            {t(language, "refreshIntervalDesc")}
           </span>
         </div>
         <div className="settings-slider-line">
@@ -1443,7 +1546,7 @@ function SettingsView() {
             step={1}
             value={settings ? clampPollSecs(settings.poll_interval_secs) : 3}
             disabled={!settings}
-            aria-label="Refresh interval in seconds"
+            aria-label={t(language, "refreshIntervalAria")}
             onChange={(event) =>
               settings &&
               saveSettings({
@@ -1455,15 +1558,19 @@ function SettingsView() {
             }
           />
           <span className="settings-slider-value">
-            {settings ? `${clampPollSecs(settings.poll_interval_secs)} s` : "—"}
+            {settings
+              ? tf(language, "valueSecs", {
+                  n: clampPollSecs(settings.poll_interval_secs),
+                })
+              : "—"}
           </span>
         </div>
       </div>
       <div className="settings-row">
         <span className="settings-row-text">
-          <span>Speed unit</span>
+          <span>{t(language, "speedUnit")}</span>
           <span className="settings-row-desc">
-            Auto switches to MB/s above 1024 KB/s.
+            {t(language, "speedUnitDesc")}
           </span>
         </span>
         <button
@@ -1474,7 +1581,7 @@ function SettingsView() {
         >
           {settings
             ? settings.stats_speed_unit === "auto"
-              ? "Auto"
+              ? t(language, "speedAuto")
               : settings.stats_speed_unit === "kb"
                 ? "KB/s"
                 : "MB/s"
@@ -1483,9 +1590,9 @@ function SettingsView() {
       </div>
       <div className="settings-row">
         <span className="settings-row-text">
-          <span>Percent style</span>
+          <span>{t(language, "percentStyle")}</span>
           <span className="settings-row-desc">
-            Show or hide the % sign on stat chips.
+            {t(language, "percentStyleDesc")}
           </span>
         </span>
         <button
@@ -1496,8 +1603,8 @@ function SettingsView() {
         >
           {settings
             ? settings.stats_percent_style === "with"
-              ? "With %"
-              : "Without %"
+              ? t(language, "percentWith")
+              : t(language, "percentWithout")
             : "—"}
         </button>
       </div>
@@ -1505,12 +1612,12 @@ function SettingsView() {
         <span>
           {updateInfo
             ? updateInfo.update_available
-              ? "Update available"
-              : "No update available"
+              ? t(language, "updateAvailable")
+              : t(language, "noUpdateAvailable")
             : "—"}
         </span>
         <button type="button" className="mini-btn" onClick={checkForUpdates}>
-          Check for updates
+          {t(language, "checkForUpdates")}
         </button>
       </div>
       <button
@@ -1518,7 +1625,7 @@ function SettingsView() {
         className="mini-btn settings-reset"
         onClick={resetToDefaults}
       >
-        Reset to defaults
+        {t(language, "resetToDefaults")}
       </button>
       <div className="settings-version">
         Nexora v{updateInfo ? updateInfo.current_version : "—"}
