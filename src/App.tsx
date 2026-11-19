@@ -468,10 +468,9 @@ function IslandApp() {
   ];
 
   return (
-    <main className="island-shell" data-tauri-drag-region>
+    <main className="island-shell">
       <section
         className={`island-pill${state.expanded ? " expanded" : ""}`}
-        data-tauri-drag-region
         style={{
           ...(islandStyle.blur !== null
             ? { backdropFilter: `blur(${islandStyle.blur}px)` }
@@ -481,7 +480,7 @@ function IslandApp() {
             : {}),
         }}
       >
-        <div className="island-row" data-tauri-drag-region>
+        <div className="island-row">
           <div className="island-brand">
             <img
               className="island-emblem"

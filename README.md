@@ -14,7 +14,7 @@
 
 - A smooth floating pill, pinned top-center of the primary display — **420×120 px** compact, expanding to **560×340 px** with an animated resize (~180 ms).
 - Click the island to expand it into tabbed panels: **Media**, **Stats**, and **Settings**.
-- Frameless, transparent, always-on-top, and draggable — it stays out of the way until you need it.
+- Frameless, transparent, and always-on-top — it stays out of the way until you need it.
 - On launch the island starts compact and top-centered; expanding it is a real animated resize, not a label swap.
 
 ### Safe taskbar replacement
