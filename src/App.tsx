@@ -17,6 +17,15 @@ interface IslandState {
   expanded: boolean;
   mode: string;
   title: string;
+  width: number;
+  height: number;
+  content_x: number;
+  content_y: number;
+  content_width: number;
+  content_height: number;
+  compact_height: number;
+  handle_width: number;
+  handle_height: number;
 }
 
 interface NexoraSettings {
@@ -213,6 +222,16 @@ function IslandApp() {
     expanded: false,
     mode: "compact",
     title: "Nexora Island",
+    // Backend constants (island.rs) until get_island_state answers.
+    width: 640,
+    height: 440,
+    content_x: 40,
+    content_y: 40,
+    content_width: 560,
+    content_height: 360,
+    compact_height: 64,
+    handle_width: 120,
+    handle_height: 4,
   });
   const [theme, setTheme] = useState<ThemeId>("neon-glass");
   const [tab, setTab] = useState<IslandTab>("media");
@@ -602,9 +621,28 @@ function IslandApp() {
     >
       <div
         className={`island-stage ${visible}`}
-        style={{ transitionDuration: `${stageMs}ms` }}
+        style={{
+          transitionDuration: `${stageMs}ms`,
+          // Geometry comes from the backend (island.rs), one source of truth.
+          left: state.content_x,
+          top: state.content_y,
+          width: state.content_width,
+          height:
+            visible === "hidden"
+              ? state.handle_height
+              : visible === "compact"
+                ? state.compact_height
+                : state.content_height,
+        }}
       >
-        <div className="island-handle" aria-hidden="true" />
+        <div
+          className="island-handle"
+          aria-hidden="true"
+          style={{
+            width: state.handle_width,
+            height: state.handle_height,
+          }}
+        />
         <section
           className={`island-pill${visible === "expanded" ? " expanded" : ""}`}
         style={{
