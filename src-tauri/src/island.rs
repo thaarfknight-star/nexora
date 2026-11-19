@@ -1,45 +1,91 @@
+//! Fixed island window.
+//!
+//! The island window never resizes: it is always one fixed transparent
+//! canvas, top-center, and the pill / panel animate inside it with CSS
+//! (frontend). The canvas is bigger than the panel so the glow is never
+//! clipped: the expanded panel (560x340 today, 560x360 in the sheet)
+//! sits in a content box inset by `GLOW_PADDING` on every side.
+//!
+//! Two runtime behaviors live here as well:
+//!
+//! * Hot zone: on Windows a background thread polls `GetCursorPos` and
+//!   emits `island-hot-zone` when the mouse enters / leaves the top
+//!   edge strip. The frontend shows the island from its hidden state
+//!   on that event. Off Windows the watcher never fires.
+//! * Click-through: `set_click_through` toggles
+//!   `Window::set_ignore_cursor_events` so the empty parts of the
+//!   canvas let clicks pass to the app below, while the pill / panel
+//!   still receive clicks. The toggle is window-wide (Tauri has no
+//!   per-region ignore), so the frontend owns the policy: hidden ->
+//!   ignore, visible -> receive.
+
 use serde::Serialize;
 use std::sync::Mutex;
 use std::time::Duration;
+use tauri::{Emitter, Manager};
 
-/// Compact (collapsed) island size, in logical pixels.
-/// Matches the initial window size in `tauri.conf.json`.
-pub const COMPACT_WIDTH: u32 = 420;
-pub const COMPACT_HEIGHT: u32 = 120;
-/// Expanded island size, in logical pixels. Large enough for the
-/// media controls / stats content the frontend shows when expanded.
-pub const EXPANDED_WIDTH: u32 = 560;
-pub const EXPANDED_HEIGHT: u32 = 340;
-/// Gap between the top edge of the primary monitor and the island.
-pub const TOP_MARGIN: f64 = 12.0;
-/// Resize animation: number of steps and delay between steps
-/// (12 steps x 15 ms = ~180 ms total).
-pub const ANIMATION_STEPS: u32 = 12;
-pub const ANIMATION_STEP_MS: u64 = 15;
+/// Fixed window size, in logical pixels: expanded panel 560x360
+/// (sheet) plus `GLOW_PADDING` on every side. The current 560x340
+/// panel fits with room to spare, so the states branch needs no
+/// further window change.
+pub const WINDOW_WIDTH: u32 = 640;
+pub const WINDOW_HEIGHT: u32 = 440;
+/// Glow room around the content box, in logical pixels.
+pub const GLOW_PADDING: u32 = 40;
+/// Content box inside the window: the pill / panel live here.
+pub const CONTENT_X: u32 = GLOW_PADDING;
+pub const CONTENT_Y: u32 = GLOW_PADDING;
+pub const CONTENT_WIDTH: u32 = WINDOW_WIDTH - 2 * GLOW_PADDING;
+pub const CONTENT_HEIGHT: u32 = WINDOW_HEIGHT - 2 * GLOW_PADDING;
+/// Top edge of the window, in logical pixels from the monitor top.
+/// The window sits flush at the top; the content inset provides the
+/// visual gap (previously `TOP_MARGIN`, removed with the resize).
+pub const WINDOW_TOP_Y: f64 = 0.0;
+
+/// Hot zone: strip along the top edge of the monitor, in logical
+/// pixels tall. The mouse entering it wakes the island from hidden.
+pub const HOT_ZONE_HEIGHT: f64 = 6.0;
+/// How often the watcher polls the cursor position.
+pub const HOT_ZONE_POLL_MS: u64 = 100;
+/// Event emitted when the cursor enters / leaves the hot zone.
+pub const HOT_ZONE_EVENT: &str = "island-hot-zone";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct IslandState {
     pub expanded: bool,
     pub mode: String,
     pub title: String,
+    /// Fixed window size (never changes with expand / collapse).
     pub width: u32,
     pub height: u32,
+    /// Content box where the pill / panel render.
+    pub content_x: u32,
+    pub content_y: u32,
+    pub content_width: u32,
+    pub content_height: u32,
+}
+
+/// Payload of the [`HOT_ZONE_EVENT`] event.
+#[derive(Debug, Clone, Serialize)]
+pub struct HotZoneEvent {
+    pub in_hot_zone: bool,
 }
 
 static EXPANDED: Mutex<bool> = Mutex::new(false);
 
-/// Window size for a given mode.
-pub fn size_for(expanded: bool) -> (u32, u32) {
-    if expanded {
-        (EXPANDED_WIDTH, EXPANDED_HEIGHT)
-    } else {
-        (COMPACT_WIDTH, COMPACT_HEIGHT)
-    }
+/// The one fixed window size.
+pub fn window_size() -> (u32, u32) {
+    (WINDOW_WIDTH, WINDOW_HEIGHT)
+}
+
+/// Content box `(x, y, width, height)` inside the window.
+pub fn content_rect() -> (u32, u32, u32, u32) {
+    (CONTENT_X, CONTENT_Y, CONTENT_WIDTH, CONTENT_HEIGHT)
 }
 
 pub fn current_state() -> IslandState {
     let expanded = *EXPANDED.lock().unwrap_or_else(|e| e.into_inner());
-    let (width, height) = size_for(expanded);
+    let (width, height) = window_size();
     IslandState {
         expanded,
         mode: if expanded {
@@ -50,12 +96,16 @@ pub fn current_state() -> IslandState {
         title: "Nexora Island".into(),
         width,
         height,
+        content_x: CONTENT_X,
+        content_y: CONTENT_Y,
+        content_width: CONTENT_WIDTH,
+        content_height: CONTENT_HEIGHT,
     }
 }
 
 /// State-only toggle, kept for the existing `set_island_expanded` command.
-/// It updates the flag and the reported size but cannot move the window:
-/// use [`set_expanded_on_window`] when a `Window` handle is available.
+/// It updates the flag but never touches the window: use
+/// [`set_expanded_on_window`] when a `Window` handle is available.
 pub fn set_expanded(expanded: bool) -> IslandState {
     if let Ok(mut guard) = EXPANDED.lock() {
         *guard = expanded;
@@ -69,22 +119,10 @@ pub fn centered_x(monitor_width: f64, window_width: u32) -> f64 {
     ((monitor_width - f64::from(window_width)) / 2.0).max(0.0)
 }
 
-/// Linear interpolation between two sizes. Step `steps` returns `to`
-/// exactly; step 0 returns `from`.
-pub fn lerp_size(from: (u32, u32), to: (u32, u32), step: u32, steps: u32) -> (u32, u32) {
-    if steps == 0 || step >= steps {
-        return to;
-    }
-    let t = f64::from(step) / f64::from(steps);
-    let lerp = |a: u32, b: u32| -> u32 {
-        (f64::from(a) + (f64::from(b) - f64::from(a)) * t).round() as u32
-    };
-    (lerp(from.0, to.0), lerp(from.1, to.1))
-}
-
-/// Logical size of the monitor the window is currently on.
-/// Falls back to 1920x1080 when no monitor can be queried (headless/CI).
-fn logical_monitor_size(window: &tauri::Window) -> (f64, f64) {
+/// Logical geometry `(x, y, width, height)` of the monitor the window
+/// is currently on. Falls back to 1920x1080 at the origin when no
+/// monitor can be queried (headless / CI).
+fn logical_monitor_geometry(window: &tauri::Window) -> (f64, f64, f64, f64) {
     let scale = window.scale_factor().unwrap_or(1.0).max(1.0);
     let monitor = window
         .current_monitor()
@@ -94,80 +132,45 @@ fn logical_monitor_size(window: &tauri::Window) -> (f64, f64) {
     match monitor {
         Some(monitor) => {
             let size = monitor.size();
+            let position = monitor.position();
             (
+                f64::from(position.x) / scale,
+                f64::from(position.y) / scale,
                 f64::from(size.width) / scale,
                 f64::from(size.height) / scale,
             )
         }
-        None => (1920.0, 1080.0),
+        None => (0.0, 0.0, 1920.0, 1080.0),
     }
 }
 
-/// Top-center position for a window of `width` logical pixels:
-/// horizontally centered on its monitor, `TOP_MARGIN` below the top edge.
-pub fn top_center_position(window: &tauri::Window, width: u32) -> tauri::LogicalPosition<f64> {
-    let (monitor_width, _) = logical_monitor_size(window);
-    tauri::LogicalPosition::new(centered_x(monitor_width, width), TOP_MARGIN)
+/// Top-center position for the fixed window: horizontally centered on
+/// its monitor, flush with the top edge.
+pub fn top_center_position(window: &tauri::Window) -> tauri::LogicalPosition<f64> {
+    let (_, _, monitor_width, _) = logical_monitor_geometry(window);
+    tauri::LogicalPosition::new(centered_x(monitor_width, WINDOW_WIDTH), WINDOW_TOP_Y)
 }
 
-/// Move the window to the top-center position for its current size.
+/// Move the window to its fixed top-center position.
 pub fn place_top_center(window: &tauri::Window) -> Result<(), tauri::Error> {
-    let state = current_state();
-    window.set_position(tauri::Position::Logical(top_center_position(
-        window,
-        state.width,
-    )))
+    window.set_position(tauri::Position::Logical(top_center_position(window)))
 }
 
-/// Current window size in logical pixels. Falls back to the opposite of
-/// the target size so the animation still has a start point.
-fn current_logical_size(window: &tauri::Window, target: (u32, u32)) -> (u32, u32) {
-    let scale = window.scale_factor().unwrap_or(1.0).max(1.0);
-    match window.inner_size() {
-        Ok(size) => (
-            (f64::from(size.width) / scale).round() as u32,
-            (f64::from(size.height) / scale).round() as u32,
-        ),
-        Err(_) => {
-            if target == size_for(true) {
-                size_for(false)
-            } else {
-                size_for(true)
-            }
-        }
-    }
+/// Force the window to the one fixed size and position. Idempotent:
+/// calling it when the window is already fixed is a no-op visually.
+/// This is the only place that calls `set_size` in the crate.
+pub fn ensure_fixed_window(window: &tauri::Window) -> Result<(), tauri::Error> {
+    window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+        f64::from(WINDOW_WIDTH),
+        f64::from(WINDOW_HEIGHT),
+    )))?;
+    place_top_center(window)
 }
 
-/// Animate the window from its current size to `to` in small steps,
-/// re-centering it horizontally at every step so it stays top-center
-/// while it grows/shrinks. Runs on a detached thread; errors are
-/// ignored per step because the window may be closed mid-animation.
-fn animate_resize(window: tauri::Window, from: (u32, u32), to: (u32, u32)) {
-    std::thread::spawn(move || {
-        for step in 1..=ANIMATION_STEPS {
-            let (width, height) = lerp_size(from, to, step, ANIMATION_STEPS);
-            let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-                f64::from(width),
-                f64::from(height),
-            )));
-            let _ = window.set_position(tauri::Position::Logical(top_center_position(
-                &window, width,
-            )));
-            std::thread::sleep(Duration::from_millis(ANIMATION_STEP_MS));
-        }
-        // Guarantee the exact final size and position.
-        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-            f64::from(to.0),
-            f64::from(to.1),
-        )));
-        let _ = window.set_position(tauri::Position::Logical(top_center_position(&window, to.0)));
-    });
-}
-
-/// Expand/collapse the island on a real window: updates the state,
-/// then animates the resize and keeps the window top-centered.
-/// Returns the new state immediately; the animation finishes async
-/// (~180 ms). This is the function IPC wiring should call
+/// Expand / collapse the island on a real window. The window itself
+/// never resizes: only the state flag changes (the frontend animates
+/// the pill / panel with CSS) and the fixed size / position are
+/// re-asserted. This is the function IPC wiring calls
 /// (owner: EAgent5, `ipc.rs`); `set_expanded` stays as the state-only
 /// fallback for callers without a window handle.
 pub fn set_expanded_on_window(
@@ -175,13 +178,7 @@ pub fn set_expanded_on_window(
     expanded: bool,
 ) -> Result<IslandState, tauri::Error> {
     let state = set_expanded(expanded);
-    let target = (state.width, state.height);
-    let from = current_logical_size(window, target);
-    if from != target {
-        animate_resize(window.clone(), from, target);
-    } else {
-        place_top_center(window)?;
-    }
+    ensure_fixed_window(window)?;
     Ok(state)
 }
 
@@ -193,16 +190,94 @@ pub fn apply_to_window(
     set_expanded_on_window(window, expanded)
 }
 
-/// Place the island at its startup position: compact size, top-center.
+/// Place the island at its startup position: fixed size, top-center.
 /// Intended for the `setup` hook in `lib.rs` (coordinated via DEVagent).
 pub fn setup_window(window: &tauri::Window) -> Result<IslandState, tauri::Error> {
     let state = set_expanded(false);
-    window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-        f64::from(state.width),
-        f64::from(state.height),
-    )))?;
-    place_top_center(window)?;
+    ensure_fixed_window(window)?;
     Ok(state)
+}
+
+/// Whether a cursor at logical `(cursor_x, cursor_y)` on a monitor
+/// `monitor_width` logical pixels wide is inside the hot zone: the
+/// strip `0..=HOT_ZONE_HEIGHT` along the top edge.
+pub fn is_in_hot_zone(cursor_x: f64, cursor_y: f64, monitor_width: f64) -> bool {
+    cursor_x >= 0.0 && cursor_x <= monitor_width && cursor_y >= 0.0 && cursor_y <= HOT_ZONE_HEIGHT
+}
+
+/// Whether the cursor is currently inside the hot zone of the
+/// monitor the window is on. On Windows this reads the live cursor
+/// position with `GetCursorPos`; off Windows it is always `false`.
+pub fn cursor_in_hot_zone(window: &tauri::Window) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        let Some((x, y)) = win::cursor_position() else {
+            return false;
+        };
+        let (mon_x, mon_y, mon_w, _) = logical_monitor_geometry(window);
+        let scale = window.scale_factor().unwrap_or(1.0).max(1.0);
+        let logical_x = (f64::from(x) - mon_x * scale) / scale;
+        let logical_y = (f64::from(y) - mon_y * scale) / scale;
+        is_in_hot_zone(logical_x, logical_y, mon_w)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window;
+        false
+    }
+}
+
+/// Make the window ignore (or receive) cursor events. With `ignore`
+/// the whole window is click-through, including the pill / panel, so
+/// the frontend must turn it off whenever the island is visible and
+/// back on when it hides to its handle. See the module docs.
+pub fn set_click_through(window: &tauri::Window, ignore: bool) -> Result<(), tauri::Error> {
+    window.set_ignore_cursor_events(ignore)
+}
+
+/// Start the hot-zone watcher: a background thread polls the cursor
+/// position and emits [`HOT_ZONE_EVENT`] whenever the cursor enters
+/// or leaves the top-edge strip (and once at startup, so the frontend
+/// can sync its initial state). Call once from the `setup` hook in
+/// `lib.rs`. The thread runs for the life of the process.
+pub fn start_hot_zone_watcher(app: &tauri::AppHandle) {
+    let Some(webview_window) = app.get_webview_window("main") else {
+        return;
+    };
+    let window = webview_window.as_ref().window().clone();
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let mut was_inside: Option<bool> = None;
+        loop {
+            let inside = cursor_in_hot_zone(&window);
+            if was_inside != Some(inside) {
+                was_inside = Some(inside);
+                let _ = app.emit(
+                    HOT_ZONE_EVENT,
+                    HotZoneEvent {
+                        in_hot_zone: inside,
+                    },
+                );
+            }
+            std::thread::sleep(Duration::from_millis(HOT_ZONE_POLL_MS));
+        }
+    });
+}
+
+#[cfg(target_os = "windows")]
+mod win {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+    /// Live cursor position in physical screen pixels, or `None` when
+    /// the position cannot be read.
+    pub fn cursor_position() -> Option<(i32, i32)> {
+        let mut point = POINT { x: 0, y: 0 };
+        // SAFETY: `point` is a valid local `POINT`; `GetCursorPos`
+        // writes the cursor coordinates into it.
+        unsafe { GetCursorPos(&mut point) }.ok()?;
+        Some((point.x, point.y))
+    }
 }
 
 #[cfg(test)]
@@ -210,32 +285,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sizes_match_config() {
-        assert_eq!(size_for(false), (420, 120));
-        assert_eq!(size_for(true), (560, 340));
-        assert_ne!(size_for(false), size_for(true));
+    fn fixed_window_fits_panel_with_glow() {
+        assert_eq!(window_size(), (640, 440));
+        assert_eq!(content_rect(), (40, 40, 560, 360));
+        // Glow padding is equal on every side.
+        assert_eq!(CONTENT_X, GLOW_PADDING);
+        assert_eq!(CONTENT_Y, GLOW_PADDING);
+        assert_eq!(WINDOW_WIDTH - (CONTENT_X + CONTENT_WIDTH), GLOW_PADDING);
+        assert_eq!(WINDOW_HEIGHT - (CONTENT_Y + CONTENT_HEIGHT), GLOW_PADDING);
+        // The current 560x340 panel also fits inside the content box.
+        assert!(CONTENT_WIDTH >= 560);
+        assert!(CONTENT_HEIGHT >= 340);
+    }
+
+    #[test]
+    fn state_reports_fixed_size() {
+        let state = current_state();
+        assert_eq!((state.width, state.height), (640, 440));
+        assert_eq!(
+            (
+                state.content_x,
+                state.content_y,
+                state.content_width,
+                state.content_height
+            ),
+            (40, 40, 560, 360)
+        );
     }
 
     #[test]
     fn centered_x_is_half_the_gap() {
-        assert_eq!(centered_x(1920.0, 420), 750.0);
-        assert_eq!(centered_x(560.0, 560), 0.0);
-        assert_eq!(centered_x(400.0, 560), 0.0);
+        assert_eq!(centered_x(1920.0, 640), 640.0);
+        assert_eq!(centered_x(640.0, 640), 0.0);
+        assert_eq!(centered_x(400.0, 640), 0.0);
     }
 
     #[test]
-    fn lerp_size_steps_are_monotonic_and_exact() {
-        let from = (420, 120);
-        let to = (560, 340);
-        assert_eq!(lerp_size(from, to, 0, 12), from);
-        assert_eq!(lerp_size(from, to, 12, 12), to);
-        let mid = lerp_size(from, to, 6, 12);
-        assert_eq!(mid, (490, 230));
-        let mut prev = from;
-        for step in 1..=12 {
-            let next = lerp_size(from, to, step, 12);
-            assert!(next.0 >= prev.0 && next.1 >= prev.1);
-            prev = next;
-        }
+    fn hot_zone_is_the_top_edge_strip() {
+        assert!(is_in_hot_zone(320.0, 0.0, 1920.0));
+        assert!(is_in_hot_zone(320.0, 6.0, 1920.0));
+        assert!(is_in_hot_zone(0.0, 3.0, 1920.0));
+        assert!(is_in_hot_zone(1920.0, 3.0, 1920.0));
+        assert!(!is_in_hot_zone(320.0, 6.1, 1920.0));
+        assert!(!is_in_hot_zone(320.0, -1.0, 1920.0));
+        assert!(!is_in_hot_zone(-1.0, 3.0, 1920.0));
+        assert!(!is_in_hot_zone(1920.1, 3.0, 1920.0));
     }
 }

@@ -37,7 +37,7 @@ pub fn run() {
             // it through `get_settings`.
             let settings = settings::load(app.handle());
             settings::apply(app.handle(), &settings);
-            // Island: place the window at its startup position (compact
+            // Island: place the window at its startup position (fixed
             // size, top-center). Skipped when the main window is missing.
             if let Some(webview_window) = app.get_webview_window("main") {
                 let window = webview_window.as_ref().window();
@@ -60,6 +60,11 @@ pub fn run() {
             if settings.auto_hide_taskbar {
                 taskbar::set_hidden(true);
             }
+            // Island hot zone: a background thread watches the cursor
+            // and emits `island-hot-zone` when it enters / leaves the
+            // top edge, so the frontend can wake the island from hidden.
+            // Windows-only in effect; off Windows it never fires.
+            island::start_hot_zone_watcher(app.handle());
             // Watchdog: a separate process watches Nexora and restores the
             // taskbar if Nexora crashes or is killed; a monitor thread also
             // watches explorer.exe while Nexora runs. See watchdog.rs.
@@ -71,6 +76,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ipc::get_island_state,
             ipc::set_island_expanded,
+            ipc::set_island_click_through,
             ipc::get_system_stats,
             ipc::get_now_playing,
             ipc::media_play,

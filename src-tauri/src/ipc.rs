@@ -15,6 +15,15 @@ pub fn set_island_expanded(
     island::set_expanded_on_window(&window, expanded).map_err(|e| e.to_string())
 }
 
+/// Toggle click-through on the island window: with `ignore` the whole
+/// fixed canvas lets clicks pass to the app below (including the pill
+/// / panel), so the frontend turns it off while the island is visible
+/// and back on when it hides to its handle.
+#[tauri::command]
+pub fn set_island_click_through(window: tauri::Window, ignore: bool) -> Result<(), String> {
+    island::set_click_through(&window, ignore).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn get_system_stats() -> stats::SystemStats {
     stats::collect()
