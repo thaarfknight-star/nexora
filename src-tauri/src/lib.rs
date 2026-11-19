@@ -91,6 +91,7 @@ pub fn run() {
             ipc::activate_taskbar_window,
             ipc::open_start_menu,
             ipc::launch_pinned_app,
+            ipc::restore_taskbar_now,
             ipc::get_watchdog_status,
             ipc::get_tray_status,
             ipc::get_settings,

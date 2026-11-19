@@ -103,6 +103,14 @@ pub fn launch_pinned_app(target: String) -> bool {
     taskbar_content::launch_pinned_app(&target)
 }
 
+/// Show the taskbar again right now — the button the onboarding page
+/// promises. Thin wrapper over `watchdog::restore_taskbar()`; `false`
+/// off Windows, like the other taskbar commands.
+#[tauri::command]
+pub fn restore_taskbar_now() -> bool {
+    watchdog::restore_taskbar()
+}
+
 #[tauri::command]
 pub fn get_watchdog_status() -> watchdog::WatchdogStatus {
     watchdog::check_health()
@@ -168,4 +176,13 @@ pub async fn check_updates(app: tauri::AppHandle) -> Result<updater::UpdateInfo,
 #[tauri::command]
 pub async fn download_and_install_update(app: tauri::AppHandle) -> Result<(), String> {
     updater::download_and_install(app).await
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[cfg(not(windows))]
+    fn restore_taskbar_now_returns_false_off_windows() {
+        assert!(!super::restore_taskbar_now());
+    }
 }
