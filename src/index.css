@@ -190,6 +190,13 @@ body,
   }
 }
 
+/* Quick settings tab: the Settings window's rows, reused. */
+.quick-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+
 /* Staged content reveal when the panel opens. */
 .island-pill.expanded .island-clock,
 .island-pill.expanded .island-tabs,

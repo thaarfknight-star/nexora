@@ -31,6 +31,8 @@ export function applyLanguageToDocument(lang: Language): void {
 const EN = {
   tabMedia: "Media",
   tabStats: "Stats",
+  tabQuick: "Quick settings",
+  quickTheme: "Theme",
   notifications: "Notifications",
   openSettings: "Open Settings",
   expand: "Expand",
@@ -140,6 +142,8 @@ type StringKey = keyof typeof EN;
 const FA: Record<StringKey, string> = {
   tabMedia: "مدیا",
   tabStats: "آمار",
+  tabQuick: "تنظیمات سریع",
+  quickTheme: "تم",
   notifications: "اعلان‌ها",
   openSettings: "باز کردن تنظیمات",
   expand: "باز کردن",

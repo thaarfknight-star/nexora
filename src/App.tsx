@@ -127,7 +127,7 @@ interface UpdateInfo {
   update_available: boolean;
 }
 
-type IslandTab = "media" | "stats";
+type IslandTab = "media" | "stats" | "notifications" | "quick";
 
 const STORAGE_KEY = "nexora-theme";
 
@@ -347,6 +347,9 @@ function IslandApp() {
   });
   const [theme, setTheme] = useState<ThemeId>("neon-glass");
   const [tab, setTab] = useState<IslandTab>("media");
+  // Full settings object, for the Quick settings tab: every change
+  // goes through set_settings (rule 18), never local storage.
+  const [settings, setSettings] = useState<NexoraSettings | null>(null);
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [media, setMedia] = useState<MediaInfo | null>(null);
   const [taskbar, setTaskbar] = useState<TaskbarStatus | null>(null);
@@ -411,7 +414,6 @@ function IslandApp() {
   };
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [showNotifications, setShowNotifications] = useState(false);
   const [seenIds, setSeenIds] = useState<string[]>([]);
   // Compact bar's taskbar zone: open windows + pinned apps.
   const [taskbarWindows, setTaskbarWindows] = useState<TaskbarWindow[]>([]);
@@ -522,6 +524,7 @@ function IslandApp() {
     const saved = readSavedTheme();
     invoke<NexoraSettings>("get_settings")
       .then((loaded) => {
+        setSettings(loaded);
         applyTheme(themeOrDefault(saved ?? loaded.theme));
         setLanguage(normalizeLanguage(loaded.language));
         setIslandStyle({
@@ -545,6 +548,7 @@ function IslandApp() {
     // emits settings-changed — apply it here at once, no restart.
     let unlisten: (() => void) | undefined;
     listen<NexoraSettings>("settings-changed", (event) => {
+      setSettings(event.payload);
       applyTheme(themeOrDefault(event.payload.theme));
       setLanguage(normalizeLanguage(event.payload.language));
       setIslandStyle({
@@ -695,16 +699,58 @@ function IslandApp() {
     invoke("open_settings").catch(() => {});
   };
 
-  const toggleNotifications = () => {
-    if (visible !== "expanded") {
-      // The center only renders expanded — open the island first.
-      showIsland("expanded");
+  const saveSettings = (next: NexoraSettings) => {
+    invoke<NexoraSettings>("set_settings", { settings: next })
+      .then(setSettings)
+      .catch(() => {});
+  };
+
+  const toggleQuickSetting = (
+    key: "auto_hide_taskbar" | "always_on_top" | "clock_24h",
+  ) => {
+    if (!settings) {
+      return;
     }
-    if (!showNotifications) {
+    saveSettings({ ...settings, [key]: !settings[key] });
+    // The clock reads displaySettings, not the settings object —
+    // flip it at once so the toggle does not wait for the round-trip.
+    if (key === "clock_24h") {
+      setDisplaySettings((prev) => ({
+        ...prev,
+        clock24h: !prev.clock24h,
+      }));
+    }
+  };
+
+  const cycleQuickTheme = () => {
+    if (!settings) {
+      return;
+    }
+    const currentIndex = THEMES.findIndex(
+      (candidate) => candidate.id === theme,
+    );
+    const next = THEMES[(currentIndex + 1) % THEMES.length];
+    applyTheme(next.id);
+    saveSettings({ ...settings, theme: next.id });
+  };
+
+  // Selecting a tab; opening Notifications also marks everything
+  // seen and re-reads the list, like the bell used to do.
+  const selectTab = (next: IslandTab) => {
+    setTab(next);
+    if (next === "notifications") {
       refreshNotifications();
       setSeenIds(notifications.map((item) => item.id));
     }
-    setShowNotifications((prev) => !prev);
+  };
+
+  // The bell opens the Notifications tab (or back to Media when it
+  // is already open); the center only renders expanded.
+  const openNotificationsTab = () => {
+    if (visible !== "expanded") {
+      showIsland("expanded");
+    }
+    selectTab(tab === "notifications" ? "media" : "notifications");
   };
 
   const dismissNotification = (id: string) => {
@@ -761,6 +807,8 @@ function IslandApp() {
   const tabs: { id: IslandTab; label: string }[] = [
     { id: "media", label: t(language, "tabMedia") },
     { id: "stats", label: t(language, "tabStats") },
+    { id: "notifications", label: t(language, "notifications") },
+    { id: "quick", label: t(language, "tabQuick") },
   ];
 
   return (
@@ -982,10 +1030,10 @@ function IslandApp() {
           <button
             type="button"
             className="bell-btn"
-            onClick={toggleNotifications}
+            onClick={openNotificationsTab}
             title={t(language, "notifications")}
             aria-label={t(language, "notifications")}
-            aria-expanded={showNotifications}
+            aria-expanded={visible === "expanded" && tab === "notifications"}
           >
             <img src={bell} alt="" width={28} height={28} />
             {unreadCount > 0 && (
@@ -1021,12 +1069,32 @@ function IslandApp() {
         </div>
         {visible === "expanded" && (
           <>
-            {showNotifications ? (
+            <div
+              className="island-tabs"
+              role="tablist"
+              aria-label={t(language, "islandPanels")}
+            >
+              {tabs.map((candidate) => (
+                <button
+                  key={candidate.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === candidate.id}
+                  className={`island-tab${
+                    tab === candidate.id ? " active" : ""
+                  }`}
+                  onClick={() => selectTab(candidate.id)}
+                >
+                  {candidate.label}
+                </button>
+              ))}
+            </div>
+            {tab === "notifications" && (
               <div
                 className={`notifications-panel${
                   density === "compact" ? " compact" : ""
                 }`}
-                role="region"
+                role="tabpanel"
                 aria-label={t(language, "notifications")}
               >
                 <div className="notifications-header">
@@ -1131,28 +1199,7 @@ function IslandApp() {
                   </div>
                 )}
               </div>
-            ) : (
-              <>
-            <div
-              className="island-tabs"
-              role="tablist"
-              aria-label={t(language, "islandPanels")}
-            >
-              {tabs.map((candidate) => (
-                <button
-                  key={candidate.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === candidate.id}
-                  className={`island-tab${
-                    tab === candidate.id ? " active" : ""
-                  }`}
-                  onClick={() => setTab(candidate.id)}
-                >
-                  {candidate.label}
-                </button>
-              ))}
-            </div>
+            )}
             {tab === "media" && (
               <div className="island-panel" role="tabpanel">
                 <div className="media-card">
@@ -1367,7 +1414,84 @@ function IslandApp() {
                 </div>
               </div>
             )}
-              </>
+            {tab === "quick" && (
+              <div className="island-panel" role="tabpanel">
+                <div className="settings-row">
+                  <span className="settings-row-text">
+                    <span>{t(language, "quickTheme")}</span>
+                    <span className="settings-row-desc">
+                      {THEME_DESCRIPTIONS[language][theme]}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    className="mini-btn"
+                    onClick={cycleQuickTheme}
+                    disabled={!settings}
+                  >
+                    {currentTheme.name}
+                  </button>
+                </div>
+                <div className="settings-row">
+                  <span className="settings-row-text">
+                    <span>{t(language, "autoHideTaskbar")}</span>
+                    <span className="settings-row-desc">
+                      {t(language, "autoHideTaskbarDesc")}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    className="mini-btn"
+                    onClick={() => toggleQuickSetting("auto_hide_taskbar")}
+                    disabled={!settings}
+                  >
+                    {settings
+                      ? onOff(settings.auto_hide_taskbar, language)
+                      : "—"}
+                  </button>
+                </div>
+                <div className="settings-row">
+                  <span className="settings-row-text">
+                    <span>{t(language, "alwaysOnTop")}</span>
+                    <span className="settings-row-desc">
+                      {t(language, "alwaysOnTopDesc")}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    className="mini-btn"
+                    onClick={() => toggleQuickSetting("always_on_top")}
+                    disabled={!settings}
+                  >
+                    {settings ? onOff(settings.always_on_top, language) : "—"}
+                  </button>
+                </div>
+                <div className="settings-row">
+                  <span className="settings-row-text">
+                    <span>{t(language, "clock24h")}</span>
+                    <span className="settings-row-desc">
+                      {t(language, "clock24hDesc")}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    className="mini-btn"
+                    onClick={() => toggleQuickSetting("clock_24h")}
+                    disabled={!settings}
+                  >
+                    {settings ? onOff(settings.clock_24h, language) : "—"}
+                  </button>
+                </div>
+                <div className="quick-actions">
+                  <button
+                    type="button"
+                    className="mini-btn"
+                    onClick={openSettings}
+                  >
+                    {t(language, "openSettings")}
+                  </button>
+                </div>
+              </div>
             )}
           </>
         )}
