@@ -17,8 +17,8 @@
 //! (running windows, pinned apps, Start). The frontend sends that
 //! signal with the `notify_island_shown` command; only then — and
 //! only when the user asked for hiding (`auto_hide_taskbar`) — the
-//! taskbar is hidden. The outcome is written to the island anchor
-//! log (see `island::log_taskbar_hidden`). An explicit
+//! taskbar is hidden. The outcome is written to the diagnostics
+//! log (see `diagnostics::log_taskbar_hide`). An explicit
 //! `set_taskbar_hidden` call still hides immediately: the gate only
 //! applies to the deferred startup hide.
 //!
@@ -232,16 +232,20 @@ fn mark_island_shown() -> bool {
 /// Frontend signal: the island has been shown at least once with its
 /// taskbar content (running windows, pinned apps, Start). Only now —
 /// and only when startup asked for hiding — the taskbar is hidden.
-/// The outcome is appended to the island anchor log. Later calls are
+/// The outcome is appended to the diagnostics log. Later calls are
 /// no-ops. Returns the resulting taskbar status.
 #[tauri::command]
-pub fn notify_island_shown(window: tauri::Window) -> TaskbarStatus {
+pub fn notify_island_shown() -> TaskbarStatus {
     if !mark_island_shown() {
         return status();
     }
     if should_hide_now(island_shown(), hide_intended()) {
         let hidden = set_hidden(true);
-        crate::island::log_taskbar_hidden(&window, hidden.hidden);
+        crate::diagnostics::log_taskbar_hide(if hidden.hidden {
+            "hidden"
+        } else {
+            "not hidden"
+        });
         hidden
     } else {
         status()
