@@ -1,39 +1,27 @@
-//! Real Windows taskbar hide / restore, AppBar registration and re-hide
-//! monitor.
+//! Real Windows taskbar hide / restore and re-hide monitor.
 //!
 //! Nexora replaces the Windows taskbar with the floating island, so the real
 //! taskbar window (`Shell_TrayWnd`, plus one `Shell_SecondaryTrayWnd` per
 //! extra monitor) must be hidden while the island is the shell, and shown
 //! again when Nexora quits — or if Nexora is killed, by the watchdog.
 //!
-//! Two things keep maximized windows from sliding under the island:
+//! The island is a plain overlay (`alwaysOnTop` in the Tauri config): it
+//! reserves no workspace, so maximized windows may slide under it — that is
+//! the accepted behaviour. A workspace reservation for the island's strip
+//! used to exist and was removed because it shrank every maximized window
+//! by the full window height (440 px).
 //!
-//! * **AppBar.** The island window is registered with `SHAppBarMessage`
-//!   (`ABM_NEW` + `ABM_SETPOS`, edge `ABE_TOP`) so the system reserves the
-//!   strip the island occupies and maximized windows start below it. The
-//!   reservation is dropped (`ABM_REMOVE`) whenever the taskbar is shown
-//!   again and on clean exit (`lib.rs` RunEvent handler). Tauri does not
-//!   expose the island window procedure, so `ABN_*` notifications cannot
-//!   be pumped; the monitor below re-asserts the reservation every tick
-//!   instead. The callback message is therefore 0.
-//! * **Monitor.** Windows 11 can show the taskbar again on its own (Win
-//!   key, notifications) and Explorer recreates it visible after a
-//!   restart. A background thread re-checks every 1.5 s while Nexora
-//!   wants the taskbar hidden and hides it again, and re-registers the
-//!   AppBar after an Explorer restart (the shell forgets every AppBar
-//!   registration when Explorer restarts).
+//! **Monitor.** Windows 11 can show the taskbar again on its own (Win
+//! key, notifications) and Explorer recreates it visible after a
+//! restart. A background thread re-checks every 1.5 s while Nexora
+//! wants the taskbar hidden and hides it again.
 //!
 //! `status()` always reports the live window state (`IsWindowVisible`), never
 //! a cached flag, so it stays correct if Explorer restarts and recreates the
 //! tray window. `restore()` is the exit / crash-recovery hook: it is
 //! idempotent and always shows the taskbar again. The clean-exit path in
-//! `lib.rs` drops the AppBar reservation and then calls the watchdog's
-//! own `restore_taskbar()` (independent of this module, by design).
-//!
-//! Known limit: if Nexora is *killed* (not a clean exit) the AppBar
-//! reservation outlives the process until Explorer restarts — the
-//! watchdog restores the taskbar itself, but removing a dead AppBar
-//! belongs to the watchdog module, which this branch does not touch.
+//! `lib.rs` calls the watchdog's own `restore_taskbar()` (independent of
+//! this module, by design).
 //!
 //! Only the Windows implementation talks to WinAPI (crate `windows`,
 //! target-gated in `Cargo.toml`). On any other OS every function is a
@@ -53,12 +41,11 @@ use std::time::Duration;
 static HIDDEN_BY_NEXORA: AtomicBool = AtomicBool::new(false);
 
 /// Raw island window handle (`HWND` as `isize`; 0 = unknown).
-/// Set once from `lib.rs` setup via [`set_appbar_window`]. Stored as an
-/// integer so this module never needs a Tauri type.
-static APPBAR_HWND: AtomicIsize = AtomicIsize::new(0);
-
-/// Whether the island is currently registered as an AppBar with the shell.
-static APPBAR_REGISTERED: AtomicBool = AtomicBool::new(false);
+/// Set once from `lib.rs` setup via [`set_island_window`]. Stored as an
+/// integer so this module never needs a Tauri type. It is only used to
+/// recognise the island itself (see `taskbar_content.rs`, which excludes
+/// it from the window list); it reserves nothing.
+static ISLAND_HWND: AtomicIsize = AtomicIsize::new(0);
 
 /// Whether the re-hide monitor thread is running (Windows only; the
 /// monitor never runs elsewhere).
@@ -95,25 +82,6 @@ pub enum TrayState {
 /// catches the recreated window.
 pub fn should_rehide(hidden_by_nexora: bool, tray: TrayState) -> bool {
     hidden_by_nexora && tray == TrayState::Visible
-}
-
-/// Pure decision: should the monitor re-register the AppBar on this tick?
-///
-/// Explorer forgets every AppBar registration when it restarts, so a
-/// tray that reappears after being missing means the reservation died
-/// with the old Explorer and must be made again.
-pub fn should_reregister_appbar(hidden_by_nexora: bool, prev: TrayState, now: TrayState) -> bool {
-    hidden_by_nexora && prev == TrayState::Missing && now != TrayState::Missing
-}
-
-/// Pure decision: should the monitor re-assert the AppBar reservation?
-///
-/// Re-asserting (`ABM_QUERYPOS` + `ABM_SETPOS`) keeps the reserved strip
-/// in step with the island's current rect (expand/collapse resizes it)
-/// and with work-area changes the shell would otherwise only report via
-/// `ABN_POSCHANGED`, which cannot be pumped here.
-pub fn should_reassert_appbar(appbar_registered: bool, hidden_by_nexora: bool) -> bool {
-    appbar_registered && hidden_by_nexora
 }
 
 #[cfg(target_os = "windows")]
@@ -159,9 +127,6 @@ pub fn hide() -> TaskbarStatus {
         // down right now and the tray only reappears later.
         HIDDEN_BY_NEXORA.store(true, Ordering::SeqCst);
         set_tray_visible(false);
-        // Best effort: hide() still reports the live state when the
-        // island window is unknown (no AppBar) or registration fails.
-        register_appbar();
         start_monitor();
     }
     status()
@@ -171,12 +136,10 @@ pub fn hide() -> TaskbarStatus {
 pub fn show() -> TaskbarStatus {
     #[cfg(target_os = "windows")]
     {
-        // Drop the work-area reservation before showing the taskbar;
-        // the monitor thread exits on its next tick (flag cleared below).
-        unregister_appbar();
         // Clear the intent even when Explorer is down: the user asked
         // for a visible taskbar, so the monitor must not re-hide the
-        // tray Explorer recreates later.
+        // tray Explorer recreates later. The monitor thread exits on its
+        // next tick (flag cleared here).
         HIDDEN_BY_NEXORA.store(false, Ordering::SeqCst);
         set_tray_visible(true);
     }
@@ -204,50 +167,20 @@ pub fn hidden_by_nexora() -> bool {
     HIDDEN_BY_NEXORA.load(Ordering::SeqCst)
 }
 
-/// Remember the island window handle for AppBar registration.
-/// Called once from `lib.rs` setup (Windows only); pass 0 to forget it.
-/// The handle is only used for `SHAppBarMessage` and `GetWindowRect`.
-pub fn set_appbar_window(hwnd: isize) {
-    APPBAR_HWND.store(hwnd, Ordering::SeqCst);
+/// Remember the island window handle. Called once from `lib.rs` setup
+/// (Windows only); pass 0 to forget it. The handle is only used to
+/// recognise the island itself (see `taskbar_content.rs`); it reserves
+/// nothing.
+pub fn set_island_window(hwnd: isize) {
+    ISLAND_HWND.store(hwnd, Ordering::SeqCst);
 }
 
 /// The remembered island window handle, 0 when unknown.
-pub fn appbar_window() -> isize {
-    APPBAR_HWND.load(Ordering::SeqCst)
+pub fn island_window() -> isize {
+    ISLAND_HWND.load(Ordering::SeqCst)
 }
 
-/// Whether the island is currently registered as an AppBar.
-pub fn appbar_registered() -> bool {
-    APPBAR_REGISTERED.load(Ordering::SeqCst)
-}
-
-/// Register the island window as a top AppBar (no-op when the window
-/// handle is unknown or off Windows). Returns whether the island is
-/// registered afterwards; calling it while already registered is a no-op.
-pub fn register_appbar() -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        if APPBAR_REGISTERED.load(Ordering::SeqCst) {
-            return true;
-        }
-        win::register_appbar()
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        false
-    }
-}
-
-/// Drop the AppBar reservation (no-op when not registered or off
-/// Windows). Idempotent; safe to call on every exit path.
-pub fn unregister_appbar() {
-    #[cfg(target_os = "windows")]
-    {
-        win::unregister_appbar();
-    }
-}
-
-/// Start the background re-hide / AppBar monitor (Windows only; no-op
+/// Start the background re-hide monitor (Windows only; no-op
 /// elsewhere). Safe to call repeatedly: at most one thread runs, and it
 /// exits by itself once Nexora no longer wants the taskbar hidden.
 pub fn start_monitor() {
@@ -260,16 +193,12 @@ pub fn start_monitor() {
             return;
         }
         std::thread::spawn(|| {
-            // Unknown at start: the first tick treats the tray as freshly
-            // (re)appeared, so the AppBar gets registered even if hide()
-            // ran before the window handle was known.
-            let mut prev = TrayState::Missing;
             loop {
                 std::thread::sleep(MONITOR_INTERVAL);
                 if !hidden_by_nexora() {
                     break;
                 }
-                monitor_tick(&mut prev);
+                monitor_tick();
             }
             MONITOR_RUNNING.store(false, Ordering::SeqCst);
             // Close the race DEVagent flagged: hide() may have run between
@@ -304,40 +233,24 @@ pub fn tray_state() -> TrayState {
     }
 }
 
-/// One monitor tick: re-hide the taskbar if Windows brought it back and
-/// maintain the AppBar reservation. Only called while Nexora wants the
-/// taskbar hidden.
+/// One monitor tick: re-hide the taskbar if Windows brought it back.
+/// Only called while Nexora wants the taskbar hidden.
 #[cfg(target_os = "windows")]
-fn monitor_tick(prev: &mut TrayState) {
+fn monitor_tick() {
     if !hidden_by_nexora() {
         return;
     }
-    let now = tray_state();
-    if should_rehide(hidden_by_nexora(), now) {
+    if should_rehide(hidden_by_nexora(), tray_state()) {
         set_tray_visible(false);
     }
-    if appbar_window() != 0 {
-        if should_reregister_appbar(hidden_by_nexora(), *prev, now) {
-            win::reregister_appbar();
-        } else if !appbar_registered() {
-            win::register_appbar();
-        } else if should_reassert_appbar(appbar_registered(), hidden_by_nexora()) {
-            win::reassert_appbar();
-        }
-    }
-    *prev = now;
 }
 
 #[cfg(target_os = "windows")]
 mod win {
-    use std::sync::atomic::Ordering;
     use windows::core::{w, PCWSTR};
-    use windows::Win32::Foundation::{HWND, LPARAM, RECT};
-    use windows::Win32::UI::Shell::{
-        SHAppBarMessage, ABE_TOP, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, APPBARDATA,
-    };
+    use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
-        FindWindowExW, GetWindowRect, IsWindowVisible, ShowWindow, SW_HIDE, SW_SHOW,
+        FindWindowExW, IsWindowVisible, ShowWindow, SW_HIDE, SW_SHOW,
     };
 
     /// Window classes of the Windows taskbar. `Shell_TrayWnd` is the primary
@@ -395,125 +308,6 @@ mod win {
         }
         !windows.is_empty()
     }
-
-    /// APPBARDATA for a top-edge bar over `rect`.
-    ///
-    /// The callback message is 0 on purpose: Tauri does not expose the
-    /// island window procedure, so `ABN_*` notifications (notably
-    /// `ABN_POSCHANGED`) cannot be pumped; the monitor thread re-asserts
-    /// the reservation every tick instead.
-    fn appbar_data(hwnd: HWND, rect: RECT) -> APPBARDATA {
-        APPBARDATA {
-            cbSize: std::mem::size_of::<APPBARDATA>() as u32,
-            hWnd: hwnd,
-            uCallbackMessage: 0,
-            uEdge: ABE_TOP,
-            rc: rect,
-            lParam: LPARAM(0),
-        }
-    }
-
-    /// The island window's current screen rect, in physical pixels.
-    /// `None` when the window handle is dead.
-    fn island_rect(hwnd: HWND) -> Option<RECT> {
-        let mut rect = RECT {
-            left: 0,
-            top: 0,
-            right: 0,
-            bottom: 0,
-        };
-        // SAFETY: `hwnd` is the live island window handle and `rect`
-        // points at a valid RECT.
-        unsafe { GetWindowRect(hwnd, &mut rect) }.ok()?;
-        Some(rect)
-    }
-
-    /// Register the island as a top AppBar and commit the reserved strip.
-    /// Returns true when the shell accepted the registration.
-    pub fn register_appbar() -> bool {
-        let raw = super::APPBAR_HWND.load(Ordering::SeqCst);
-        if raw == 0 {
-            return false;
-        }
-        let hwnd = HWND(raw as *mut core::ffi::c_void);
-        let Some(rect) = island_rect(hwnd) else {
-            return false;
-        };
-        // SAFETY: `hwnd` is the live island window; APPBARDATA is a
-        // plain struct whose cbSize matches its layout.
-        let mut data = appbar_data(hwnd, rect);
-        if (unsafe { SHAppBarMessage(ABM_NEW, &mut data) }) == 0 {
-            return false;
-        }
-        // Ask the shell where the bar goes (it anchors the rect to the
-        // top edge and stretches it full-width), then commit that rect
-        // so maximized windows start below the island. The island window
-        // itself is NOT moved: it already sits inside the strip and
-        // island.rs owns its position.
-        if (unsafe { SHAppBarMessage(ABM_QUERYPOS, &mut data) }) == 0 {
-            return false;
-        }
-        if (unsafe { SHAppBarMessage(ABM_SETPOS, &mut data) }) == 0 {
-            return false;
-        }
-        super::APPBAR_REGISTERED.store(true, Ordering::SeqCst);
-        true
-    }
-
-    /// Re-register after an Explorer restart: the new Explorer never saw
-    /// the old registration, so the stale flag is cleared first.
-    pub fn reregister_appbar() -> bool {
-        super::APPBAR_REGISTERED.store(false, Ordering::SeqCst);
-        register_appbar()
-    }
-
-    /// Re-assert the reserved strip for the island's current rect
-    /// (expand/collapse changes it). Returns false when nothing is
-    /// registered or the window handle is dead.
-    pub fn reassert_appbar() -> bool {
-        if !super::APPBAR_REGISTERED.load(Ordering::SeqCst) {
-            return false;
-        }
-        let raw = super::APPBAR_HWND.load(Ordering::SeqCst);
-        if raw == 0 {
-            return false;
-        }
-        let hwnd = HWND(raw as *mut core::ffi::c_void);
-        let Some(rect) = island_rect(hwnd) else {
-            return false;
-        };
-        // SAFETY: as in `register_appbar`.
-        let mut data = appbar_data(hwnd, rect);
-        if (unsafe { SHAppBarMessage(ABM_QUERYPOS, &mut data) }) == 0 {
-            return false;
-        }
-        (unsafe { SHAppBarMessage(ABM_SETPOS, &mut data) }) != 0
-    }
-
-    /// Drop the AppBar reservation. Best effort: the return value is
-    /// ignored because this runs on exit paths too.
-    pub fn unregister_appbar() {
-        if !super::APPBAR_REGISTERED.swap(false, Ordering::SeqCst) {
-            return;
-        }
-        let raw = super::APPBAR_HWND.load(Ordering::SeqCst);
-        if raw == 0 {
-            return;
-        }
-        let mut data = appbar_data(
-            HWND(raw as *mut core::ffi::c_void),
-            RECT {
-                left: 0,
-                top: 0,
-                right: 0,
-                bottom: 0,
-            },
-        );
-        // SAFETY: as in `register_appbar`.
-        unsafe {
-            SHAppBarMessage(ABM_REMOVE, &mut data);
-        }
-    }
 }
 
 #[cfg(target_os = "windows")]
@@ -557,57 +351,6 @@ mod tests {
         assert!(!should_rehide(false, TrayState::Visible));
     }
 
-    #[test]
-    fn appbar_reregisters_only_after_explorer_restart() {
-        // Missing -> reappeared: the old registration died with Explorer.
-        assert!(should_reregister_appbar(
-            true,
-            TrayState::Missing,
-            TrayState::Visible
-        ));
-        assert!(should_reregister_appbar(
-            true,
-            TrayState::Missing,
-            TrayState::Hidden
-        ));
-        // No restart happened: never re-register.
-        assert!(!should_reregister_appbar(
-            true,
-            TrayState::Visible,
-            TrayState::Visible
-        ));
-        assert!(!should_reregister_appbar(
-            true,
-            TrayState::Hidden,
-            TrayState::Visible
-        ));
-        assert!(!should_reregister_appbar(
-            true,
-            TrayState::Hidden,
-            TrayState::Hidden
-        ));
-        // Still missing: nothing to register against yet.
-        assert!(!should_reregister_appbar(
-            true,
-            TrayState::Missing,
-            TrayState::Missing
-        ));
-        // Nexora does not want the taskbar hidden: leave it alone.
-        assert!(!should_reregister_appbar(
-            false,
-            TrayState::Missing,
-            TrayState::Visible
-        ));
-    }
-
-    #[test]
-    fn appbar_reassert_needs_registration_and_hidden_intent() {
-        assert!(should_reassert_appbar(true, true));
-        assert!(!should_reassert_appbar(false, true));
-        assert!(!should_reassert_appbar(true, false));
-        assert!(!should_reassert_appbar(false, false));
-    }
-
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn non_windows_is_a_noop() {
@@ -618,12 +361,11 @@ mod tests {
         assert!(!restore().hidden);
         assert!(!set_hidden(true).hidden);
         assert!(!hidden_by_nexora());
-        assert!(!register_appbar());
-        assert!(!appbar_registered());
-        unregister_appbar();
-        assert_eq!(appbar_window(), 0);
-        set_appbar_window(0);
-        assert_eq!(appbar_window(), 0);
+        assert_eq!(island_window(), 0);
+        set_island_window(12345);
+        assert_eq!(island_window(), 12345);
+        set_island_window(0);
+        assert_eq!(island_window(), 0);
     }
 
     // On Windows this test really hides the taskbar for a moment on the

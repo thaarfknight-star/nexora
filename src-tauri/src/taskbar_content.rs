@@ -318,7 +318,7 @@ mod win {
             is_app_window: exstyle & 0x40000 != 0, // WS_EX_APPWINDOW
             has_owner: unsafe { GetWindow(hwnd, GW_OWNER) }.is_ok(),
             cloaked: is_cloaked(hwnd),
-            is_nexora_island: hwnd.0 as isize == crate::taskbar::appbar_window(),
+            is_nexora_island: hwnd.0 as isize == crate::taskbar::island_window(),
         };
         let mut exe_buf = [0u16; 260];
         let exe_len = unsafe { GetWindowModuleFileNameW(hwnd, &mut exe_buf) };
