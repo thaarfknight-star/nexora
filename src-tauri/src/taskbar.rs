@@ -11,6 +11,17 @@
 //! used to exist and was removed because it shrank every maximized window
 //! by the full window height (440 px).
 //!
+//! **Deferred startup hide (Taha's spec after the 18:53 build test).**
+//! The taskbar is NOT hidden at startup: it stays visible until the
+//! island has been shown at least once with its taskbar content
+//! (running windows, pinned apps, Start). The frontend sends that
+//! signal with the `notify_island_shown` command; only then — and
+//! only when the user asked for hiding (`auto_hide_taskbar`) — the
+//! taskbar is hidden. The outcome is written to the island anchor
+//! log (see `island::log_taskbar_hidden`). An explicit
+//! `set_taskbar_hidden` call still hides immediately: the gate only
+//! applies to the deferred startup hide.
+//!
 //! **Monitor.** Windows 11 can show the taskbar again on its own (Win
 //! key, notifications) and Explorer recreates it visible after a
 //! restart. A background thread re-checks every 1.5 s while Nexora
@@ -46,6 +57,16 @@ static HIDDEN_BY_NEXORA: AtomicBool = AtomicBool::new(false);
 /// recognise the island itself (see `taskbar_content.rs`, which excludes
 /// it from the window list); it reserves nothing.
 static ISLAND_HWND: AtomicIsize = AtomicIsize::new(0);
+
+/// Whether the island has been shown at least once with its taskbar
+/// content (set by the `notify_island_shown` command from the
+/// frontend). The deferred startup hide waits for this.
+static ISLAND_SHOWN: AtomicBool = AtomicBool::new(false);
+
+/// Whether startup asked for the taskbar to be hidden (from
+/// `settings.auto_hide_taskbar`). Recorded at startup, acted on only
+/// after the island-shown signal — never hides on its own.
+static HIDE_INTENT: AtomicBool = AtomicBool::new(false);
 
 /// Whether the re-hide monitor thread is running (Windows only; the
 /// monitor never runs elsewhere).
@@ -178,6 +199,53 @@ pub fn set_island_window(hwnd: isize) {
 /// The remembered island window handle, 0 when unknown.
 pub fn island_window() -> isize {
     ISLAND_HWND.load(Ordering::SeqCst)
+}
+
+/// Record whether startup wants the taskbar hidden. Called once from
+/// `lib.rs` setup; the hide itself waits for the island-shown signal.
+pub fn set_hide_intent(intended: bool) {
+    HIDE_INTENT.store(intended, Ordering::SeqCst);
+}
+
+/// Whether startup asked for the taskbar to be hidden.
+pub fn hide_intended() -> bool {
+    HIDE_INTENT.load(Ordering::SeqCst)
+}
+
+/// Whether the island has been shown at least once with its taskbar content.
+pub fn island_shown() -> bool {
+    ISLAND_SHOWN.load(Ordering::SeqCst)
+}
+
+/// Pure gate for the deferred startup hide: hide only once the island
+/// has been shown and hiding was requested at startup.
+pub fn should_hide_now(island_shown: bool, hide_intended: bool) -> bool {
+    island_shown && hide_intended
+}
+
+/// First-signal-wins: returns `true` only for the first island-shown
+/// signal. Later signals are no-ops — the deferred hide runs once.
+fn mark_island_shown() -> bool {
+    !ISLAND_SHOWN.swap(true, Ordering::SeqCst)
+}
+
+/// Frontend signal: the island has been shown at least once with its
+/// taskbar content (running windows, pinned apps, Start). Only now —
+/// and only when startup asked for hiding — the taskbar is hidden.
+/// The outcome is appended to the island anchor log. Later calls are
+/// no-ops. Returns the resulting taskbar status.
+#[tauri::command]
+pub fn notify_island_shown(window: tauri::Window) -> TaskbarStatus {
+    if !mark_island_shown() {
+        return status();
+    }
+    if should_hide_now(island_shown(), hide_intended()) {
+        let hidden = set_hidden(true);
+        crate::island::log_taskbar_hidden(&window, hidden.hidden);
+        hidden
+    } else {
+        status()
+    }
 }
 
 /// Start the background re-hide monitor (Windows only; no-op
@@ -351,6 +419,25 @@ mod tests {
         assert!(!should_rehide(false, TrayState::Visible));
     }
 
+    #[test]
+    fn deferred_hide_gate_truth_table() {
+        assert!(should_hide_now(true, true));
+        assert!(!should_hide_now(true, false));
+        assert!(!should_hide_now(false, true));
+        assert!(!should_hide_now(false, false));
+    }
+
+    #[test]
+    fn island_shown_signal_is_one_shot() {
+        assert!(!island_shown());
+        assert!(mark_island_shown());
+        assert!(island_shown());
+        assert!(!mark_island_shown());
+        // Reset: no other test reads this flag, but leave it clean.
+        ISLAND_SHOWN.store(false, Ordering::SeqCst);
+        assert!(!island_shown());
+    }
+
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn non_windows_is_a_noop() {
@@ -366,6 +453,11 @@ mod tests {
         assert_eq!(island_window(), 12345);
         set_island_window(0);
         assert_eq!(island_window(), 0);
+        assert!(!hide_intended());
+        set_hide_intent(true);
+        assert!(hide_intended());
+        set_hide_intent(false);
+        assert!(!hide_intended());
     }
 
     // On Windows this test really hides the taskbar for a moment on the

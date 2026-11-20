@@ -311,6 +311,18 @@ fn log_vibrancy(window: &tauri::Window, outcome: &str) {
     write_anchor_log(&dir, &line);
 }
 
+/// Append one taskbar-hide evidence line for this window to the log in
+/// the app data directory: whether the deferred startup hide actually
+/// hid the taskbar. Called by the `notify_island_shown` command after
+/// it hides. Silent when the directory cannot be resolved.
+pub fn log_taskbar_hidden(window: &tauri::Window, hidden: bool) {
+    let line = format!("t={:.3} taskbar_hidden={hidden}\n", now_secs());
+    let Ok(dir) = window.app_handle().path().app_data_dir() else {
+        return;
+    };
+    write_anchor_log(&dir, &line);
+}
+
 /// Read the real window position back; when it is not at the anchor,
 /// apply the position once more and read again. Always appends one
 /// evidence line to the anchor log. Never fails the caller: a window

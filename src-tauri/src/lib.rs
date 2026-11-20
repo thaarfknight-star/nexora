@@ -61,14 +61,18 @@ pub fn run() {
                     taskbar::set_island_window(hwnd.0 as isize);
                 }
             }
-            // Taskbar: hide it at startup when the user asked for it.
-            // hide() starts the monitor that re-hides the taskbar if
-            // Windows shows it again. The RunEvent handler restores it
-            // on exit, and the watchdog covers a crash. No-op off
+            // Taskbar: do NOT hide at startup. The taskbar stays
+            // visible until the island has been shown at least once
+            // with its taskbar content (Taha's spec after the 18:53
+            // build test): the frontend calls the
+            // `notify_island_shown` command once the island first
+            // renders, and only then — when the user asked for it —
+            // the taskbar is hidden. Record the intent here; the
+            // command performs the hide and logs the outcome to the
+            // island anchor log. The RunEvent handler restores it on
+            // exit, and the watchdog covers a crash. No-op off
             // Windows.
-            if settings.auto_hide_taskbar {
-                taskbar::set_hidden(true);
-            }
+            taskbar::set_hide_intent(settings.auto_hide_taskbar);
             // Island hot zone: a background thread watches the cursor
             // and emits `island-hot-zone` when it enters / leaves the
             // top edge, so the frontend can wake the island from hidden.
@@ -104,6 +108,7 @@ pub fn run() {
             ipc::media_previous,
             ipc::get_taskbar_status,
             ipc::set_taskbar_hidden,
+            taskbar::notify_island_shown,
             ipc::get_taskbar_windows,
             ipc::get_pinned_apps,
             ipc::activate_taskbar_window,
