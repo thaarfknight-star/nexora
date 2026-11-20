@@ -22,6 +22,12 @@ import {
   type Language,
 } from "./i18n";
 import { jalaliDate } from "./jalali";
+import {
+  nextVisible,
+  shouldArmAutoClose,
+  type IslandGuards,
+  type IslandVisible,
+} from "./islandStateMachine";
 
 interface IslandState {
   expanded: boolean;
@@ -365,11 +371,21 @@ function IslandApp() {
   const [watchdog, setWatchdog] = useState<WatchdogStatus | null>(null);
   const [now, setNow] = useState(() => new Date());
   // Island visibility state machine (design artifact): the window
-  // never resizes — the pill animates inside the fixed canvas.
-  type IslandVisible = "hidden" | "compact" | "expanded";
+  // never resizes — the pill animates inside the fixed canvas. The
+  // transition rules live in islandStateMachine.ts (tested); the
+  // handlers below only ask it for the next state.
   // Delay after the pointer leaves the island before it steps one
   // level down (expanded -> compact -> hidden).
   const AUTO_CLOSE_DELAY_MS = 2500;
+  // Hidden-state handle hit area, in logical pixels (DEVagent spec):
+  // the visible strip stays 120x4 (backend handle_width/height),
+  // the clickable area around it is ~160x12 at the top edge.
+  const HANDLE_HIT_WIDTH = 160;
+  const HANDLE_HIT_HEIGHT = 12;
+  // Launch hint: ~6 s in COMPACT after every launch, with a hint
+  // line; then it collapses (never during onboarding or hover).
+  const LAUNCH_HINT_MS = 6000;
+  const LAUNCH_HINT_HEIGHT = 28;
   const [visible, setVisibleState] = useState<IslandVisible>("hidden");
   // Stage height duration: open ~320 ms, close ~220 ms (design
   // artifact). Set per transition; the CSS default is the close one.
@@ -384,6 +400,17 @@ function IslandApp() {
   const keepOpenRef = useRef(false);
   const hoveringRef = useRef(false);
   const autoCloseTimer = useRef<number | undefined>(undefined);
+  // Launch hint (item 3): true while the ~6 s COMPACT intro runs.
+  const [launchHint, setLaunchHint] = useState(false);
+  const launchHintRef = useRef(false);
+  const launchHintTimer = useRef<number | undefined>(undefined);
+  // "Island shown" signal (item 4): true once the island has been
+  // shown at least once (compact or expanded) in this launch.
+  const islandShownRef = useRef(false);
+  // Taskbar content rendered at least once (both backend lists
+  // fetched successfully); gates the "island shown" signal.
+  const [taskbarContentLoaded, setTaskbarContentLoaded] = useState(false);
+  const taskbarHideSignaledRef = useRef(false);
 
   const clearAutoCloseTimer = () => {
     if (autoCloseTimer.current !== undefined) {
@@ -392,10 +419,35 @@ function IslandApp() {
     }
   };
 
-  const showIsland = (next: IslandVisible) => {
+  // Guards for the state machine, read from refs (the listeners only
+  // ever see the first render's closure).
+  const machineGuards = (): IslandGuards => ({
+    onboardingOpen: onboardingRef.current !== null,
+    pinned: keepOpenRef.current,
+    hovering: hoveringRef.current,
+    launchHintActive: launchHintRef.current,
+  });
+
+  // Diagnostic visibility log (item 5, TAgent3's command): every
+  // visibility transition with its reason. Silent until the command
+  // lands — the invoke just fails and is swallowed.
+  const logVisibilityTransition = (
+    from: IslandVisible,
+    to: IslandVisible,
+    reason: string,
+  ) => {
+    invoke("log_visibility_transition", { from, to, reason }).catch(() => {});
+  };
+
+  const showIsland = (next: IslandVisible, reason: string) => {
+    const from = visibleRef.current;
+    // A no-op transition changes nothing and logs nothing.
+    if (next === from) {
+      return;
+    }
     const opening =
-      (visibleRef.current === "hidden" && next === "compact") ||
-      (visibleRef.current === "compact" && next === "expanded");
+      (from === "hidden" && next === "compact") ||
+      (from === "compact" && next === "expanded");
     setStageMs(opening ? 320 : 220);
     setStageEasing(
       opening
@@ -404,6 +456,10 @@ function IslandApp() {
     );
     visibleRef.current = next;
     setVisibleState(next);
+    if (next === "compact" || next === "expanded") {
+      islandShownRef.current = true;
+    }
+    logVisibilityTransition(from, next, reason);
     // Keep the backend flag in sync: it drives the poll loop.
     invoke<IslandState>("set_island_expanded", {
       expanded: next === "expanded",
@@ -418,21 +474,22 @@ function IslandApp() {
 
   const armAutoClose = () => {
     clearAutoCloseTimer();
-    // While the onboarding is open, auto-close stays off so the
-    // island never vanishes mid-read.
-    if (onboardingRef.current !== null) {
-      return;
-    }
-    if (keepOpenRef.current || hoveringRef.current) {
+    // The guards live in the state machine (one source of truth):
+    // onboarding, pin, hover, and the launch hint all block arming,
+    // so the island never vanishes mid-read.
+    if (!shouldArmAutoClose(machineGuards())) {
       return;
     }
     autoCloseTimer.current = window.setTimeout(() => {
       const current = visibleRef.current;
-      if (current === "expanded") {
-        showIsland("compact");
+      const next = nextVisible(
+        current,
+        "auto-close-timeout",
+        machineGuards(),
+      );
+      showIsland(next, "auto-close-timeout");
+      if (current === "expanded" && next === "compact") {
         armAutoClose();
-      } else if (current === "compact") {
-        showIsland("hidden");
       }
     }, AUTO_CLOSE_DELAY_MS);
   };
@@ -510,11 +567,29 @@ function IslandApp() {
   };
 
   const refreshTaskbar = () => {
+    // Both lists fetched in the same round count as "content
+    // rendered" for the island-shown signal (item 4). A failed fetch
+    // clears its list but does not count.
+    let windowsOk = false;
+    let pinnedOk = false;
+    const maybeLoaded = () => {
+      if (windowsOk && pinnedOk) {
+        setTaskbarContentLoaded(true);
+      }
+    };
     invoke<TaskbarWindow[]>("get_taskbar_windows")
-      .then(setTaskbarWindows)
+      .then((windows) => {
+        setTaskbarWindows(windows);
+        windowsOk = true;
+        maybeLoaded();
+      })
       .catch(() => setTaskbarWindows([]));
     invoke<PinnedApp[]>("get_pinned_apps")
-      .then(setPinnedApps)
+      .then((apps) => {
+        setPinnedApps(apps);
+        pinnedOk = true;
+        maybeLoaded();
+      })
       .catch(() => setPinnedApps([]));
   };
 
@@ -617,9 +692,10 @@ function IslandApp() {
     listen<{ in_hot_zone: boolean }>("island-hot-zone", (event) => {
       if (event.payload.in_hot_zone) {
         clearAutoCloseTimer();
-        if (visibleRef.current === "hidden") {
-          showIsland("compact");
-        }
+        showIsland(
+          nextVisible(visibleRef.current, "hot-zone-enter", machineGuards()),
+          "hot-zone-enter",
+        );
       } else if (visibleRef.current === "compact") {
         armAutoClose();
       }
@@ -635,33 +711,26 @@ function IslandApp() {
     // (same guard as Esc).
     let unlistenHotkey: (() => void) | undefined;
     listen("island-hotkey", () => {
-      if (onboardingRef.current !== null) {
-        return;
-      }
-      if (visibleRef.current === "hidden") {
-        showIsland("compact");
-      } else {
-        showIsland("hidden");
-      }
+      showIsland(
+        nextVisible(visibleRef.current, "hotkey", machineGuards()),
+        "hotkey",
+      );
     })
       .then((stop) => {
         unlistenHotkey = stop;
       })
       .catch(() => {});
     // Esc steps one level down, unless the island is pinned open.
+    // The guards live in the state machine (same guard as the
+    // hotkey, plus the pin).
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || keepOpenRef.current) {
+      if (event.key !== "Escape") {
         return;
       }
-      // Esc never dismisses the onboarding mid-read.
-      if (onboardingRef.current !== null) {
-        return;
-      }
-      if (visibleRef.current === "expanded") {
-        showIsland("compact");
-      } else if (visibleRef.current === "compact") {
-        showIsland("hidden");
-      }
+      showIsland(
+        nextVisible(visibleRef.current, "esc", machineGuards()),
+        "esc",
+      );
     };
     window.addEventListener("keydown", onKeyDown);
     // The island starts hidden: the fixed canvas lets clicks pass
@@ -673,10 +742,39 @@ function IslandApp() {
     if (window.localStorage.getItem("nexora-onboarding-done") !== "1") {
       onboardingRef.current = 0;
       setOnboardingPage(0);
-      showIsland("expanded");
+      showIsland("expanded", "onboarding-open");
+    } else {
+      // Every launch: present the island in COMPACT for ~6 s with a
+      // hint line, then collapse — never during onboarding (above)
+      // or while the cursor is on the island (guarded at fire time).
+      // Asked of the machine like every other handler; the else
+      // branch already guarantees a non-onboarding launch, so the
+      // result is the same "compact".
+      showIsland(
+        nextVisible("hidden", "launch-start", machineGuards()),
+        "launch-start",
+      );
+      launchHintRef.current = true;
+      setLaunchHint(true);
+      launchHintTimer.current = window.setTimeout(() => {
+        launchHintRef.current = false;
+        setLaunchHint(false);
+        showIsland(
+          nextVisible(
+            visibleRef.current,
+            "launch-hint-timeout",
+            machineGuards(),
+          ),
+          "launch-hint-timeout",
+        );
+      }, LAUNCH_HINT_MS);
     }
     return () => {
       clearAutoCloseTimer();
+      if (launchHintTimer.current !== undefined) {
+        window.clearTimeout(launchHintTimer.current);
+        launchHintTimer.current = undefined;
+      }
       window.removeEventListener("keydown", onKeyDown);
       unlisten?.();
       unlistenNotifications?.();
@@ -713,30 +811,49 @@ function IslandApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, displaySettings.pollIntervalSecs]);
 
+  // "Island shown" signal (item 4, TAgent1's command): once the
+  // island has been shown at least once and the taskbar content has
+  // rendered in the compact bar, tell Rust — exactly once per
+  // launch. The backend decides (first call wins; hides the taskbar
+  // only when auto_hide_taskbar is on) and logs the outcome to
+  // island-anchor.log. Silent until TAgent1's branch
+  // (fix/defer-taskbar-hide) merges.
+  useEffect(() => {
+    if (
+      taskbarHideSignaledRef.current ||
+      !islandShownRef.current ||
+      !taskbarContentLoaded ||
+      visible === "hidden"
+    ) {
+      return;
+    }
+    taskbarHideSignaledRef.current = true;
+    invoke<TaskbarStatus>("notify_island_shown").catch(() => {});
+  }, [visible, taskbarContentLoaded]);
+
   // Clicking the island itself toggles expand / collapse; the bell
   // and gear buttons are siblings, so their clicks do not toggle.
+  // The toggle has no guards (see islandStateMachine.ts): it is the
+  // deliberate collapse, and the only manual way to hide the island
+  // while the onboarding is open.
   const toggleExpand = () => {
-    if (visible === "compact") {
-      showIsland("expanded");
-    } else if (visible === "expanded") {
-      showIsland("compact");
-    }
+    showIsland(
+      nextVisible(visible, "toggle-expand", machineGuards()),
+      "toggle-expand",
+    );
   };
 
   // Clicking the empty canvas around the pill steps one level down.
+  // The onboarding guard lives in the state machine ("shell-click"):
+  // empty-space clicks never dismiss the onboarding mid-read.
   const onShellClick = (event: React.MouseEvent<HTMLElement>) => {
     if (event.target !== event.currentTarget) {
       return;
     }
-    // Empty-space clicks never dismiss the onboarding mid-read.
-    if (onboardingRef.current !== null) {
-      return;
-    }
-    if (visible === "expanded") {
-      showIsland("compact");
-    } else if (visible === "compact") {
-      showIsland("hidden");
-    }
+    showIsland(
+      nextVisible(visibleRef.current, "shell-click", machineGuards()),
+      "shell-click",
+    );
   };
 
   const onShellMouseEnter = () => {
@@ -849,9 +966,10 @@ function IslandApp() {
   // The bell opens the Notifications tab (or back to Media when it
   // is already open); the center only renders expanded.
   const openNotificationsTab = () => {
-    if (visible !== "expanded") {
-      showIsland("expanded");
-    }
+    showIsland(
+      nextVisible(visible, "bell", machineGuards()),
+      "notifications-bell",
+    );
     selectTab(tab === "notifications" ? "media" : "notifications");
   };
 
@@ -927,26 +1045,53 @@ function IslandApp() {
           transitionTimingFunction: stageEasing,
           // Geometry comes from the backend (island.rs), one source of truth.
           left: state.content_x,
-          top: state.content_y,
+          // Hidden: the handle sits exactly at y=0 (top edge) and
+          // slides down to content_y when the island opens (item 1).
+          top: visible === "hidden" ? 0 : state.content_y,
           width: state.content_width,
           height:
             visible === "hidden"
-              ? state.handle_height
+              ? HANDLE_HIT_HEIGHT
               : visible === "compact"
-                ? state.compact_height
+                ? state.compact_height +
+                  (launchHint ? LAUNCH_HINT_HEIGHT : 0)
                 : state.content_height,
         }}
       >
-        <div
+        <button
+          type="button"
           className="island-handle"
-          aria-hidden="true"
+          aria-hidden={visible !== "hidden"}
+          tabIndex={visible === "hidden" ? 0 : -1}
+          aria-label={t(language, "expand")}
+          onClick={() =>
+            showIsland(
+              nextVisible(
+                visibleRef.current,
+                "handle-click",
+                machineGuards(),
+              ),
+              "handle-click",
+            )
+          }
           style={{
-            width: state.handle_width,
-            height: state.handle_height,
+            width: HANDLE_HIT_WIDTH,
+            height: HANDLE_HIT_HEIGHT,
           }}
-        />
+        >
+          <span
+            className="island-handle-strip"
+            aria-hidden="true"
+            style={{
+              width: state.handle_width,
+              height: state.handle_height,
+            }}
+          />
+        </button>
         <section
-          className={`island-pill${visible === "expanded" ? " expanded" : ""}`}
+          className={`island-pill${visible === "expanded" ? " expanded" : ""}${
+            visible === "compact" && launchHint ? " launch-hint" : ""
+          }`}
         style={{
           transitionDuration: `${stageMs}ms`,
           transitionTimingFunction: stageEasing,
@@ -1175,6 +1320,13 @@ function IslandApp() {
             </button>
           )}
         </div>
+        {visible === "compact" && launchHint && (
+          <div className="island-launch-hint" aria-live="polite">
+            {tf(language, "launchHint", {
+              hotkey: settings?.island_hotkey ?? "Alt+Space",
+            })}
+          </div>
+        )}
         {visible === "expanded" && (
           <>
             {onboardingPage !== null ? (

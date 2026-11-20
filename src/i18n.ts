@@ -120,6 +120,8 @@ const EN = {
   themeDefaultPx: "Theme default: {n} px.",
   islandHotkey: "Island hotkey",
   islandHotkeyDesc: "Press to show or hide the island.",
+  launchHint:
+    "Move the mouse to the top edge or press {hotkey} to open Nexora",
   changeHotkey: "Change",
   hotkeyListening: "Press a key…",
   hotkeyCancelHint: "Press Esc to cancel.",
@@ -260,6 +262,8 @@ const FA: Record<StringKey, string> = {
   themeDefaultPx: "پیش‌فرض تم: {n} پیکسل.",
   islandHotkey: "هات‌کی جزیره",
   islandHotkeyDesc: "برای نشان‌دادن یا پنهان‌کردن جزیره فشار بده.",
+  launchHint:
+    "برای باز کردن Nexora، نشانگر موس را به لبه‌ی بالای صفحه ببر یا {hotkey} را فشار بده",
   changeHotkey: "تغییر",
   hotkeyListening: "کلیدی را فشار بده…",
   hotkeyCancelHint: "برای لغو Esc را بزن.",
