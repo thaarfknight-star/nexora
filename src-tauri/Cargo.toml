@@ -29,6 +29,10 @@ tauri = { version = "2", default-features = false, features = ["wry", "compressi
 tauri-plugin-updater = "2"
 # Global hotkey (Alt+Space) for the island: official plugin, v2 line.
 tauri-plugin-global-shortcut = "2"
+# Real backdrop material for the island (Acrylic on Windows,
+# vibrancy on macOS); the CSS glass stays the fallback. Already in
+# the tree as a transitive dep at 0.8.1, now used directly.
+window-vibrancy = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sysinfo = "0.32"

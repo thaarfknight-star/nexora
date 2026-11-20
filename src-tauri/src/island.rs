@@ -336,6 +336,10 @@ pub fn apply_to_window(
 pub fn setup_window(window: &tauri::Window) -> Result<IslandState, tauri::Error> {
     let state = set_expanded(false);
     ensure_fixed_window(window)?;
+    // Real backdrop material (Acrylic on Windows, vibrancy on
+    // macOS). Best effort and non-fatal: where it is unavailable
+    // the CSS glass is the whole look, unchanged.
+    crate::vibrancy::apply_island_vibrancy(window);
     let window = window.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(ANCHOR_REAPPLY_DELAY_MS));

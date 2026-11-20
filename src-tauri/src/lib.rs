@@ -11,6 +11,7 @@ pub mod taskbar;
 pub mod taskbar_content;
 pub mod tray;
 pub mod updater;
+pub mod vibrancy;
 pub mod watchdog;
 
 /// Shows the Settings window (defined in `tauri.conf.json` with label
