@@ -20,10 +20,24 @@
 //!   still receive clicks. The toggle is window-wide (Tauri has no
 //!   per-region ignore), so the frontend owns the policy: hidden ->
 //!   ignore, visible -> receive.
+//!
+//! And the anchor is self-verifying: after every `set_position`,
+//! [`place_top_center`] reads the real window position back
+//! (`outer_position`) and re-applies the anchor when it drifted —
+//! `set_position` during setup can be silently overridden while the
+//! window is still being created (on Taha's install the island
+//! opened mid-screen, not top-center). Every application appends one
+//! evidence line (computed position, real position, monitor geometry
+//! + DPI factor, time) to [`ANCHOR_LOG_FILE`] in the app data
+//! directory, so the next install shows what the anchor did instead
+//! of guessing.
 
 use serde::Serialize;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::Path;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager};
 
 /// Fixed window size, in logical pixels: expanded panel 560x360
@@ -59,6 +73,17 @@ pub const HOT_ZONE_HEIGHT: f64 = 6.0;
 pub const HOT_ZONE_POLL_MS: u64 = 100;
 /// Event emitted when the cursor enters / leaves the hot zone.
 pub const HOT_ZONE_EVENT: &str = "island-hot-zone";
+
+/// Anchor: how far the real window position (physical pixels) may
+/// sit from the computed anchor before it counts as drifted and gets
+/// re-applied. Covers integer rounding across DPI scale factors.
+pub const ANCHOR_TOLERANCE_PX: f64 = 2.0;
+/// Anchor: delay after setup before the position is re-asserted once
+/// more — the window is shown as it is created, and the window
+/// manager can still move it after setup returns.
+pub const ANCHOR_REAPPLY_DELAY_MS: u64 = 500;
+/// Anchor: evidence log file name, inside the app data directory.
+pub const ANCHOR_LOG_FILE: &str = "island-anchor.log";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct IslandState {
@@ -169,9 +194,103 @@ pub fn top_center_position(window: &tauri::Window) -> tauri::LogicalPosition<f64
     tauri::LogicalPosition::new(centered_x(monitor_width, WINDOW_WIDTH), WINDOW_TOP_Y)
 }
 
-/// Move the window to its fixed top-center position.
+/// Logical position scaled to physical pixels.
+pub fn expected_physical(logical: (f64, f64), scale: f64) -> (f64, f64) {
+    (logical.0 * scale, logical.1 * scale)
+}
+
+/// Expected physical top-center position for the fixed window on the
+/// monitor the window is on: the logical anchor times the DPI scale.
+pub fn expected_physical_position(window: &tauri::Window) -> (f64, f64) {
+    let pos = top_center_position(window);
+    let scale = window.scale_factor().unwrap_or(1.0).max(1.0);
+    expected_physical((pos.x, pos.y), scale)
+}
+
+/// Whether a real (physical) window position sits at the computed
+/// anchor, within [`ANCHOR_TOLERANCE_PX`].
+pub fn is_at_anchor(actual: (i32, i32), expected: (f64, f64)) -> bool {
+    (f64::from(actual.0) - expected.0).abs() <= ANCHOR_TOLERANCE_PX
+        && (f64::from(actual.1) - expected.1).abs() <= ANCHOR_TOLERANCE_PX
+}
+
+/// One anchor evidence line: time, computed position, real position,
+/// monitor geometry (logical) and DPI scale. `actual` is `None` when
+/// the real position could not be read.
+pub fn format_anchor_line(
+    now_secs: f64,
+    expected: (f64, f64),
+    actual: Option<(i32, i32)>,
+    monitor: (f64, f64, f64, f64),
+    scale: f64,
+) -> String {
+    let actual = match actual {
+        Some((x, y)) => format!("({x},{y})"),
+        None => "ERR".to_string(),
+    };
+    format!(
+        "t={now_secs:.3} expected=({:.1},{:.1}) actual={actual} monitor=({:.0},{:.0},{:.0}x{:.0}) scale={scale:.2}\n",
+        expected.0, expected.1, monitor.0, monitor.1, monitor.2, monitor.3
+    )
+}
+
+/// Append one line to the anchor log in `dir`. Failures are silent:
+/// evidence must never break the island.
+fn write_anchor_log(dir: &Path, line: &str) {
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let path = dir.join(ANCHOR_LOG_FILE);
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+/// Append one anchor evidence line for this window to the log in the
+/// app data directory. Silent when the directory cannot be resolved.
+fn log_anchor(window: &tauri::Window, expected: (f64, f64), actual: Option<(i32, i32)>) {
+    let (mon_x, mon_y, mon_w, mon_h) = logical_monitor_geometry(window);
+    let scale = window.scale_factor().unwrap_or(1.0).max(1.0);
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0);
+    let line = format_anchor_line(
+        now_secs,
+        expected,
+        actual,
+        (mon_x, mon_y, mon_w, mon_h),
+        scale,
+    );
+    let Ok(dir) = window.app_handle().path().app_data_dir() else {
+        return;
+    };
+    write_anchor_log(&dir, &line);
+}
+
+/// Read the real window position back; when it is not at the anchor,
+/// apply the position once more and read again. Always appends one
+/// evidence line to the anchor log. Never fails the caller: a window
+/// the OS moves anyway is repaired again on the next
+/// `ensure_fixed_window` call.
+fn verify_and_repair_anchor(window: &tauri::Window) {
+    let expected = expected_physical_position(window);
+    let mut actual = window.outer_position().ok().map(|p| (p.x, p.y));
+    if let Some(pos) = actual {
+        if !is_at_anchor(pos, expected) {
+            let _ = window.set_position(tauri::Position::Logical(top_center_position(window)));
+            actual = window.outer_position().ok().map(|p| (p.x, p.y));
+        }
+    }
+    log_anchor(window, expected, actual);
+}
+
+/// Move the window to its fixed top-center position, then verify the
+/// real position and repair it when it drifted (see the module docs).
 pub fn place_top_center(window: &tauri::Window) -> Result<(), tauri::Error> {
-    window.set_position(tauri::Position::Logical(top_center_position(window)))
+    window.set_position(tauri::Position::Logical(top_center_position(window)))?;
+    verify_and_repair_anchor(window);
+    Ok(())
 }
 
 /// Force the window to the one fixed size and position. Idempotent:
@@ -210,9 +329,18 @@ pub fn apply_to_window(
 
 /// Place the island at its startup position: fixed size, top-center.
 /// Intended for the `setup` hook in `lib.rs` (coordinated via DEVagent).
+/// The window is shown as it is created, and the window manager can
+/// still move it after setup returns: the anchor is re-asserted once,
+/// shortly after show, on a background thread. That call verifies and
+/// logs again, like every other application.
 pub fn setup_window(window: &tauri::Window) -> Result<IslandState, tauri::Error> {
     let state = set_expanded(false);
     ensure_fixed_window(window)?;
+    let window = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(ANCHOR_REAPPLY_DELAY_MS));
+        let _ = ensure_fixed_window(&window);
+    });
     Ok(state)
 }
 
@@ -336,6 +464,60 @@ mod tests {
         assert_eq!(centered_x(1920.0, 640), 640.0);
         assert_eq!(centered_x(640.0, 640), 0.0);
         assert_eq!(centered_x(400.0, 640), 0.0);
+    }
+
+    #[test]
+    fn anchor_tolerance_accepts_rounding() {
+        assert!(is_at_anchor((640, 0), (640.0, 0.0)));
+        assert!(is_at_anchor((641, 1), (640.0, 0.0)));
+        assert!(is_at_anchor((638, 0), (640.0, 0.0)));
+        assert!(!is_at_anchor((643, 0), (640.0, 0.0)));
+        assert!(!is_at_anchor((640, 3), (640.0, 0.0)));
+    }
+
+    #[test]
+    fn expected_physical_scales_with_dpi() {
+        assert_eq!(expected_physical((640.0, 0.0), 1.0), (640.0, 0.0));
+        assert_eq!(expected_physical((640.0, 0.0), 1.5), (960.0, 0.0));
+        assert_eq!(expected_physical((640.0, 0.0), 1.25), (800.0, 0.0));
+    }
+
+    #[test]
+    fn anchor_log_line_carries_evidence() {
+        let line = format_anchor_line(
+            1234.5,
+            (640.0, 0.0),
+            Some((640, 0)),
+            (0.0, 0.0, 1920.0, 1080.0),
+            1.25,
+        );
+        assert!(line.contains("t=1234.500"));
+        assert!(line.contains("expected=(640.0,0.0)"));
+        assert!(line.contains("actual=(640,0)"));
+        assert!(line.contains("monitor=(0,0,1920x1080)"));
+        assert!(line.contains("scale=1.25"));
+        let missing = format_anchor_line(1.0, (640.0, 0.0), None, (0.0, 0.0, 1920.0, 1080.0), 1.0);
+        assert!(missing.contains("actual=ERR"));
+    }
+
+    #[test]
+    fn anchor_log_appends_to_file() {
+        let dir =
+            std::env::temp_dir().join(format!("nexora-anchor-log-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let line = format_anchor_line(
+            1.5,
+            (640.0, 0.0),
+            Some((640, 0)),
+            (0.0, 0.0, 1920.0, 1080.0),
+            1.0,
+        );
+        write_anchor_log(&dir, &line);
+        write_anchor_log(&dir, &line);
+        let contents = std::fs::read_to_string(dir.join(ANCHOR_LOG_FILE)).expect("log written");
+        assert_eq!(contents.lines().count(), 2);
+        assert!(contents.contains("expected=(640.0,0.0) actual=(640,0)"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
