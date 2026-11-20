@@ -33,6 +33,11 @@ tauri-plugin-global-shortcut = "2"
 # vibrancy on macOS); the CSS glass stays the fallback. Already in
 # the tree as a transitive dep at 0.8.1, now used directly.
 window-vibrancy = "0.8"
+# Raw window handle (version-independent HWND): tauri's `hwnd()`
+# returns the `windows` 0.62 `HWND`, while this crate uses 0.61 —
+# the two types are identical but distinct, so the handle is taken
+# raw here and built into the 0.61 `HWND` in `vibrancy.rs`.
+raw-window-handle = "0.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sysinfo = "0.32"

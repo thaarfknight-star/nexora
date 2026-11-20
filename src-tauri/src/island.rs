@@ -26,10 +26,15 @@
 //!   `set_position` during setup can be silently overridden while the
 //!   window is still being created (on Taha's install the island
 //!   opened mid-screen, not top-center). Every application appends one
-//!   evidence line (computed position, real position, monitor geometry,
-//!   DPI factor, and time) to [`ANCHOR_LOG_FILE`] in the app data
-//!   directory, so the next install shows what the anchor did instead
-//!   of guessing.
+//!   evidence line (computed position, real position, window size and
+//!   visibility, monitor geometry, DPI factor, and time) to
+//!   [`ANCHOR_LOG_FILE`] in the app data directory, so the next
+//!   install shows what the anchor did instead of guessing. The same
+//!   file also gets one line per backdrop application (which path
+//!   actually ran: DWM acrylic, SWCA acrylic, macOS vibrancy, or the
+//!   CSS-only fallback), so a later screenshot can be matched to the
+//!   exact window state — including whether the process was still
+//!   alive when the island vanished.
 
 use serde::Serialize;
 use std::fs::OpenOptions;
@@ -213,13 +218,25 @@ pub fn is_at_anchor(actual: (i32, i32), expected: (f64, f64)) -> bool {
         && (f64::from(actual.1) - expected.1).abs() <= ANCHOR_TOLERANCE_PX
 }
 
+/// Seconds since the Unix epoch, for evidence lines. `0.0` when the
+/// clock cannot be read.
+fn now_secs() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
 /// One anchor evidence line: time, computed position, real position,
-/// monitor geometry (logical) and DPI scale. `actual` is `None` when
-/// the real position could not be read.
+/// window size and visibility, monitor geometry (logical) and DPI
+/// scale. `actual`, `size` and `visible` are `None` when they could
+/// not be read.
 pub fn format_anchor_line(
     now_secs: f64,
     expected: (f64, f64),
     actual: Option<(i32, i32)>,
+    size: Option<(u32, u32)>,
+    visible: Option<bool>,
     monitor: (f64, f64, f64, f64),
     scale: f64,
 ) -> String {
@@ -227,10 +244,26 @@ pub fn format_anchor_line(
         Some((x, y)) => format!("({x},{y})"),
         None => "ERR".to_string(),
     };
+    let size = match size {
+        Some((w, h)) => format!("{w}x{h}"),
+        None => "ERR".to_string(),
+    };
+    let visible = match visible {
+        Some(v) => format!("{v}"),
+        None => "ERR".to_string(),
+    };
     format!(
-        "t={now_secs:.3} expected=({:.1},{:.1}) actual={actual} monitor=({:.0},{:.0},{:.0}x{:.0}) scale={scale:.2}\n",
+        "t={now_secs:.3} expected=({:.1},{:.1}) actual={actual} size={size} visible={visible} monitor=({:.0},{:.0},{:.0}x{:.0}) scale={scale:.2}\n",
         expected.0, expected.1, monitor.0, monitor.1, monitor.2, monitor.3
     )
+}
+
+/// One vibrancy evidence line: time and which backdrop path actually
+/// ran (`acrylic-dwm` / `acrylic-swca` / `vibrancy-macos` /
+/// `css-fallback`). Written to the same anchor log, so one file
+/// carries the whole window story for the next install.
+pub fn format_vibrancy_line(now_secs: f64, outcome: &str) -> String {
+    format!("t={now_secs:.3} vibrancy={outcome}\n")
 }
 
 /// Append one line to the anchor log in `dir`. Failures are silent:
@@ -250,17 +283,28 @@ fn write_anchor_log(dir: &Path, line: &str) {
 fn log_anchor(window: &tauri::Window, expected: (f64, f64), actual: Option<(i32, i32)>) {
     let (mon_x, mon_y, mon_w, mon_h) = logical_monitor_geometry(window);
     let scale = window.scale_factor().unwrap_or(1.0).max(1.0);
-    let now_secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0);
+    let size = window.outer_size().ok().map(|s| (s.width, s.height));
+    let visible = window.is_visible().ok();
     let line = format_anchor_line(
-        now_secs,
+        now_secs(),
         expected,
         actual,
+        size,
+        visible,
         (mon_x, mon_y, mon_w, mon_h),
         scale,
     );
+    let Ok(dir) = window.app_handle().path().app_data_dir() else {
+        return;
+    };
+    write_anchor_log(&dir, &line);
+}
+
+/// Append one vibrancy evidence line for this window to the log in
+/// the app data directory. Silent when the directory cannot be
+/// resolved.
+fn log_vibrancy(window: &tauri::Window, outcome: &str) {
+    let line = format_vibrancy_line(now_secs(), outcome);
     let Ok(dir) = window.app_handle().path().app_data_dir() else {
         return;
     };
@@ -294,13 +338,25 @@ pub fn place_top_center(window: &tauri::Window) -> Result<(), tauri::Error> {
 
 /// Force the window to the one fixed size and position. Idempotent:
 /// calling it when the window is already fixed is a no-op visually.
-/// This is the only place that calls `set_size` in the crate.
+/// This is the only place that calls `set_size` in the crate. The
+/// backdrop is (re-)applied here too, because moving the window can
+/// disturb the DWM backdrop — and because this is the one function
+/// every window mutation goes through (setup, the anchor re-assert,
+/// expand / collapse), so the backdrop survives all of them.
+/// Re-applying is idempotent, and the outcome is logged next to the
+/// anchor line.
 pub fn ensure_fixed_window(window: &tauri::Window) -> Result<(), tauri::Error> {
     window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
         f64::from(WINDOW_WIDTH),
         f64::from(WINDOW_HEIGHT),
     )))?;
-    place_top_center(window)
+    place_top_center(window)?;
+    // Real backdrop material (Acrylic on Windows, vibrancy on
+    // macOS). Best effort and non-fatal: where it is unavailable
+    // the CSS glass is the whole look, unchanged.
+    let outcome = crate::vibrancy::apply_island_vibrancy(window);
+    log_vibrancy(window, outcome);
+    Ok(())
 }
 
 /// Expand / collapse the island on a real window. The window itself
@@ -331,14 +387,11 @@ pub fn apply_to_window(
 /// The window is shown as it is created, and the window manager can
 /// still move it after setup returns: the anchor is re-asserted once,
 /// shortly after show, on a background thread. That call verifies and
-/// logs again, like every other application.
+/// logs again, like every other application — and re-applies the
+/// backdrop with it, through `ensure_fixed_window`.
 pub fn setup_window(window: &tauri::Window) -> Result<IslandState, tauri::Error> {
     let state = set_expanded(false);
     ensure_fixed_window(window)?;
-    // Real backdrop material (Acrylic on Windows, vibrancy on
-    // macOS). Best effort and non-fatal: where it is unavailable
-    // the CSS glass is the whole look, unchanged.
-    crate::vibrancy::apply_island_vibrancy(window);
     let window = window.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(ANCHOR_REAPPLY_DELAY_MS));
@@ -491,16 +544,37 @@ mod tests {
             1234.5,
             (640.0, 0.0),
             Some((640, 0)),
+            Some((800, 550)),
+            Some(true),
             (0.0, 0.0, 1920.0, 1080.0),
             1.25,
         );
         assert!(line.contains("t=1234.500"));
         assert!(line.contains("expected=(640.0,0.0)"));
         assert!(line.contains("actual=(640,0)"));
+        assert!(line.contains("size=800x550"));
+        assert!(line.contains("visible=true"));
         assert!(line.contains("monitor=(0,0,1920x1080)"));
         assert!(line.contains("scale=1.25"));
-        let missing = format_anchor_line(1.0, (640.0, 0.0), None, (0.0, 0.0, 1920.0, 1080.0), 1.0);
+        let missing = format_anchor_line(
+            1.0,
+            (640.0, 0.0),
+            None,
+            None,
+            None,
+            (0.0, 0.0, 1920.0, 1080.0),
+            1.0,
+        );
         assert!(missing.contains("actual=ERR"));
+        assert!(missing.contains("size=ERR"));
+        assert!(missing.contains("visible=ERR"));
+    }
+
+    #[test]
+    fn vibrancy_log_line_carries_outcome() {
+        let line = format_vibrancy_line(1.5, "acrylic-dwm");
+        assert!(line.contains("t=1.500"));
+        assert!(line.contains("vibrancy=acrylic-dwm"));
     }
 
     #[test]
@@ -512,6 +586,8 @@ mod tests {
             1.5,
             (640.0, 0.0),
             Some((640, 0)),
+            Some((800, 550)),
+            Some(true),
             (0.0, 0.0, 1920.0, 1080.0),
             1.0,
         );
