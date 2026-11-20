@@ -280,9 +280,25 @@ mod tests {
         );
         for line in poll_lines {
             assert!(line.contains("cpu="), "poll line has cpu: {line}");
+            // Every stage gpu_percent() can return: `ok` and the
+            // `nvml-*-failed` stages happen on Windows (CI runners
+            // have no NVIDIA GPU, so init fails there), while the
+            // `gpu-*` stages are the off-Windows / no-feature
+            // fallbacks. The old `gpu_stage=gpu-` check only passed
+            // off-Windows and turned CI red (run 44733041079).
+            const KNOWN_STAGES: [&str; 6] = [
+                "ok",
+                "nvml-init-failed",
+                "nvml-device-failed",
+                "nvml-rates-failed",
+                "gpu-unavailable-platform",
+                "gpu-disabled-no-gpu-poll",
+            ];
             assert!(
-                line.contains("gpu_stage=gpu-"),
-                "poll line has gpu stage: {line}"
+                KNOWN_STAGES
+                    .iter()
+                    .any(|s| line.contains(&format!("gpu_stage={s}"))),
+                "poll line has a known gpu stage: {line}"
             );
         }
     }
