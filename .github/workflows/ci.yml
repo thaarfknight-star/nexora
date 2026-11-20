@@ -1,12 +1,18 @@
-name: CI
+name: CI & Release
 
+# One workflow for both jobs: CI on every push/PR, release on push to
+# main, tags and manual dispatch. The release jobs are guarded with
+# `if: github.event_name != 'pull_request'` so a PR never publishes.
 on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   ci:
@@ -44,3 +50,98 @@ jobs:
       - name: Run Cargo tests
         working-directory: src-tauri
         run: cargo test
+
+  prepare-tag:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bootstrap project structure
+        run: |
+          python3 .github/scripts/bootstrap.py
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "chore: bootstrap project structure"
+            git push origin HEAD:main
+          fi
+
+      - name: Prepare version tag
+        id: tag
+        run: |
+          VERSION=$(python3 -c 'import json; print(json.load(open("src-tauri/tauri.conf.json"))["version"])')
+          TAG="v${VERSION}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            if [ "$(git rev-parse "${TAG}^{commit}" 2>/dev/null)" = "$(git rev-parse HEAD)" ]; then
+              echo "Tag $TAG already exists"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -f -a "$TAG" -m "Release $TAG"
+            git push -f origin "$TAG"
+          fi
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+          fi
+
+  build-windows:
+    if: github.event_name != 'pull_request'
+    needs: prepare-tag
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-tag.outputs.tag }}
+      - run: python .github/scripts/bootstrap.py
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ needs.prepare-tag.outputs.tag }}
+          releaseName: "Nexora v__VERSION__"
+          releaseDraft: true
+          prerelease: false
+
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: [prepare-tag, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish release & update feed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare-tag.outputs.tag }}
+        run: python3 .github/scripts/publish.py
