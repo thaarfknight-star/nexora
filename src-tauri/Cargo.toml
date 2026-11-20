@@ -10,6 +10,13 @@ edition = "2021"
 name = "nexora_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Diagnostic builds: `--no-default-features` compiles stats.rs with GPU
+# polling fully compiled out (gpu_percent() always returns None and the
+# nvml-wrapper dep is not built). Normal builds keep NVML on.
+default = ["gpu-nvml"]
+gpu-nvml = ["dep:nvml-wrapper"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -56,4 +63,6 @@ windows-future = "0.2"
 # Windows-only: stats.rs reads GPU utilization through NVML (NVIDIA
 # driver). nvml-wrapper loads nvml.dll dynamically with libloading, so
 # machines without an NVIDIA GPU/driver just get `None` from init.
-nvml-wrapper = "0.12"
+# Optional: enabled by the `gpu-nvml` default feature; diagnostic
+# builds use `--no-default-features` to compile GPU polling out.
+nvml-wrapper = { version = "0.12", optional = true }

@@ -34,6 +34,13 @@ pub fn run() {
             // Notifications: wire the emitter once, so backend producers
             // (updater, watchdog) can add notifications from anywhere.
             crate::notifications::set_emitter(app.handle());
+            // Stats: point nexora-stats.log at the app data directory
+            // before the first poll, so every get_system_stats poll
+            // leaves one evidence line (see stats.rs). Silent when the
+            // directory cannot be resolved.
+            if let Ok(dir) = app.handle().path().app_data_dir() {
+                stats::set_log_dir(dir);
+            }
             // Settings: load the persisted settings and apply the values
             // the backend owns (currently: always_on_top on the main
             // window). The theme is applied by the frontend, which reads

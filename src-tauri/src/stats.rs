@@ -1,7 +1,10 @@
 use serde::Serialize;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Networks, System};
 
 #[derive(Debug, Clone, Serialize)]
@@ -19,6 +22,50 @@ pub struct SystemStats {
     /// on this machine (no NVIDIA GPU/driver). Serializes as `null`, and
     /// the island chip shows "—" instead of a made-up number.
     pub gpu_percent: Option<f32>,
+}
+
+/// Evidence log file name, inside the app data directory — the same
+/// pattern as `island::ANCHOR_LOG_FILE`.
+pub const STATS_LOG_FILE: &str = "nexora-stats.log";
+
+/// App data directory for `nexora-stats.log`, set once from `lib.rs`
+/// setup. Until then (unit tests, direct `collect()` calls) logging is
+/// silently skipped.
+static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Point the stats log at the app data directory. Called once from
+/// `lib.rs` setup; a second call is ignored. Writes one marker line
+/// so run boundaries are visible in the log.
+pub fn set_log_dir(dir: PathBuf) {
+    if LOG_DIR.set(dir.clone()).is_ok() {
+        write_stats_log(&format!(
+            "t={:.3} stats-log-started dir={}\n",
+            now_secs(),
+            dir.display()
+        ));
+    }
+}
+
+fn now_secs() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+/// Append one line to `nexora-stats.log`. Failures are silent:
+/// evidence must never break the island.
+fn write_stats_log(line: &str) {
+    let Some(dir) = LOG_DIR.get() else {
+        return;
+    };
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let path = dir.join(STATS_LOG_FILE);
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = file.write_all(line.as_bytes());
+    }
 }
 
 /// One shared `System` for the process lifetime.
@@ -81,11 +128,24 @@ fn network_rates() -> (f32, f32) {
     (rate_kbps(down_bytes, elapsed), rate_kbps(up_bytes, elapsed))
 }
 
-/// GPU utilization percent, or `None` when it cannot be read.
+/// The NVML handle, initialized at most once per process — including a
+/// failed init, which is cached as `None` and never retried.
+/// `Nvml::init()` talks to the NVIDIA driver and must not run on every
+/// poll: it is the prime suspect for the island stalling a few seconds
+/// after launch (every poll re-ran it), so it runs once, lazily, on the
+/// first poll that needs it. `Nvml` is `Send + Sync` (asserted by the
+/// crate itself), so holding it in a `static Mutex` is sound.
+#[cfg(all(target_os = "windows", feature = "gpu-nvml"))]
+fn nvml_handle() -> &'static Mutex<Option<nvml_wrapper::Nvml>> {
+    static NVML: OnceLock<Mutex<Option<nvml_wrapper::Nvml>>> = OnceLock::new();
+    NVML.get_or_init(|| Mutex::new(nvml_wrapper::Nvml::init().ok()))
+}
+
+/// (GPU utilization percent, stage) — the stage names where a poll
+/// stopped, for `nexora-stats.log`. `None` means the chip shows "—".
 ///
 /// Windows only, via NVML (the NVIDIA driver). Every step fails cleanly
-/// without an NVIDIA GPU/driver, so this returns `None` there and the
-/// chip shows "—".
+/// without an NVIDIA GPU/driver, so this returns `None` there.
 ///
 /// WMI perf counters (`Win32_PerfFormattedData_GPUPerformanceCounters_
 /// GPUEngine`) were investigated first and rejected: they need ~150 lines
@@ -94,21 +154,37 @@ fn network_rates() -> (f32, f32) {
 /// summed, and the sum can exceed 100%), and the path cannot be
 /// runtime-verified on this VM or on CI (no GPU). NVML gives one
 /// driver-authoritative number and degrades to `None` on its own.
-#[cfg(target_os = "windows")]
-fn gpu_percent() -> Option<f32> {
-    let nvml = nvml_wrapper::Nvml::init().ok()?;
-    let device = nvml.device_by_index(0).ok()?;
-    let rates = device.utilization_rates().ok()?;
-    Some((rates.gpu as f32).clamp(0.0, 100.0))
+///
+/// Diagnostic builds (`--no-default-features`, see Cargo.toml) compile
+/// this out entirely: the stage is `gpu-disabled-no-gpu-poll` and no
+/// NVML code runs at all.
+#[cfg(all(target_os = "windows", feature = "gpu-nvml"))]
+fn gpu_percent() -> (Option<f32>, &'static str) {
+    let guard = nvml_handle().lock().unwrap_or_else(|err| err.into_inner());
+    let Some(nvml) = guard.as_ref() else {
+        return (None, "nvml-init-failed");
+    };
+    let Ok(device) = nvml.device_by_index(0) else {
+        return (None, "nvml-device-failed");
+    };
+    match device.utilization_rates() {
+        Ok(rates) => (Some((rates.gpu as f32).clamp(0.0, 100.0)), "ok"),
+        Err(_) => (None, "nvml-rates-failed"),
+    }
 }
 
-#[cfg(not(target_os = "windows"))]
-fn gpu_percent() -> Option<f32> {
-    None
+#[cfg(not(all(target_os = "windows", feature = "gpu-nvml")))]
+fn gpu_percent() -> (Option<f32>, &'static str) {
+    #[cfg(feature = "gpu-nvml")]
+    let stage = "gpu-unavailable-platform";
+    #[cfg(not(feature = "gpu-nvml"))]
+    let stage = "gpu-disabled-no-gpu-poll";
+    (None, stage)
 }
 
 pub fn collect() -> SystemStats {
     static FIRST_SAMPLE: AtomicBool = AtomicBool::new(true);
+    let poll_start = Instant::now();
 
     let mut sys = system().lock().unwrap_or_else(|err| err.into_inner());
     sys.refresh_cpu_usage();
@@ -129,19 +205,40 @@ pub fn collect() -> SystemStats {
         sys.used_memory() as f32 / total_memory as f32 * 100.0
     };
     let (net_down_kbps, net_up_kbps) = network_rates();
+    let (gpu, gpu_stage) = gpu_percent();
 
-    SystemStats {
+    let stats = SystemStats {
         cpu_percent: sys.global_cpu_usage().clamp(0.0, 100.0),
         memory_percent: memory_percent.clamp(0.0, 100.0),
         net_down_kbps,
         net_up_kbps,
-        gpu_percent: gpu_percent(),
-    }
+        gpu_percent: gpu,
+    };
+
+    // Evidence: one line per completed poll. A poll that hangs mid-way
+    // leaves no line, so a gap between timestamps (or a missing line
+    // after the last one) shows exactly where the poll stopped. `poll_ms`
+    // shows how long the poll itself took.
+    write_stats_log(&format!(
+        "t={:.3} cpu={:.1} mem={:.1} down={:.1} up={:.1} gpu={} gpu_stage={} poll_ms={}\n",
+        now_secs(),
+        stats.cpu_percent,
+        stats.memory_percent,
+        stats.net_down_kbps,
+        stats.net_up_kbps,
+        stats
+            .gpu_percent
+            .map_or("none".to_string(), |v| format!("{v:.1}")),
+        gpu_stage,
+        poll_start.elapsed().as_millis()
+    ));
+
+    stats
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{collect, rate_kbps};
+    use super::{collect, rate_kbps, set_log_dir};
     use std::time::Duration;
 
     #[test]
@@ -160,5 +257,33 @@ mod tests {
         assert_eq!(rate_kbps(10_240, Duration::from_millis(500)), 20.0);
         assert_eq!(rate_kbps(0, Duration::from_secs(1)), 0.0);
         assert_eq!(rate_kbps(10_240, Duration::ZERO), 0.0);
+    }
+
+    #[test]
+    fn collect_logs_one_line_per_poll() {
+        let dir = std::env::temp_dir().join("nexora-stats-log-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        set_log_dir(dir.clone());
+        collect();
+        collect();
+        let text = std::fs::read_to_string(dir.join("nexora-stats.log"))
+            .expect("stats log file exists after two polls");
+        assert!(
+            text.contains("stats-log-started"),
+            "log has a run marker line"
+        );
+        let poll_lines: Vec<&str> = text.lines().filter(|l| l.contains("poll_ms=")).collect();
+        assert!(
+            poll_lines.len() >= 2,
+            "two polls wrote two lines, got {}: {text}",
+            poll_lines.len()
+        );
+        for line in poll_lines {
+            assert!(line.contains("cpu="), "poll line has cpu: {line}");
+            assert!(
+                line.contains("gpu_stage=gpu-"),
+                "poll line has gpu stage: {line}"
+            );
+        }
     }
 }
