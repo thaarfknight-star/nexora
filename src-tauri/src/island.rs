@@ -8,7 +8,7 @@
 //! (~64px tall) and the hidden-state handle (120x4) render inside the
 //! same window; only CSS moves them.
 //!
-//! Two runtime behaviors live here as well:
+//! Three runtime behaviors live here as well:
 //!
 //! * Hot zone: on Windows a background thread polls `GetCursorPos` and
 //!   emits `island-hot-zone` when the mouse enters / leaves the top
@@ -20,17 +20,16 @@
 //!   still receive clicks. The toggle is window-wide (Tauri has no
 //!   per-region ignore), so the frontend owns the policy: hidden ->
 //!   ignore, visible -> receive.
-//!
-//! And the anchor is self-verifying: after every `set_position`,
-//! [`place_top_center`] reads the real window position back
-//! (`outer_position`) and re-applies the anchor when it drifted —
-//! `set_position` during setup can be silently overridden while the
-//! window is still being created (on Taha's install the island
-//! opened mid-screen, not top-center). Every application appends one
-//! evidence line (computed position, real position, monitor geometry
-//! + DPI factor, time) to [`ANCHOR_LOG_FILE`] in the app data
-//! directory, so the next install shows what the anchor did instead
-//! of guessing.
+//! * Anchor (self-verifying): after every `set_position`,
+//!   [`place_top_center`] reads the real window position back
+//!   (`outer_position`) and re-applies the anchor when it drifted —
+//!   `set_position` during setup can be silently overridden while the
+//!   window is still being created (on Taha's install the island
+//!   opened mid-screen, not top-center). Every application appends one
+//!   evidence line (computed position, real position, monitor geometry,
+//!   DPI factor, and time) to [`ANCHOR_LOG_FILE`] in the app data
+//!   directory, so the next install shows what the anchor did instead
+//!   of guessing.
 
 use serde::Serialize;
 use std::fs::OpenOptions;
