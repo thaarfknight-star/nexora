@@ -728,6 +728,10 @@ function IslandApp() {
     if (event.target !== event.currentTarget) {
       return;
     }
+    // Empty-space clicks never dismiss the onboarding mid-read.
+    if (onboardingRef.current !== null) {
+      return;
+    }
     if (visible === "expanded") {
       showIsland("compact");
     } else if (visible === "compact") {
