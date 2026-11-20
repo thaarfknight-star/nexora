@@ -67,12 +67,13 @@ pub fn run() {
             // top edge, so the frontend can wake the island from hidden.
             // Windows-only in effect; off Windows it never fires.
             island::start_hot_zone_watcher(app.handle());
-            // Island hotkey (Alt+Space, Taha's choice): a global
+            // Island hotkey (default Alt+Space, Taha's choice): a global
             // shortcut that toggles the island through the frontend
-            // state machine. Registration failing (e.g. another app
-            // owns the key) is not fatal — the island still works
-            // through the hot zone.
-            if let Err(e) = hotkey::register_island_hotkey(app.handle()) {
+            // state machine. The key comes from settings, so the user
+            // can change it with `set_island_hotkey`. Registration
+            // failing (e.g. another app owns the key) is not fatal —
+            // the island still works through the hot zone.
+            if let Err(e) = hotkey::register_island_hotkey(app.handle(), &settings.island_hotkey) {
                 eprintln!("Nexora: failed to register island hotkey: {e}");
             }
             // Watchdog: a separate process watches Nexora and restores the
@@ -107,6 +108,7 @@ pub fn run() {
             ipc::get_settings,
             ipc::set_settings,
             ipc::open_settings,
+            hotkey::set_island_hotkey,
             ipc::check_updates,
             ipc::download_and_install_update,
             ipc::get_notifications,

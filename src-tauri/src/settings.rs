@@ -23,6 +23,10 @@ fn default_language() -> String {
     "en".into()
 }
 
+fn default_island_hotkey() -> String {
+    crate::hotkey::ISLAND_HOTKEY.to_string()
+}
+
 fn default_clock_24h() -> bool {
     true
 }
@@ -55,6 +59,10 @@ pub struct NexoraSettings {
     /// in `normalized()`.
     #[serde(default = "default_language")]
     pub language: String,
+    /// Island hotkey (global shortcut), e.g. `"Alt+Space"`. A value that
+    /// does not parse falls back to the default in `normalized()`.
+    #[serde(default = "default_island_hotkey")]
+    pub island_hotkey: String,
     /// Island blur in px; `None` means the theme default, `Some(v)` is a
     /// user override (the frontend clamps the slider value).
     #[serde(default)]
@@ -94,6 +102,7 @@ pub fn defaults() -> NexoraSettings {
         always_on_top: true,
         theme: "neon-glass".into(),
         language: "en".into(),
+        island_hotkey: default_island_hotkey(),
         island_blur_px: None,
         island_radius_px: None,
         clock_24h: true,
@@ -107,8 +116,9 @@ pub fn defaults() -> NexoraSettings {
 
 impl NexoraSettings {
     /// Repairs values that cannot be applied: an empty theme falls back
-    /// to the default theme, and an unsupported language falls back to
-    /// English. Theme names are not restricted here on purpose — the
+    /// to the default theme, an unsupported language falls back to
+    /// English, and an unparseable hotkey falls back to the default
+    /// hotkey. Theme names are not restricted here on purpose — the
     /// theme list lives in the frontend (`src/themes.ts`).
     fn normalized(mut self) -> Self {
         if self.theme.trim().is_empty() {
@@ -118,6 +128,9 @@ impl NexoraSettings {
         }
         if self.language != "en" && self.language != "fa" {
             self.language = default_language();
+        }
+        if !crate::hotkey::is_valid_shortcut(&self.island_hotkey) {
+            self.island_hotkey = default_island_hotkey();
         }
         self
     }
@@ -237,6 +250,7 @@ mod tests {
             stats_speed_unit: "mb".into(),
             stats_percent_style: "without".into(),
             language: "fa".into(),
+            island_hotkey: "Ctrl+Alt+N".into(),
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
         assert_eq!(load_from_dir(&dir), settings);
@@ -273,6 +287,7 @@ mod tests {
                 stats_speed_unit: "auto".into(),
                 stats_percent_style: "with".into(),
                 language: "en".into(),
+                island_hotkey: "Alt+Space".into(),
             }
         );
         let _ = fs::remove_dir_all(&dir);
@@ -303,9 +318,33 @@ mod tests {
             stats_speed_unit: "auto".into(),
             stats_percent_style: "with".into(),
             language: "en".into(),
+            island_hotkey: "Alt+Space".into(),
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
         assert_eq!(load_from_dir(&dir).theme, "neon-glass");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn invalid_hotkey_falls_back_to_default() {
+        let dir = test_dir();
+        let settings = NexoraSettings {
+            auto_hide_taskbar: true,
+            always_on_top: true,
+            theme: "neon-glass".into(),
+            language: "en".into(),
+            island_blur_px: None,
+            island_radius_px: None,
+            clock_24h: true,
+            show_seconds: false,
+            date_format: "short".into(),
+            poll_interval_secs: 3,
+            stats_speed_unit: "auto".into(),
+            stats_percent_style: "with".into(),
+            island_hotkey: "not-a-key".into(),
+        };
+        save_to_dir(&dir, &settings).expect("save must succeed");
+        assert_eq!(load_from_dir(&dir).island_hotkey, "Alt+Space");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -325,6 +364,7 @@ mod tests {
             stats_speed_unit: "auto".into(),
             stats_percent_style: "with".into(),
             language: "de".into(),
+            island_hotkey: "Alt+Space".into(),
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
         assert_eq!(load_from_dir(&dir).language, "en");
