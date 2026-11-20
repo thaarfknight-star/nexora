@@ -626,6 +626,26 @@ function IslandApp() {
         unlistenHotZone = stop;
       })
       .catch(() => {});
+    // Global hotkey (backend, Alt+Space): toggles the island through
+    // the same state machine — hidden -> compact, compact / expanded
+    // -> hidden. Unlike Esc it also closes a pinned island: it is the
+    // explicit toggle. It never dismisses the onboarding mid-read
+    // (same guard as Esc).
+    let unlistenHotkey: (() => void) | undefined;
+    listen("island-hotkey", () => {
+      if (onboardingRef.current !== null) {
+        return;
+      }
+      if (visibleRef.current === "hidden") {
+        showIsland("compact");
+      } else {
+        showIsland("hidden");
+      }
+    })
+      .then((stop) => {
+        unlistenHotkey = stop;
+      })
+      .catch(() => {});
     // Esc steps one level down, unless the island is pinned open.
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || keepOpenRef.current) {
@@ -659,6 +679,7 @@ function IslandApp() {
       unlisten?.();
       unlistenNotifications?.();
       unlistenHotZone?.();
+      unlistenHotkey?.();
     };
     // Runs once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
