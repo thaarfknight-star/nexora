@@ -1,5 +1,6 @@
 use tauri::{AppHandle, Manager};
 
+pub mod diagnostics;
 pub mod hotkey;
 pub mod ipc;
 pub mod island;
@@ -24,75 +25,129 @@ pub fn open_settings_window(app: &AppHandle) {
     }
 }
 
+/// The setup steps themselves, extracted from the `.setup()`
+/// closure so its error path can log and show a message box.
+/// Every step leaves one line in the diagnostics log, so a failed
+/// startup shows exactly how far it got. The hotkey registration
+/// result is NOT logged here: TAgent5 wires that outcome with the
+/// same diagnostics log function after this module merges — only
+/// the request is logged here. The taskbar is not hidden at startup
+/// at all (deferred until the island is shown, TAgent1's
+/// `notify_island_shown` command): only the deferral is logged
+/// here.
+// NOTE: every setup hook (settings, taskbar, island, watchdog,
+// tray) lives in this one function; do not add a second `.setup()`.
+fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    // Notifications: wire the emitter once, so backend producers
+    // (updater, watchdog) can add notifications from anywhere.
+    crate::notifications::set_emitter(app.handle());
+    // Stats: point nexora-stats.log at the app data directory
+    // before the first poll, so every get_system_stats poll
+    // leaves one evidence line (see stats.rs). Silent when the
+    // directory cannot be resolved.
+    if let Ok(dir) = app.handle().path().app_data_dir() {
+        stats::set_log_dir(dir);
+    }
+    // Settings: load the persisted settings and apply the values
+    // the backend owns (currently: always_on_top on the main
+    // window). The theme is applied by the frontend, which reads
+    // it through `get_settings`.
+    let settings = settings::load(app.handle());
+    settings::apply(app.handle(), &settings);
+    crate::diagnostics::log(
+        "setup",
+        &format!(
+            "settings loaded (auto_hide_taskbar={})",
+            settings.auto_hide_taskbar
+        ),
+    );
+    // Island: place the window at its startup position (fixed
+    // size, top-center). Skipped when the main window is missing.
+    if let Some(webview_window) = app.get_webview_window("main") {
+        let window = webview_window.as_ref().window();
+        island::setup_window(&window)?;
+        crate::diagnostics::log("setup", "island window placed");
+        // Island handle: hand the island window handle to the
+        // taskbar module so the window list can recognise (and
+        // exclude) the island itself. Windows-only; when the
+        // handle is unknown the island just shows up in the list.
+        #[cfg(target_os = "windows")]
+        if let Ok(hwnd) = window.hwnd() {
+            taskbar::set_island_window(hwnd.0 as isize);
+        }
+    }
+    // Taskbar: do NOT hide at startup. The taskbar stays
+    // visible until the island has been shown at least once
+    // with its taskbar content (Taha's spec after the 18:53
+    // build test): the frontend calls the
+    // `notify_island_shown` command once the island first
+    // renders, and only then — when the user asked for it —
+    // the taskbar is hidden. Record the intent here; the
+    // command performs the hide and logs the outcome to the
+    // island anchor log. The RunEvent handler restores it on
+    // exit, and the watchdog covers a crash. No-op off
+    // Windows.
+    taskbar::set_hide_intent(settings.auto_hide_taskbar);
+    crate::diagnostics::log(
+        "setup",
+        &format!(
+            "taskbar hide deferred until island shown (intended={})",
+            settings.auto_hide_taskbar
+        ),
+    );
+    // Island hot zone: a background thread watches the cursor
+    // and emits `island-hot-zone` when it enters / leaves the
+    // top edge, so the frontend can wake the island from hidden.
+    // Windows-only in effect; off Windows it never fires.
+    island::start_hot_zone_watcher(app.handle());
+    crate::diagnostics::log("setup", "hot-zone watcher started");
+    // Island hotkey (default Alt+Space, Taha's choice): a global
+    // shortcut that toggles the island through the frontend
+    // state machine. The key comes from settings, so the user
+    // can change it with `set_island_hotkey`. Registration
+    // failing (e.g. another app owns the key) is not fatal —
+    // the island still works through the hot zone.
+    crate::diagnostics::log(
+        "setup",
+        &format!("hotkey registration requested: {}", settings.island_hotkey),
+    );
+    if let Err(e) = hotkey::register_island_hotkey(app.handle(), &settings.island_hotkey) {
+        eprintln!("Nexora: failed to register island hotkey: {e}");
+    }
+    // Watchdog: a separate process watches Nexora and restores the
+    // taskbar if Nexora crashes or is killed; a monitor thread also
+    // watches explorer.exe while Nexora runs. See watchdog.rs.
+    watchdog::start_watchdog();
+    crate::diagnostics::log("setup", "watchdog started");
+    tray::setup(app.handle())?;
+    crate::diagnostics::log("setup", "tray setup ok");
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            // NOTE: every setup hook (settings, taskbar, island,
-            // watchdog, tray) lives in this one closure; do not
-            // add a second `.setup()`.
-            // Notifications: wire the emitter once, so backend producers
-            // (updater, watchdog) can add notifications from anywhere.
-            crate::notifications::set_emitter(app.handle());
-            // Stats: point nexora-stats.log at the app data directory
-            // before the first poll, so every get_system_stats poll
-            // leaves one evidence line (see stats.rs). Silent when the
-            // directory cannot be resolved.
-            if let Ok(dir) = app.handle().path().app_data_dir() {
-                stats::set_log_dir(dir);
-            }
-            // Settings: load the persisted settings and apply the values
-            // the backend owns (currently: always_on_top on the main
-            // window). The theme is applied by the frontend, which reads
-            // it through `get_settings`.
-            let settings = settings::load(app.handle());
-            settings::apply(app.handle(), &settings);
-            // Island: place the window at its startup position (fixed
-            // size, top-center). Skipped when the main window is missing.
-            if let Some(webview_window) = app.get_webview_window("main") {
-                let window = webview_window.as_ref().window();
-                island::setup_window(&window)?;
-                // Island handle: hand the island window handle to the
-                // taskbar module so the window list can recognise (and
-                // exclude) the island itself. Windows-only; when the
-                // handle is unknown the island just shows up in the list.
-                #[cfg(target_os = "windows")]
-                if let Ok(hwnd) = window.hwnd() {
-                    taskbar::set_island_window(hwnd.0 as isize);
+            // Diagnostics first: the log (app data + %TEMP%) and the
+            // panic hook are up before any other setup step, so even
+            // a failure in the very first step leaves evidence. A
+            // setup error is also shown in a message box instead of
+            // exiting silently.
+            crate::diagnostics::init(app.handle());
+            crate::diagnostics::install_panic_hook();
+            crate::diagnostics::log("setup", "starting");
+            match setup_app(app) {
+                Ok(()) => {
+                    crate::diagnostics::log("setup", "ok");
+                    Ok(())
+                }
+                Err(e) => {
+                    let message = format!("Nexora failed to start: {e}");
+                    crate::diagnostics::log("setup", &format!("error: {e}"));
+                    crate::diagnostics::show_setup_error(&message);
+                    Err(e)
                 }
             }
-            // Taskbar: do NOT hide at startup. The taskbar stays
-            // visible until the island has been shown at least once
-            // with its taskbar content (Taha's spec after the 18:53
-            // build test): the frontend calls the
-            // `notify_island_shown` command once the island first
-            // renders, and only then — when the user asked for it —
-            // the taskbar is hidden. Record the intent here; the
-            // command performs the hide and logs the outcome to the
-            // island anchor log. The RunEvent handler restores it on
-            // exit, and the watchdog covers a crash. No-op off
-            // Windows.
-            taskbar::set_hide_intent(settings.auto_hide_taskbar);
-            // Island hot zone: a background thread watches the cursor
-            // and emits `island-hot-zone` when it enters / leaves the
-            // top edge, so the frontend can wake the island from hidden.
-            // Windows-only in effect; off Windows it never fires.
-            island::start_hot_zone_watcher(app.handle());
-            // Island hotkey (default Alt+Space, Taha's choice): a global
-            // shortcut that toggles the island through the frontend
-            // state machine. The key comes from settings, so the user
-            // can change it with `set_island_hotkey`. Registration
-            // failing (e.g. another app owns the key) is not fatal —
-            // the island still works through the hot zone.
-            if let Err(e) = hotkey::register_island_hotkey(app.handle(), &settings.island_hotkey) {
-                eprintln!("Nexora: failed to register island hotkey: {e}");
-            }
-            // Watchdog: a separate process watches Nexora and restores the
-            // taskbar if Nexora crashes or is killed; a monitor thread also
-            // watches explorer.exe while Nexora runs. See watchdog.rs.
-            watchdog::start_watchdog();
-            tray::setup(app.handle())?;
-            Ok(())
         })
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -126,6 +181,7 @@ pub fn run() {
             ipc::get_notifications,
             ipc::clear_notifications,
             ipc::dismiss_notification,
+            diagnostics::log_visibility_transition,
         ])
         .build(tauri::generate_context!())
         .expect("error while running Nexora Tauri application")
@@ -134,6 +190,10 @@ pub fn run() {
                 event,
                 tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
             ) {
+                // A clean exit leaves this line: when the next
+                // install's log just stops, the process died
+                // instead of exiting.
+                crate::diagnostics::log("shutdown", "exit requested, restoring taskbar");
                 // Clean exit: restore the taskbar synchronously, then
                 // stop the external watchdog (it would restore anyway).
                 watchdog::restore_taskbar();

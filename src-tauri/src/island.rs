@@ -8,18 +8,35 @@
 //! (~64px tall) and the hidden-state handle (120x4) render inside the
 //! same window; only CSS moves them.
 //!
+//! The hidden-state handle is drawn by the frontend at the very top
+//! of the window (`HANDLE_Y_HIDDEN` = 0, stage offset 0 — it slides
+//! to `CONTENT_Y` when the island opens). The backend owns the
+//! numbers that must agree with that drawing: the visible bar
+//! (`HANDLE_WIDTH` x `HANDLE_HEIGHT`), the larger interactive hit
+//! rectangle around it (`HANDLE_HIT_WIDTH` x `HANDLE_HIT_HEIGHT`,
+//! top-center at y=0), and the hot zone, which is exactly tall
+//! enough to contain the hit rectangle (`HOT_ZONE_HEIGHT`).
+//!
 //! Three runtime behaviors live here as well:
 //!
 //! * Hot zone: on Windows a background thread polls `GetCursorPos` and
 //!   emits `island-hot-zone` when the mouse enters / leaves the top
-//!   edge strip. The frontend shows the island from its hidden state
-//!   on that event. Off Windows the watcher never fires.
+//!   edge strip. Entering only counts after a short hover-intent
+//!   delay (`HOVER_INTENT_MS`) — a passing cursor must not wake the
+//!   island by accident; leaving counts at once. The frontend shows
+//!   the island from its hidden state on that event. Off Windows the
+//!   watcher never fires.
 //! * Click-through: `set_click_through` toggles
 //!   `Window::set_ignore_cursor_events` so the empty parts of the
 //!   canvas let clicks pass to the app below, while the pill / panel
-//!   still receive clicks. The toggle is window-wide (Tauri has no
-//!   per-region ignore), so the frontend owns the policy: hidden ->
-//!   ignore, visible -> receive.
+//!   still receive clicks. When the island is hidden (the frontend
+//!   reports every visibility transition through the
+//!   `log_visibility_transition` command, which sets the hidden
+//!   flag here), the watcher takes over the toggle: only the
+//!   handle hit rectangle stays interactive and the rest of the
+//!   window is click-through, so the handle can be grabbed while
+//!   the desktop below stays usable. When the island is visible
+//!   the frontend owns the flag, as before.
 //! * Anchor (self-verifying): after every `set_position`,
 //!   [`place_top_center`] reads the real window position back
 //!   (`outer_position`) and re-applies the anchor when it drifted —
@@ -41,7 +58,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager};
 
 /// Fixed window size, in logical pixels: expanded panel 560x360
@@ -61,18 +78,39 @@ pub const CONTENT_HEIGHT: u32 = WINDOW_HEIGHT - 2 * GLOW_PADDING;
 /// content box.
 pub const COMPACT_HEIGHT: u32 = 64;
 /// Hidden-state handle size, in logical pixels (approved design):
-/// a 120x4 strip at the top edge. It renders inside the same fixed
-/// window; the hot-zone watcher (not a click) wakes the island.
+/// a 120x4 strip at the top edge of the window. The frontend draws
+/// it at `HANDLE_Y_HIDDEN` (y=0, stage offset 0) while hidden; it
+/// slides to `CONTENT_Y` when the island opens.
 pub const HANDLE_WIDTH: u32 = 120;
 pub const HANDLE_HEIGHT: u32 = 4;
+/// Hidden-state handle top edge, in logical window pixels. The
+/// window sits flush at the top of the monitor, so the handle is
+/// drawn exactly at the screen edge — never 40px down at the content
+/// box (the old mismatch: the hot zone was 6px at the screen edge
+/// while the handle sat at y=40).
+pub const HANDLE_Y_HIDDEN: u32 = 0;
+/// Interactive handle rectangle, in logical pixels: a 160x12 area
+/// around the visible 120x4 bar, top-center at y=0. In the hidden
+/// state this rectangle stays clickable while the rest of the window
+/// is click-through, so the thin bar can actually be grabbed.
+pub const HANDLE_HIT_WIDTH: u32 = 160;
+pub const HANDLE_HIT_HEIGHT: u32 = 12;
 /// Top edge of the window, in logical pixels from the monitor top.
 /// The window sits flush at the top; the content inset provides the
 /// visual gap (previously `TOP_MARGIN`, removed with the resize).
 pub const WINDOW_TOP_Y: f64 = 0.0;
 
 /// Hot zone: strip along the top edge of the monitor, in logical
-/// pixels tall. The mouse entering it wakes the island from hidden.
-pub const HOT_ZONE_HEIGHT: f64 = 6.0;
+/// pixels tall. It is exactly tall enough to contain the handle hit
+/// rectangle (`HANDLE_HIT_HEIGHT`), so the strip the watcher watches
+/// and the strip the user grabs are the same strip. The mouse
+/// entering it wakes the island from hidden.
+pub const HOT_ZONE_HEIGHT: f64 = 12.0;
+/// Hover intent: how long the cursor must stay inside the hot zone
+/// before the watcher counts it as an entry (milliseconds). A
+/// passing cursor must not wake the island by accident; leaving
+/// counts at once, without a delay.
+pub const HOVER_INTENT_MS: u64 = 120;
 /// How often the watcher polls the cursor position.
 pub const HOT_ZONE_POLL_MS: u64 = 100;
 /// Event emitted when the cursor enters / leaves the hot zone.
@@ -107,6 +145,12 @@ pub struct IslandState {
     pub compact_height: u32,
     pub handle_width: u32,
     pub handle_height: u32,
+    /// Interactive handle rectangle and hot-zone height, so the
+    /// frontend draws the handle where the backend hit-tests it.
+    pub handle_hit_width: u32,
+    pub handle_hit_height: u32,
+    pub hot_zone_height: f64,
+    pub hover_intent_ms: u64,
 }
 
 /// Payload of the [`HOT_ZONE_EVENT`] event.
@@ -116,6 +160,72 @@ pub struct HotZoneEvent {
 }
 
 static EXPANDED: Mutex<bool> = Mutex::new(false);
+
+/// Whether the island is currently hidden. The frontend is the
+/// source of truth: it reports every visibility transition through
+/// the `log_visibility_transition` command, which calls
+/// [`set_hidden`]. The hot-zone watcher reads this flag to decide
+/// whether it owns click-through (hidden: hit-test the handle) or
+/// leaves the flag to the frontend (visible). Default `false`
+/// (visible): at startup the island is shown, and the watcher must
+/// not make the window click-through before the frontend has said
+/// anything.
+static HIDDEN: Mutex<bool> = Mutex::new(false);
+
+/// Record whether the island is hidden. Called by the
+/// `log_visibility_transition` command on every frontend
+/// visibility transition.
+pub fn set_hidden(hidden: bool) {
+    if let Ok(mut guard) = HIDDEN.lock() {
+        *guard = hidden;
+    }
+}
+
+/// Whether the island is currently hidden, as last reported by the
+/// frontend. `false` when the flag was never set.
+pub fn is_hidden() -> bool {
+    *HIDDEN.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Interactive handle rectangle `(x, y, width, height)` in logical
+/// window pixels: 160x12, horizontally centered, top edge at y=0.
+/// This is the area that stays clickable while the island is hidden.
+pub fn handle_hit_rect() -> (f64, f64, f64, f64) {
+    (
+        (f64::from(WINDOW_WIDTH) - f64::from(HANDLE_HIT_WIDTH)) / 2.0,
+        f64::from(HANDLE_Y_HIDDEN),
+        f64::from(HANDLE_HIT_WIDTH),
+        f64::from(HANDLE_HIT_HEIGHT),
+    )
+}
+
+/// Visible handle bar `(x, y, width, height)` in logical window
+/// pixels: 120x4, centered inside the hit rectangle, top edge at
+/// y=0 — the bar the frontend draws while hidden.
+pub fn handle_bar_rect() -> (f64, f64, f64, f64) {
+    (
+        (f64::from(WINDOW_WIDTH) - f64::from(HANDLE_WIDTH)) / 2.0,
+        f64::from(HANDLE_Y_HIDDEN),
+        f64::from(HANDLE_WIDTH),
+        f64::from(HANDLE_HEIGHT),
+    )
+}
+
+/// Whether rectangle `inner` lies fully inside rectangle `outer`.
+/// Rectangles are `(x, y, width, height)`; edges count as inside.
+pub fn rect_contains(outer: (f64, f64, f64, f64), inner: (f64, f64, f64, f64)) -> bool {
+    inner.0 >= outer.0
+        && inner.1 >= outer.1
+        && inner.0 + inner.2 <= outer.0 + outer.2
+        && inner.1 + inner.3 <= outer.1 + outer.3
+}
+
+/// Whether a cursor at logical window coordinates `(x, y)` is
+/// inside the handle hit rectangle. Edges count as inside.
+pub fn cursor_in_handle_hit_rect(x: f64, y: f64) -> bool {
+    let (rx, ry, rw, rh) = handle_hit_rect();
+    (rx..=rx + rw).contains(&x) && (ry..=ry + rh).contains(&y)
+}
 
 /// The one fixed window size.
 pub fn window_size() -> (u32, u32) {
@@ -147,6 +257,10 @@ pub fn current_state() -> IslandState {
         compact_height: COMPACT_HEIGHT,
         handle_width: HANDLE_WIDTH,
         handle_height: HANDLE_HEIGHT,
+        handle_hit_width: HANDLE_HIT_WIDTH,
+        handle_hit_height: HANDLE_HIT_HEIGHT,
+        hot_zone_height: HOT_ZONE_HEIGHT,
+        hover_intent_ms: HOVER_INTENT_MS,
     }
 }
 
@@ -368,6 +482,10 @@ pub fn ensure_fixed_window(window: &tauri::Window) -> Result<(), tauri::Error> {
     // the CSS glass is the whole look, unchanged.
     let outcome = crate::vibrancy::apply_island_vibrancy(window);
     log_vibrancy(window, outcome);
+    // The diagnostics log gets the same outcome: on the next
+    // install it says which backdrop path actually ran, next to
+    // the setup steps — the anchor log alone cannot prove that.
+    crate::diagnostics::log("vibrancy", outcome);
     Ok(())
 }
 
@@ -412,11 +530,73 @@ pub fn setup_window(window: &tauri::Window) -> Result<IslandState, tauri::Error>
     Ok(state)
 }
 
+/// Hover intent: the cursor must stay inside the hot zone for
+/// [`HOVER_INTENT_MS`] before the entry counts. Pure and testable:
+/// feed it the sampled inside/outside state and the sample time;
+/// it returns `Some(true)` the moment the entry is confirmed,
+/// `Some(false)` the moment the cursor leaves after a confirmed
+/// entry, and `None` otherwise (still waiting, still inside, or a
+/// leave before any entry was confirmed).
+#[derive(Default)]
+pub struct HoverIntent {
+    entered_since: Option<Instant>,
+    confirmed: bool,
+}
+
+impl HoverIntent {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn update(&mut self, inside: bool, now: Instant) -> Option<bool> {
+        if !inside {
+            self.entered_since = None;
+            if self.confirmed {
+                self.confirmed = false;
+                return Some(false);
+            }
+            return None;
+        }
+        if self.confirmed {
+            return None;
+        }
+        match self.entered_since {
+            None => {
+                self.entered_since = Some(now);
+                None
+            }
+            Some(since) => {
+                if now.duration_since(since) >= Duration::from_millis(HOVER_INTENT_MS) {
+                    self.confirmed = true;
+                    Some(true)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+
 /// Whether a cursor at logical `(cursor_x, cursor_y)` on a monitor
 /// `monitor_width` logical pixels wide is inside the hot zone: the
 /// strip `0..=HOT_ZONE_HEIGHT` along the top edge.
 pub fn is_in_hot_zone(cursor_x: f64, cursor_y: f64, monitor_width: f64) -> bool {
     (0.0..=monitor_width).contains(&cursor_x) && (0.0..=HOT_ZONE_HEIGHT).contains(&cursor_y)
+}
+
+/// Live cursor position in logical monitor coordinates
+/// `(x, y, monitor_width)`, on Windows. `None` off Windows or
+/// when the position cannot be read.
+#[cfg(target_os = "windows")]
+fn cursor_logical(window: &tauri::Window) -> Option<(f64, f64, f64)> {
+    let (x, y) = win::cursor_position()?;
+    let (mon_x, mon_y, mon_w, _) = logical_monitor_geometry(window);
+    let scale = window.scale_factor().unwrap_or(1.0).max(1.0);
+    Some((
+        (f64::from(x) - mon_x * scale) / scale,
+        (f64::from(y) - mon_y * scale) / scale,
+        mon_w,
+    ))
 }
 
 /// Whether the cursor is currently inside the hot zone of the
@@ -425,14 +605,38 @@ pub fn is_in_hot_zone(cursor_x: f64, cursor_y: f64, monitor_width: f64) -> bool 
 pub fn cursor_in_hot_zone(window: &tauri::Window) -> bool {
     #[cfg(target_os = "windows")]
     {
-        let Some((x, y)) = win::cursor_position() else {
+        let Some((x, y, mon_w)) = cursor_logical(window) else {
             return false;
         };
-        let (mon_x, mon_y, mon_w, _) = logical_monitor_geometry(window);
-        let scale = window.scale_factor().unwrap_or(1.0).max(1.0);
-        let logical_x = (f64::from(x) - mon_x * scale) / scale;
-        let logical_y = (f64::from(y) - mon_y * scale) / scale;
-        is_in_hot_zone(logical_x, logical_y, mon_w)
+        is_in_hot_zone(x, y, mon_w)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window;
+        false
+    }
+}
+
+/// Live cursor position in logical window coordinates, on Windows:
+/// the monitor-logical position minus the window's top-center
+/// origin. `None` off Windows or when the position cannot be read.
+/// The window origin is `(centered_x, 0)`; the hit rectangle is
+/// defined in these coordinates.
+#[cfg(target_os = "windows")]
+fn cursor_window_position(window: &tauri::Window) -> Option<(f64, f64)> {
+    let (x, y, mon_w) = cursor_logical(window)?;
+    Some((x - centered_x(mon_w, WINDOW_WIDTH), y - WINDOW_TOP_Y))
+}
+
+/// Whether the cursor is currently on the handle hit rectangle.
+/// `false` off Windows or when the position cannot be read.
+pub fn cursor_on_handle(window: &tauri::Window) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        let Some((x, y)) = cursor_window_position(window) else {
+            return false;
+        };
+        cursor_in_handle_hit_rect(x, y)
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -450,10 +654,22 @@ pub fn set_click_through(window: &tauri::Window, ignore: bool) -> Result<(), tau
 }
 
 /// Start the hot-zone watcher: a background thread polls the cursor
-/// position and emits [`HOT_ZONE_EVENT`] whenever the cursor enters
-/// or leaves the top-edge strip (and once at startup, so the frontend
-/// can sync its initial state). Call once from the `setup` hook in
-/// `lib.rs`. The thread runs for the life of the process.
+/// position and emits [`HOT_ZONE_EVENT`] when the cursor enters
+/// (after the hover-intent delay) or leaves the top-edge strip.
+/// The very first poll also emits once at once when the cursor
+/// starts outside, so the frontend can sync its initial state
+/// without waiting; a cursor that starts inside still waits for
+/// the intent delay, so the island is never woken by accident at
+/// launch. The first emitted event is also written to the
+/// diagnostics log, so the next install proves the watcher ran.
+/// Call once from the `setup` hook in `lib.rs`. The thread runs for
+/// the life of the process.
+///
+/// While the island is hidden, the same thread owns click-through:
+/// only the handle hit rectangle stays interactive and the rest of
+/// the window is click-through (re-applied only when the desired
+/// value changes). While the island is visible the frontend owns
+/// the flag and the watcher leaves it alone.
 pub fn start_hot_zone_watcher(app: &tauri::AppHandle) {
     let Some(webview_window) = app.get_webview_window("main") else {
         return;
@@ -461,17 +677,39 @@ pub fn start_hot_zone_watcher(app: &tauri::AppHandle) {
     let window = webview_window.as_ref().window().clone();
     let app = app.clone();
     std::thread::spawn(move || {
-        let mut was_inside: Option<bool> = None;
+        let mut intent = HoverIntent::new();
+        let mut first_poll = true;
+        let mut first_event_logged = false;
+        let mut last_ignore: Option<bool> = None;
         loop {
             let inside = cursor_in_hot_zone(&window);
-            if was_inside != Some(inside) {
-                was_inside = Some(inside);
-                let _ = app.emit(
-                    HOT_ZONE_EVENT,
-                    HotZoneEvent {
-                        in_hot_zone: inside,
-                    },
-                );
+            let mut emit: Option<bool> = intent.update(inside, Instant::now());
+            if first_poll {
+                first_poll = false;
+                // Sync the initial state at once when the cursor
+                // starts outside; inside still waits for intent.
+                if !inside {
+                    emit = Some(false);
+                }
+            }
+            if let Some(in_hot_zone) = emit {
+                let _ = app.emit(HOT_ZONE_EVENT, HotZoneEvent { in_hot_zone });
+                if !first_event_logged {
+                    first_event_logged = true;
+                    crate::diagnostics::log(
+                        "hot-zone",
+                        &format!("first event: in_hot_zone={in_hot_zone}"),
+                    );
+                }
+            }
+            if is_hidden() {
+                let ignore = !cursor_on_handle(&window);
+                if last_ignore != Some(ignore) {
+                    last_ignore = Some(ignore);
+                    let _ = window.set_ignore_cursor_events(ignore);
+                }
+            } else {
+                last_ignore = None;
             }
             std::thread::sleep(Duration::from_millis(HOT_ZONE_POLL_MS));
         }
@@ -525,6 +763,9 @@ mod tests {
         );
         assert_eq!(state.compact_height, 64);
         assert_eq!((state.handle_width, state.handle_height), (120, 4));
+        assert_eq!((state.handle_hit_width, state.handle_hit_height), (160, 12));
+        assert_eq!(state.hot_zone_height, 12.0);
+        assert_eq!(state.hover_intent_ms, 120);
     }
 
     #[test]
@@ -614,12 +855,100 @@ mod tests {
     #[test]
     fn hot_zone_is_the_top_edge_strip() {
         assert!(is_in_hot_zone(320.0, 0.0, 1920.0));
-        assert!(is_in_hot_zone(320.0, 6.0, 1920.0));
+        assert!(is_in_hot_zone(320.0, 12.0, 1920.0));
         assert!(is_in_hot_zone(0.0, 3.0, 1920.0));
         assert!(is_in_hot_zone(1920.0, 3.0, 1920.0));
-        assert!(!is_in_hot_zone(320.0, 6.1, 1920.0));
+        assert!(!is_in_hot_zone(320.0, 12.1, 1920.0));
         assert!(!is_in_hot_zone(320.0, -1.0, 1920.0));
         assert!(!is_in_hot_zone(-1.0, 3.0, 1920.0));
         assert!(!is_in_hot_zone(1920.1, 3.0, 1920.0));
+    }
+
+    #[test]
+    fn handle_geometry_agrees() {
+        // The visible bar sits at the very top of the window
+        // (stage offset 0), centered; the hit rectangle around it
+        // is top-center at y=0 too, with room to grab.
+        assert_eq!(handle_bar_rect(), (260.0, 0.0, 120.0, 4.0));
+        assert_eq!(handle_hit_rect(), (240.0, 0.0, 160.0, 12.0));
+        assert!(rect_contains(handle_hit_rect(), handle_bar_rect()));
+        // The hot zone is exactly tall enough to contain the whole
+        // hit rectangle: the strip the watcher watches and the
+        // strip the user grabs are the same strip.
+        assert!(HOT_ZONE_HEIGHT >= HANDLE_HIT_HEIGHT as f64);
+        assert_eq!(HOT_ZONE_HEIGHT, 12.0);
+        assert!(rect_contains(
+            (0.0, 0.0, f64::from(WINDOW_WIDTH), HOT_ZONE_HEIGHT),
+            handle_hit_rect()
+        ));
+        // The bar is inside the hot zone as well.
+        assert!(rect_contains(
+            (0.0, 0.0, f64::from(WINDOW_WIDTH), HOT_ZONE_HEIGHT),
+            handle_bar_rect()
+        ));
+    }
+
+    #[test]
+    fn hit_test_covers_only_the_handle() {
+        // Inside: center, corners (edges count).
+        assert!(cursor_in_handle_hit_rect(320.0, 6.0));
+        assert!(cursor_in_handle_hit_rect(240.0, 0.0));
+        assert!(cursor_in_handle_hit_rect(400.0, 12.0));
+        // Outside: one pixel past every side.
+        assert!(!cursor_in_handle_hit_rect(239.0, 6.0));
+        assert!(!cursor_in_handle_hit_rect(401.0, 6.0));
+        assert!(!cursor_in_handle_hit_rect(320.0, 13.0));
+        assert!(!cursor_in_handle_hit_rect(320.0, -1.0));
+        // The rest of the window (below the handle) is not a hit.
+        assert!(!cursor_in_handle_hit_rect(320.0, 40.0));
+        assert!(!cursor_in_handle_hit_rect(0.0, 0.0));
+        assert!(!cursor_in_handle_hit_rect(640.0, 0.0));
+    }
+
+    #[test]
+    fn hover_intent_waits_then_confirms() {
+        let mut intent = HoverIntent::new();
+        let t0 = Instant::now();
+        // Entering: nothing until the delay has passed.
+        assert_eq!(intent.update(true, t0), None);
+        assert_eq!(intent.update(true, t0 + Duration::from_millis(100)), None);
+        assert_eq!(intent.update(true, t0 + Duration::from_millis(119)), None);
+        assert_eq!(
+            intent.update(true, t0 + Duration::from_millis(120)),
+            Some(true)
+        );
+        // Staying inside: no repeat events.
+        assert_eq!(intent.update(true, t0 + Duration::from_millis(500)), None);
+        // Leaving after a confirmed entry: one exit event.
+        assert_eq!(
+            intent.update(false, t0 + Duration::from_millis(600)),
+            Some(false)
+        );
+        assert_eq!(intent.update(false, t0 + Duration::from_millis(700)), None);
+        // Leaving before confirmation: no event at all, and the
+        // next entry starts the timer over.
+        let mut fresh = HoverIntent::new();
+        assert_eq!(fresh.update(true, t0), None);
+        assert_eq!(fresh.update(true, t0 + Duration::from_millis(50)), None);
+        assert_eq!(fresh.update(false, t0 + Duration::from_millis(60)), None);
+        assert_eq!(fresh.update(true, t0 + Duration::from_millis(70)), None);
+        assert_eq!(fresh.update(true, t0 + Duration::from_millis(189)), None);
+        assert_eq!(
+            fresh.update(true, t0 + Duration::from_millis(190)),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn hidden_flag_round_trips() {
+        // The flag is set by the `log_visibility_transition`
+        // command and read by the hot-zone watcher. It starts
+        // `false` (visible at startup); the frontend reports the
+        // first transition. Reset afterwards so test order cannot
+        // leak state into other tests.
+        set_hidden(true);
+        assert!(is_hidden());
+        set_hidden(false);
+        assert!(!is_hidden());
     }
 }
