@@ -46,6 +46,8 @@ interface NexoraSettings {
   island_blur_px: number | null;
   /** Island corner-radius override in px; null means the theme default. */
   island_radius_px: number | null;
+  /** Island hotkey, e.g. "Alt+Space"; changed with set_island_hotkey. */
+  island_hotkey: string;
   /** Clock in 24-hour format (`false` is 12-hour). */
   clock_24h: boolean;
   /** Clock shows seconds. */
@@ -1713,10 +1715,69 @@ function IslandApp() {
   );
 }
 
+// Build a global-shortcut string ("Ctrl+Shift+N", "Alt+Space") from
+// a keydown event, or null when the press is not a capturable
+// hotkey: a lone modifier, Escape (cancels the capture), an
+// uncapturable key — or a bare letter, digit, Space or arrow, which
+// as a global hotkey would fire on every keystroke. Bare F-keys are
+// fine (nothing types F9). Modifier order is fixed Ctrl, Alt, Shift,
+// Super, matching the backend's parseable form.
+function shortcutFromKeyEvent(event: KeyboardEvent): string | null {
+  const key = event.key;
+  if (
+    key === "Escape" ||
+    key === "Control" ||
+    key === "Alt" ||
+    key === "Shift" ||
+    key === "Meta"
+  ) {
+    return null;
+  }
+  const code = event.code;
+  let main: string | null = null;
+  if (code.startsWith("Key") && code.length === 4) {
+    main = code.slice(3);
+  } else if (code.startsWith("Digit") && code.length === 6) {
+    main = code.slice(5);
+  } else if (/^F([1-9]|1[0-2])$/.test(code)) {
+    main = code;
+  } else if (code === "Space") {
+    main = "Space";
+  } else if (
+    code === "Enter" ||
+    code === "Tab" ||
+    code === "Backspace" ||
+    code === "Delete" ||
+    code === "Insert" ||
+    code === "Home" ||
+    code === "End" ||
+    code === "PageUp" ||
+    code === "PageDown" ||
+    code.startsWith("Arrow")
+  ) {
+    main = code;
+  }
+  if (main === null) {
+    return null;
+  }
+  const isFunctionKey = /^F([1-9]|1[0-2])$/.test(main);
+  const mods: string[] = [];
+  if (event.ctrlKey) mods.push("Ctrl");
+  if (event.altKey) mods.push("Alt");
+  if (event.shiftKey) mods.push("Shift");
+  if (event.metaKey) mods.push("Super");
+  if (mods.length === 0 && !isFunctionKey) {
+    return null;
+  }
+  return [...mods, main].join("+");
+}
+
 function SettingsView() {
   const [settings, setSettings] = useState<NexoraSettings | null>(null);
   const [theme, setTheme] = useState<ThemeId>("neon-glass");
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [capturingHotkey, setCapturingHotkey] = useState(false);
+  const [hotkeyError, setHotkeyError] = useState(false);
   // Window controls (frameless frame): the title bar is the drag
   // region and the × button closes this window. The close button
   // must stay OUTSIDE the drag region, or the drag eats its clicks.
@@ -1902,6 +1963,74 @@ function SettingsView() {
   const restoreTaskbarNow = () => {
     invoke<boolean>("restore_taskbar_now").catch(() => {});
   };
+
+  // Change the island hotkey: the backend validates the shortcut,
+  // re-registers it and persists it only on success, so a false
+  // return means the old key is still in place — keep showing it
+  // and say so. SettingsView loads its settings once, so apply a
+  // success here too (the island picks it up from settings-changed).
+  const submitHotkey = (shortcut: string) => {
+    invoke<boolean>("set_island_hotkey", { shortcut })
+      .then((ok) => {
+        if (ok) {
+          setSettings((prev) =>
+            prev ? { ...prev, island_hotkey: shortcut } : prev,
+          );
+          setHotkeyError(false);
+        } else {
+          setHotkeyError(true);
+        }
+      })
+      .catch(() => setHotkeyError(true));
+  };
+
+  // While capturing, the next keydown is the new hotkey: Escape
+  // cancels, a lone modifier or an uncapturable key keeps listening.
+  // The current hotkey is registered globally, so the OS swallows it
+  // before the webview sees a keydown — but the backend still emits
+  // island-hotkey, so treat that press as re-confirming the current
+  // key instead of leaving the capture stuck.
+  useEffect(() => {
+    if (!capturingHotkey) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      event.preventDefault();
+      if (event.repeat) {
+        return;
+      }
+      if (event.key === "Escape") {
+        setCapturingHotkey(false);
+        return;
+      }
+      const shortcut = shortcutFromKeyEvent(event);
+      if (shortcut === null) {
+        return;
+      }
+      setCapturingHotkey(false);
+      submitHotkey(shortcut);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    let cancelled = false;
+    let unlistenHotkey: (() => void) | undefined;
+    listen("island-hotkey", () => {
+      if (!cancelled && settings) {
+        setCapturingHotkey(false);
+        submitHotkey(settings.island_hotkey);
+      }
+    }).then((fn) => {
+      if (cancelled) {
+        fn();
+      } else {
+        unlistenHotkey = fn;
+      }
+    });
+    return () => {
+      cancelled = true;
+      window.removeEventListener("keydown", onKeyDown);
+      unlistenHotkey?.();
+    };
+  }, [capturingHotkey]);
 
   useEffect(() => {
     const saved = readSavedTheme();
@@ -2198,6 +2327,37 @@ function SettingsView() {
           </button>
         </div>
       </div>
+      <div className="settings-row">
+        <span className="settings-row-text">
+          <span>{t(language, "islandHotkey")}</span>
+          <span className="settings-row-desc">
+            {capturingHotkey
+              ? t(language, "hotkeyCancelHint")
+              : t(language, "islandHotkeyDesc")}
+          </span>
+        </span>
+        <div className="settings-hotkey-control">
+          <span className="settings-slider-value">
+            {settings ? settings.island_hotkey : "—"}
+          </span>
+          <button
+            type="button"
+            className="mini-btn"
+            disabled={!settings}
+            onClick={() => {
+              setHotkeyError(false);
+              setCapturingHotkey((prev) => !prev);
+            }}
+          >
+            {capturingHotkey
+              ? t(language, "hotkeyListening")
+              : t(language, "changeHotkey")}
+          </button>
+        </div>
+      </div>
+      {hotkeyError && (
+        <p className="settings-error">{t(language, "hotkeyError")}</p>
+      )}
         </>
       )}
       {section === "clock" && (
