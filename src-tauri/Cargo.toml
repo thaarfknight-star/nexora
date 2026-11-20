@@ -14,7 +14,18 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+# tauri WITHOUT the `common-controls-v6` default feature, on purpose:
+# that feature turns on TaskDialogIndirect (muda's About dialog +
+# tauri-runtime-wry's message dialog), a comctl32 v6 API. The app binary
+# gets the v6 manifest from tauri-build so it loads fine, but the lib
+# test binary gets no manifest, the loader binds comctl32 v5, and the
+# whole test binary dies at load with 0xc0000139 before any test runs
+# (CI runs 44504317833 / 44637632931). Nexora has no About menu item and
+# does not use the dialog plugin, so the fallback (plain MessageBox) is
+# never shown. Do NOT re-enable default features without re-checking CI.
+# The list below is tauri's default minus common-controls-v6, plus the
+# two features Nexora already used (tray-icon, image-png).
+tauri = { version = "2", default-features = false, features = ["wry", "compression", "dynamic-acl", "x11", "dbus", "tray-icon", "image-png"] }
 tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
