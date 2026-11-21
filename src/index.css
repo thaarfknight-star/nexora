@@ -2312,3 +2312,126 @@ body,
   background: var(--island-btn-bg);
   border-color: var(--island-accent);
 }
+
+/* ==========================================================================
+   v0.2.5: Post-Update "What's New" Glassmorphic Modal
+   ========================================================================== */
+.whats-new-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(6, 4, 18, 0.72);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: island-reveal 200ms ease both;
+}
+
+.whats-new-modal {
+  width: 100%;
+  max-width: 540px;
+  max-height: 86vh;
+  overflow-y: auto;
+  border-radius: 20px;
+  padding: 22px;
+  background: var(--theme-stage-bg, linear-gradient(180deg, #17103a, #0b0720));
+  border: 1px solid var(--island-border);
+  box-shadow:
+    0 0 0 1px rgba(167, 139, 250, 0.28),
+    0 20px 60px rgba(0, 0, 0, 0.65),
+    0 8px 28px rgba(124, 92, 255, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.whats-new-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.whats-new-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--island-accent-text);
+}
+
+.whats-new-title {
+  margin-top: 4px;
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--island-text);
+  line-height: 1.25;
+}
+
+.whats-new-badge {
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-family: var(--nx-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  background: var(--theme-grad, var(--nx-grad));
+  box-shadow: 0 4px 16px rgba(124, 92, 255, 0.42);
+  flex: none;
+}
+
+.whats-new-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.whats-new-group {
+  padding: 13px 15px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.whats-new-group-title {
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.whats-new-group-title.features {
+  color: var(--island-accent-text);
+}
+
+.whats-new-group-title.fixes {
+  color: var(--nx-success);
+}
+
+.whats-new-list {
+  margin: 0;
+  padding-inline-start: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--island-text);
+}
+
+.whats-new-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 4px;
+}
+
+.whats-new-date {
+  font-family: var(--nx-mono);
+  font-size: 11px;
+  color: var(--island-subtext);
+}
