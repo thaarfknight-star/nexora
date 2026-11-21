@@ -68,8 +68,8 @@ pub fn get_taskbar_status() -> taskbar::TaskbarStatus {
 }
 
 #[tauri::command]
-pub fn set_taskbar_hidden(hidden: bool) -> taskbar::TaskbarStatus {
-    taskbar::set_hidden(hidden)
+pub fn set_taskbar_hidden(_hidden: bool) -> taskbar::TaskbarStatus {
+    taskbar::status()
 }
 
 /// All open windows for the compact bar, in Z-order (frontmost first).
