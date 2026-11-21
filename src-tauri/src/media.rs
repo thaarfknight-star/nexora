@@ -184,6 +184,19 @@ pub async fn previous() -> bool {
     false
 }
 
+/// Stop playback on the current session (IPC command `media_stop`). Returns
+/// `true` only when a live session accepted the command.
+#[cfg(target_os = "windows")]
+pub async fn stop() -> bool {
+    try_transport(|session| session.TryStopAsync()).await
+}
+
+/// Stop playback. On non-Windows targets there is no session.
+#[cfg(not(target_os = "windows"))]
+pub async fn stop() -> bool {
+    false
+}
+
 #[cfg(target_os = "windows")]
 async fn current_session() -> WinResult<GlobalSystemMediaTransportControlsSession> {
     ensure_winrt();
