@@ -456,8 +456,8 @@ mod win {
             .is_ok();
             let _ = SelectObject(dc, old);
             let _ = DeleteDC(dc);
-            let _ = DeleteObject(HGDIOBJ(bitmap.0));
             if !drawn || bits.is_null() {
+                let _ = DeleteObject(HGDIOBJ(bitmap.0));
                 return (0, String::new());
             }
             let len = (size * size * 4) as usize;
@@ -471,6 +471,8 @@ mod win {
                 }
                 rgba.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
             }
+            // Free the DIB section only AFTER reading `bits` to prevent UAF crash.
+            let _ = DeleteObject(HGDIOBJ(bitmap.0));
             if !any_alpha {
                 // No alpha channel in this icon: treat it as opaque, or
                 // the frontend would draw it fully transparent.
