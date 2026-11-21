@@ -58,6 +58,11 @@ pub async fn media_previous() -> bool {
 }
 
 #[tauri::command]
+pub async fn media_stop() -> bool {
+    media::stop().await
+}
+
+#[tauri::command]
 pub fn get_taskbar_status() -> taskbar::TaskbarStatus {
     taskbar::status()
 }
