@@ -515,11 +515,11 @@ function IslandApp() {
     mode: "compact",
     title: "Nexora Island",
     // Backend constants (island.rs) until get_island_state answers.
-    width: 760,
+    width: 880,
     height: 440,
     content_x: 40,
     content_y: 40,
-    content_width: 680,
+    content_width: 800,
     content_height: 360,
     compact_height: 64,
     handle_width: 120,
@@ -896,14 +896,10 @@ function IslandApp() {
     // auto-close timer. The watcher also fires once at startup.
     let unlistenHotZone: (() => void) | undefined;
     listen<{ in_hot_zone: boolean }>("island-hot-zone", (event) => {
-      if (event.payload.in_hot_zone) {
+      // Hovering the top edge no longer auto-opens the island;
+      // users open it explicitly via clicking the top handle or hotkey.
+      if (event.payload.in_hot_zone && visibleRef.current !== "hidden") {
         clearAutoCloseTimer();
-        showIsland(
-          nextVisible(visibleRef.current, "hot-zone-enter", machineGuards()),
-          "hot-zone-enter",
-        );
-      } else if (visibleRef.current === "compact") {
-        armAutoClose();
       }
     })
       .then((stop) => {
@@ -1251,11 +1247,11 @@ function IslandApp() {
           transitionDuration: `${stageMs}ms`,
           transitionTimingFunction: stageEasing,
           // Geometry comes from the backend (island.rs), one source of truth.
-          left: state.content_x,
+          left: Math.max(0, Math.round((state.width - Math.min(680, state.content_width)) / 2)),
           // Hidden: the handle sits exactly at y=0 (top edge) and
           // slides down to content_y when the island opens (item 1).
           top: visible === "hidden" ? 0 : state.content_y,
-          width: state.content_width,
+          width: Math.min(680, state.content_width),
           height:
             visible === "hidden"
               ? HANDLE_HIT_HEIGHT
@@ -2290,6 +2286,47 @@ function SettingsView() {
     applyVisualCssVars(islandScalePct, clamped);
   };
 
+  const [engineHotkey, setEngineHotkey] = useState<string>(() => {
+    try {
+      return window.localStorage.getItem("nexora-engine-translate-hotkey") || "Ctrl+Shift+T";
+    } catch {
+      return "Ctrl+Shift+T";
+    }
+  });
+  const [capturingEngineHotkey, setCapturingEngineHotkey] = useState(false);
+
+  useEffect(() => {
+    if (!capturingEngineHotkey) return;
+    const onKey = (ev: KeyboardEvent) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (ev.key === "Escape") {
+        setCapturingEngineHotkey(false);
+        return;
+      }
+      if (["Control", "Shift", "Alt", "Meta"].includes(ev.key)) return;
+      const mods: string[] = [];
+      if (ev.ctrlKey) mods.push("Ctrl");
+      if (ev.altKey) mods.push("Alt");
+      if (ev.shiftKey) mods.push("Shift");
+      const keyName = ev.key.length === 1 ? ev.key.toUpperCase() : ev.key;
+      const combo = mods.length > 0 ? `${mods.join("+")}+${keyName}` : keyName;
+      setEngineHotkey(combo);
+      try {
+        window.localStorage.setItem("nexora-engine-translate-hotkey", combo);
+      } catch {
+        // ignore
+      }
+      setCapturingEngineHotkey(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [capturingEngineHotkey]);
+
+  const minimizeSettingsWindow = () => {
+    getCurrentWindow().minimize().catch(() => undefined);
+  };
+
   const closeSettingsWindow = () => {
     const win = getCurrentWindow();
     win.hide().catch(() => win.close().catch(() => undefined));
@@ -2300,7 +2337,6 @@ function SettingsView() {
   // EAgent5).
   type SettingsSection =
     | "language"
-    | "appearance"
     | "islandStyle"
     | "clock"
     | "performance"
@@ -2557,11 +2593,10 @@ function SettingsView() {
 
   const sections: { id: SettingsSection; label: string }[] = [
     { id: "language", label: t(language, "sectionLanguage") },
-    { id: "appearance", label: t(language, "sectionAppearance") },
     { id: "islandStyle", label: t(language, "sectionIslandStyle") },
     { id: "clock", label: t(language, "sectionClock") },
     { id: "performance", label: t(language, "sectionPerformance") },
-    { id: "liveTranslate", label: t(language, "sectionLiveTranslate") },
+    { id: "liveTranslate", label: t(language, "sectionEngines") },
     { id: "updates", label: t(language, "sectionUpdates") },
   ];
 
@@ -2571,15 +2606,26 @@ function SettingsView() {
         <div className="settings-titlebar-drag" data-tauri-drag-region>
           <span>◈ Nexora Settings</span>
         </div>
-        <button
-          type="button"
-          className="settings-close-btn"
-          onClick={closeSettingsWindow}
-          title={t(language, "closeWindow")}
-          aria-label={t(language, "closeWindow")}
-        >
-          ✕
-        </button>
+        <div className="settings-window-controls">
+          <button
+            type="button"
+            className="settings-min-btn"
+            onClick={minimizeSettingsWindow}
+            title={t(language, "minimizeWindow")}
+            aria-label={t(language, "minimizeWindow")}
+          >
+            ─
+          </button>
+          <button
+            type="button"
+            className="settings-close-btn"
+            onClick={closeSettingsWindow}
+            title={t(language, "closeWindow")}
+            aria-label={t(language, "closeWindow")}
+          >
+            ✕
+          </button>
+        </div>
       </div>
       <div className="settings-body">
       <aside className="settings-sidebar">
@@ -2642,8 +2688,9 @@ function SettingsView() {
       </div>
         </>
       )}
-      {section === "appearance" && (
+      {section === "islandStyle" && (
         <>
+
       <h2 className="settings-section-title">
         {t(language, "sectionAppearance")}
       </h2>
@@ -2686,11 +2733,9 @@ function SettingsView() {
           </button>
         ))}
       </div>
-        </>
-      )}
 
-      {section === "islandStyle" && (
-        <>
+      <div className="island-style-divider" />
+
       <h2 className="settings-section-title">
         {t(language, "sectionIslandStyle")}
       </h2>
@@ -3034,11 +3079,19 @@ function SettingsView() {
       {section === "liveTranslate" && (
         <>
       <h2 className="settings-section-title">
-        {t(language, "sectionLiveTranslate")}
+        {t(language, "sectionEngines")}
       </h2>
       <p className="settings-section-desc">
-        {t(language, "liveTranslateDesc")}
+        {t(language, "enginesDesc")}
       </p>
+      <div className="engine-card">
+        <div className="engine-card-header">
+          <div>
+            <div className="engine-card-title">{t(language, "sectionLiveTranslate")}</div>
+            <div className="settings-row-desc">{t(language, "liveTranslateDesc")}</div>
+          </div>
+          <span className="engine-version-badge">v1.0.0</span>
+        </div>
       <div className="settings-row">
         <span className="settings-row-text">
           <span>{t(language, "engineStatusLabel")}</span>
@@ -3070,6 +3123,14 @@ function SettingsView() {
                 {translateStatus.running
                   ? t(language, "stopTranslateBtn")
                   : t(language, "startTranslateBtn")}
+              </button>
+              <button
+                type="button"
+                className="mini-btn"
+                onClick={handleDownloadEngine}
+                disabled={translateStatus?.downloading || downloadProgress !== null}
+              >
+                {t(language, "updateEngineBtn")}
               </button>
               <button
                 type="button"
@@ -3150,6 +3211,22 @@ function SettingsView() {
             {t(language, "testSubtitleBtn")}
           </button>
         </div>
+      </div>
+      <div className="settings-row">
+        <span className="settings-row-text">
+          <span>{t(language, "engineShortcutLabel")}</span>
+        </span>
+        <div className="translate-btn-group">
+          <span className="settings-slider-value">{engineHotkey}</span>
+          <button
+            type="button"
+            className="mini-btn"
+            onClick={() => setCapturingEngineHotkey((v) => !v)}
+          >
+            {capturingEngineHotkey ? "..." : t(language, "changeHotkey")}
+          </button>
+        </div>
+      </div>
       </div>
         </>
       )}
