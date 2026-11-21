@@ -3,6 +3,13 @@
 //! The engine is downloaded on demand into `<app_data_dir>/live-translate/`
 //! using pure native Rust HTTP streaming (`reqwest`) and native ZIP extraction
 //! (`zip`) — never spawning `curl.exe` or `powershell.exe` during download.
+//!
+//! Audio capture on Windows uses native WASAPI loopback ONLY — supporting both:
+//! - `"system"`: Full internal system playback audio (`Direction::Render` loopback)
+//! - `"app"`: Specific application / window process-tree loopback
+//!   (`AudioClient::new_application_loopback_client(pid, true)`)
+//!
+//! External microphone audio is NEVER captured.
 
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
@@ -22,18 +29,30 @@ const SUBTITLE_WIDTH: f64 = 820.0;
 const SUBTITLE_HEIGHT: f64 = 128.0;
 const SUBTITLE_BOTTOM_MARGIN: f64 = 72.0;
 
+#[cfg(target_os = "windows")]
+const CAPTURE_SAMPLE_RATE: usize = 16_000;
+#[cfg(target_os = "windows")]
+const CHUNK_DURATION_MS: u64 = 3_200;
+const SPEECH_RMS_THRESHOLD: f32 = 140.0;
+
 static DOWNLOADING: AtomicBool = AtomicBool::new(false);
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
 static ENGINE_STATE: Mutex<EnginePrefs> = Mutex::new(EnginePrefs {
     source_lang: None,
     target_lang: None,
+    capture_mode: None,
+    target_pid: None,
+    target_app_name: None,
     last_error: None,
 });
 
 struct EnginePrefs {
     source_lang: Option<String>,
     target_lang: Option<String>,
+    capture_mode: Option<String>,
+    target_pid: Option<u32>,
+    target_app_name: Option<String>,
     last_error: Option<String>,
 }
 
@@ -45,8 +64,18 @@ pub struct TranslateEngineStatus {
     pub model_size_mb: u64,
     pub source_lang: String,
     pub target_lang: String,
+    pub capture_mode: String,
+    pub target_pid: Option<u32>,
+    pub target_app_name: Option<String>,
     pub model_path: String,
     pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioAppTarget {
+    pub pid: u32,
+    pub title: String,
+    pub exe_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,6 +162,12 @@ fn build_status(app: &AppHandle) -> TranslateEngineStatus {
             .target_lang
             .clone()
             .unwrap_or_else(|| "fa".to_string()),
+        capture_mode: prefs
+            .capture_mode
+            .clone()
+            .unwrap_or_else(|| "system".to_string()),
+        target_pid: prefs.target_pid,
+        target_app_name: prefs.target_app_name.clone(),
         model_path: dir.to_string_lossy().to_string(),
         last_error: prefs.last_error.clone(),
     }
@@ -214,6 +249,69 @@ pub fn parse_google_translate_response(raw: &str) -> Option<String> {
     } else {
         Some(trimmed)
     }
+}
+
+/// Writes 16 kHz, 16-bit signed mono PCM samples into a standard RIFF/WAVE file.
+pub fn write_pcm16_mono_wav(path: &Path, pcm_bytes: &[u8], sample_rate: u32) -> Result<(), String> {
+    let data_len = u32::try_from(pcm_bytes.len()).unwrap_or(u32::MAX - 36);
+    let riff_size = data_len.saturating_add(36);
+    let byte_rate = sample_rate.saturating_mul(2);
+    let mut file = File::create(path).map_err(|e| format!("Failed to create WAV file: {e}"))?;
+    file.write_all(b"RIFF").map_err(|e| e.to_string())?;
+    file.write_all(&riff_size.to_le_bytes())
+        .map_err(|e| e.to_string())?;
+    file.write_all(b"WAVEfmt ").map_err(|e| e.to_string())?;
+    file.write_all(&16u32.to_le_bytes())
+        .map_err(|e| e.to_string())?;
+    file.write_all(&1u16.to_le_bytes())
+        .map_err(|e| e.to_string())?;
+    file.write_all(&1u16.to_le_bytes())
+        .map_err(|e| e.to_string())?;
+    file.write_all(&sample_rate.to_le_bytes())
+        .map_err(|e| e.to_string())?;
+    file.write_all(&byte_rate.to_le_bytes())
+        .map_err(|e| e.to_string())?;
+    file.write_all(&2u16.to_le_bytes())
+        .map_err(|e| e.to_string())?;
+    file.write_all(&16u16.to_le_bytes())
+        .map_err(|e| e.to_string())?;
+    file.write_all(b"data").map_err(|e| e.to_string())?;
+    file.write_all(&data_len.to_le_bytes())
+        .map_err(|e| e.to_string())?;
+    file.write_all(&pcm_bytes[..data_len as usize])
+        .map_err(|e| e.to_string())?;
+    file.flush().map_err(|e| e.to_string())
+}
+
+/// Returns `true` when 16-bit PCM audio exceeds the silence gate RMS threshold.
+pub fn has_audible_speech(pcm_bytes: &[u8]) -> bool {
+    let mut sum_sq: f64 = 0.0;
+    let mut count: u64 = 0;
+    for chunk in pcm_bytes.chunks_exact(2) {
+        let sample = f64::from(i16::from_le_bytes([chunk[0], chunk[1]]));
+        sum_sq += sample * sample;
+        count += 1;
+    }
+    if count == 0 {
+        return false;
+    }
+    let rms = (sum_sq / (count as f64)).sqrt() as f32;
+    rms >= SPEECH_RMS_THRESHOLD
+}
+
+/// Strips Whisper silence hallucinations and bracketed non-speech markers.
+pub fn clean_whisper_output(raw: &str) -> String {
+    raw.lines()
+        .map(str::trim)
+        .filter(|l| {
+            !l.is_empty()
+                && !l.starts_with('[')
+                && !(l.starts_with('(') && l.ends_with(')'))
+                && !l.eq_ignore_ascii_case("thank you.")
+                && !l.eq_ignore_ascii_case("thanks for watching.")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Translates `text` into `target_lang` natively using `reqwest` (no external curl process).
@@ -345,6 +443,251 @@ fn extract_zip_native(zip_path: &Path, dest_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Lists currently open top-level application windows that can be targeted for
+/// per-application WASAPI process-tree audio loopback.
+#[tauri::command]
+pub fn list_audio_sources() -> Vec<AudioAppTarget> {
+    #[cfg(target_os = "windows")]
+    {
+        list_windows_audio_targets()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Vec::new()
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn list_windows_audio_targets() -> Vec<AudioAppTarget> {
+    use std::collections::HashMap;
+    use sysinfo::{Pid, System};
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+    };
+
+    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+            return BOOL(1);
+        }
+        let mut buf = [0u16; 256];
+        let len = unsafe { GetWindowTextW(hwnd, &mut buf) };
+        if len <= 0 {
+            return BOOL(1);
+        }
+        let title = String::from_utf16_lossy(&buf[..len as usize])
+            .trim()
+            .to_string();
+        if title.is_empty() || title == "Program Manager" {
+            return BOOL(1);
+        }
+        let mut pid: u32 = 0;
+        unsafe {
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        }
+        if pid != 0 {
+            let list = unsafe { &mut *(lparam.0 as *mut Vec<(u32, String)>) };
+            list.push((pid, title));
+        }
+        BOOL(1)
+    }
+
+    let mut raw_windows: Vec<(u32, String)> = Vec::new();
+    let lparam = LPARAM((&mut raw_windows as *mut Vec<(u32, String)>) as isize);
+    let _ = unsafe { EnumWindows(Some(enum_proc), lparam) };
+
+    let self_pid = std::process::id();
+    let sys = System::new_all();
+    let mut by_root_pid: HashMap<u32, AudioAppTarget> = HashMap::new();
+
+    for (win_pid, title) in raw_windows {
+        if win_pid == self_pid {
+            continue;
+        }
+        let mut root_pid = win_pid;
+        let exe_name = if let Some(proc_info) = sys.process(Pid::from_u32(win_pid)) {
+            let name = proc_info.name().to_string_lossy().to_string();
+            let mut cur = proc_info;
+            for _ in 0..6 {
+                if let Some(parent_pid) = cur.parent() {
+                    if let Some(parent) = sys.process(parent_pid) {
+                        if parent.name().eq_ignore_ascii_case(cur.name()) {
+                            root_pid = parent_pid.as_u32();
+                            cur = parent;
+                            continue;
+                        }
+                    }
+                }
+                break;
+            }
+            name
+        } else {
+            "App".to_string()
+        };
+
+        if root_pid == self_pid
+            || exe_name.eq_ignore_ascii_case("nexora.exe")
+            || exe_name.eq_ignore_ascii_case("TextInputHost.exe")
+            || exe_name.eq_ignore_ascii_case("ApplicationFrameHost.exe")
+        {
+            continue;
+        }
+
+        let short_title: String = title.chars().take(64).collect();
+        by_root_pid.entry(root_pid).or_insert(AudioAppTarget {
+            pid: root_pid,
+            title: short_title,
+            exe_name,
+        });
+    }
+
+    let mut out: Vec<AudioAppTarget> = by_root_pid.into_values().collect();
+    out.sort_by(|a, b| {
+        a.exe_name
+            .to_lowercase()
+            .cmp(&b.exe_name.to_lowercase())
+            .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+    });
+    out
+}
+
+#[cfg(target_os = "windows")]
+fn run_wasapi_loopback_worker(
+    app: &AppHandle,
+    bin: &Path,
+    model: &Path,
+    wav_path: &Path,
+    source_lang: &str,
+    target_lang: &str,
+    capture_mode: &str,
+    target_pid: Option<u32>,
+) -> Result<(), String> {
+    use std::collections::VecDeque;
+    use std::time::Instant;
+    use wasapi::{
+        initialize_mta, AudioClient, DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat,
+    };
+
+    let _ = initialize_mta();
+
+    let desired_format = WaveFormat::new(16, 16, SampleType::Int, CAPTURE_SAMPLE_RATE, 1, None);
+    let mut audio_client = if capture_mode == "app" {
+        let pid = target_pid.ok_or_else(|| "No target application selected".to_string())?;
+        let mut client = AudioClient::new_application_loopback_client(pid, true)
+            .map_err(|e| format!("Failed to attach audio loopback to PID {pid}: {e}"))?;
+        let mode = StreamMode::EventsShared {
+            autoconvert: true,
+            buffer_duration_hns: 0,
+        };
+        client
+            .initialize_client(&desired_format, Direction::Capture, mode, None)
+            .map_err(|e| format!("Failed to initialize app loopback stream: {e}"))?;
+        client
+    } else {
+        let enumerator =
+            DeviceEnumerator::new().map_err(|e| format!("WASAPI enumerator error: {e}"))?;
+        let device = enumerator
+            .get_default_device(Direction::Render)
+            .map_err(|e| format!("No default playback device found: {e}"))?;
+        let mut client = device
+            .get_iaudioclient()
+            .map_err(|e| format!("Failed to open playback audio client: {e}"))?;
+        let (_def_time, min_time) = client.get_device_period().unwrap_or((100_000, 100_000));
+        let mode = StreamMode::EventsShared {
+            autoconvert: true,
+            buffer_duration_hns: min_time,
+        };
+        // Capturing from a Render endpoint enables WASAPI system loopback (no mic).
+        client
+            .initialize_client(&desired_format, Direction::Capture, mode, None)
+            .map_err(|e| format!("Failed to initialize system loopback stream: {e}"))?;
+        client
+    };
+
+    let h_event = audio_client
+        .set_get_eventhandle()
+        .map_err(|e| format!("Failed to bind WASAPI event handle: {e}"))?;
+    let capture_client = audio_client
+        .get_audiocaptureclient()
+        .map_err(|e| format!("Failed to open WASAPI capture client: {e}"))?;
+
+    audio_client
+        .start_stream()
+        .map_err(|e| format!("Failed to start WASAPI loopback stream: {e}"))?;
+
+    let mut deque: VecDeque<u8> = VecDeque::with_capacity(CAPTURE_SAMPLE_RATE * 2 * 4);
+
+    while RUNNING.load(Ordering::SeqCst) {
+        deque.clear();
+        let started = Instant::now();
+        while RUNNING.load(Ordering::SeqCst)
+            && started.elapsed() < Duration::from_millis(CHUNK_DURATION_MS)
+        {
+            // Short timeout so silence never blocks shutdown or stalls the loop.
+            let _ = h_event.wait_for_event(200);
+            loop {
+                match capture_client.get_next_packet_size() {
+                    Ok(Some(frames)) if frames > 0 => {
+                        if capture_client.read_from_device_to_deque(&mut deque).is_err() {
+                            break;
+                        }
+                    }
+                    _ => break,
+                }
+            }
+        }
+
+        if !RUNNING.load(Ordering::SeqCst) {
+            break;
+        }
+        if deque.len() < CAPTURE_SAMPLE_RATE {
+            continue;
+        }
+        let pcm_bytes: Vec<u8> = deque.drain(..).collect();
+        if !has_audible_speech(&pcm_bytes) {
+            continue;
+        }
+        if write_pcm16_mono_wav(wav_path, &pcm_bytes, CAPTURE_SAMPLE_RATE as u32).is_err() {
+            continue;
+        }
+
+        let mut args = vec![
+            "-m".to_string(),
+            model.to_string_lossy().to_string(),
+            "-f".to_string(),
+            wav_path.to_string_lossy().to_string(),
+            "-nt".to_string(),
+            "-np".to_string(),
+        ];
+        if source_lang != "auto" && !source_lang.is_empty() {
+            args.push("-l".to_string());
+            args.push(source_lang.to_string());
+        }
+
+        if let Ok(out) = hidden_command(bin).args(&args).output() {
+            if out.status.success() {
+                let text = clean_whisper_output(&String::from_utf8_lossy(&out.stdout));
+                if !text.is_empty() {
+                    let translated = translate_text(&text, source_lang, target_lang);
+                    emit_subtitle(
+                        app,
+                        &SubtitlePayload {
+                            original: text,
+                            translated,
+                            target_lang: target_lang.to_string(),
+                            active: true,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    let _ = audio_client.stop_stream();
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_translate_status(app: AppHandle) -> TranslateEngineStatus {
     build_status(&app)
@@ -454,11 +797,37 @@ pub async fn start_live_translate(
     app: AppHandle,
     source_lang: String,
     target_lang: String,
+    capture_mode: Option<String>,
+    target_pid: Option<u32>,
+    target_app_name: Option<String>,
 ) -> Result<TranslateEngineStatus, String> {
+    let resolved_mode = match capture_mode.as_deref() {
+        Some("app") => "app".to_string(),
+        _ => "system".to_string(),
+    };
+
+    if resolved_mode == "app" && target_pid.is_none() {
+        let err_msg = if target_lang == "fa" {
+            "ابتدا یک برنامه یا پنجره هدف را از تنظیمات موتور انتخاب کنید.".to_string()
+        } else {
+            "Please select a target window or application first.".to_string()
+        };
+        {
+            let mut prefs = ENGINE_STATE.lock().unwrap_or_else(|e| e.into_inner());
+            prefs.last_error = Some(err_msg.clone());
+        }
+        let st = build_status(&app);
+        emit_status_changed(&app, &st);
+        return Err(err_msg);
+    }
+
     {
         let mut prefs = ENGINE_STATE.lock().unwrap_or_else(|e| e.into_inner());
         prefs.source_lang = Some(source_lang.clone());
         prefs.target_lang = Some(target_lang.clone());
+        prefs.capture_mode = Some(resolved_mode.clone());
+        prefs.target_pid = target_pid;
+        prefs.target_app_name = target_app_name.clone();
         prefs.last_error = None;
     }
 
@@ -478,15 +847,24 @@ pub async fn start_live_translate(
     let model = model_path(&dir);
     let whisper_bin = find_whisper_binary(&dir);
 
+    let listening_banner = if resolved_mode == "app" {
+        let label = target_app_name.as_deref().unwrap_or("App");
+        if target_lang == "fa" {
+            format!("در حال دریافت صدای «{label}» (بدون میکروفون)...")
+        } else {
+            format!("Listening to \"{label}\" audio (no mic)...")
+        }
+    } else if target_lang == "fa" {
+        "در حال دریافت صدای کل سیستم (بدون میکروفون)...".to_string()
+    } else {
+        "Listening to system audio (no mic)...".to_string()
+    };
+
     emit_subtitle(
         &app,
         &SubtitlePayload {
             original: String::new(),
-            translated: if target_lang == "fa" {
-                "موتور ترجمه زنده فعال شد — در حال گوش دادن به صدا...".to_string()
-            } else {
-                "Live Translate active — listening to audio...".to_string()
-            },
+            translated: listening_banner,
             target_lang: target_lang.clone(),
             active: true,
         },
@@ -496,57 +874,51 @@ pub async fn start_live_translate(
         let app_worker = app.clone();
         std::thread::spawn(move || {
             let wav_path = dir.join("chunk.wav");
-            while RUNNING.load(Ordering::SeqCst) {
-                #[cfg(target_os = "windows")]
-                {
-                    let recorded = record_windows_audio_chunk(&wav_path);
-                    if !RUNNING.load(Ordering::SeqCst) {
-                        break;
+            #[cfg(target_os = "windows")]
+            {
+                if let Err(err) = run_wasapi_loopback_worker(
+                    &app_worker,
+                    &bin,
+                    &model,
+                    &wav_path,
+                    &source_lang,
+                    &target_lang,
+                    &resolved_mode,
+                    target_pid,
+                ) {
+                    crate::diagnostics::log("translator", &format!("loopback failed: {err}"));
+                    RUNNING.store(false, Ordering::SeqCst);
+                    {
+                        let mut prefs = ENGINE_STATE.lock().unwrap_or_else(|e| e.into_inner());
+                        prefs.last_error = Some(err.clone());
                     }
-                    if recorded {
-                        let mut args = vec![
-                            "-m".to_string(),
-                            model.to_string_lossy().to_string(),
-                            "-f".to_string(),
-                            wav_path.to_string_lossy().to_string(),
-                            "-nt".to_string(),
-                            "-np".to_string(),
-                        ];
-                        if source_lang != "auto" && !source_lang.is_empty() {
-                            args.push("-l".to_string());
-                            args.push(source_lang.clone());
-                        }
-                        if let Ok(out) = hidden_command(&bin).args(&args).output() {
-                            if out.status.success() {
-                                let text = String::from_utf8_lossy(&out.stdout)
-                                    .lines()
-                                    .map(str::trim)
-                                    .filter(|l| !l.is_empty() && !l.starts_with('['))
-                                    .collect::<Vec<_>>()
-                                    .join(" ");
-                                if !text.is_empty() {
-                                    let translated =
-                                        translate_text(&text, &source_lang, &target_lang);
-                                    emit_subtitle(
-                                        &app_worker,
-                                        &SubtitlePayload {
-                                            original: text,
-                                            translated,
-                                            target_lang: target_lang.clone(),
-                                            active: true,
-                                        },
-                                    );
-                                }
-                            }
-                        }
-                    } else {
-                        std::thread::sleep(std::time::Duration::from_millis(800));
-                    }
+                    emit_subtitle(
+                        &app_worker,
+                        &SubtitlePayload {
+                            original: String::new(),
+                            translated: err,
+                            target_lang: target_lang.clone(),
+                            active: true,
+                        },
+                    );
+                    let st = build_status(&app_worker);
+                    emit_status_changed(&app_worker, &st);
                 }
-                #[cfg(not(target_os = "windows"))]
-                {
-                    let _ = (&bin, &model, &wav_path, &app_worker);
-                    std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = (
+                    &bin,
+                    &model,
+                    &wav_path,
+                    &app_worker,
+                    &source_lang,
+                    &target_lang,
+                    &resolved_mode,
+                    target_pid,
+                );
+                while RUNNING.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_secs(2));
                 }
             }
         });
@@ -555,29 +927,6 @@ pub async fn start_live_translate(
     let st = build_status(&app);
     emit_status_changed(&app, &st);
     Ok(st)
-}
-
-#[cfg(target_os = "windows")]
-fn record_windows_audio_chunk(wav_path: &Path) -> bool {
-    let out_file = wav_path.to_string_lossy();
-    let lines = [
-        "$ErrorActionPreference='SilentlyContinue'",
-        r#"Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;using System.Text;public class WinMM{[DllImport("winmm.dll",CharSet=CharSet.Auto)]public static extern int mciSendString(string c,StringBuilder r,int l,IntPtr cb);}'"#,
-        "[WinMM]::mciSendString('open new Type waveaudio Alias nxrec',$null,0,[IntPtr]::Zero)|Out-Null",
-        "[WinMM]::mciSendString('set nxrec bitspersample 16 channels 1 samplespersec 16000',$null,0,[IntPtr]::Zero)|Out-Null",
-        "[WinMM]::mciSendString('record nxrec',$null,0,[IntPtr]::Zero)|Out-Null",
-        "Start-Sleep -Milliseconds 3500",
-        &format!(
-            r#"[WinMM]::mciSendString('save nxrec "{out_file}"',$null,0,[IntPtr]::Zero)|Out-Null"#
-        ),
-        "[WinMM]::mciSendString('close nxrec',$null,0,[IntPtr]::Zero)|Out-Null",
-    ];
-    let script = lines.join("; ");
-    hidden_command("powershell")
-        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
-        .status()
-        .map(|s| s.success() && wav_path.exists())
-        .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -626,7 +975,7 @@ pub async fn test_subtitle_overlay(
     emit_subtitle(&app, &payload);
     let app_hide = app.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_secs(4));
+        std::thread::sleep(Duration::from_secs(4));
         if !RUNNING.load(Ordering::SeqCst) {
             emit_subtitle(
                 &app_hide,
@@ -668,5 +1017,36 @@ mod tests {
     #[test]
     fn encodes_query_spaces_and_symbols() {
         assert_eq!(url_encode_query("Hello world!"), "Hello%20world%21");
+    }
+
+    #[test]
+    fn silence_gate_filters_quiet_buffers() {
+        let silence = vec![0u8; 3200];
+        assert!(!has_audible_speech(&silence));
+        let loud: Vec<u8> = (0..1600)
+            .flat_map(|i| {
+                let v: i16 = if i % 2 == 0 { 1200 } else { -1200 };
+                v.to_le_bytes()
+            })
+            .collect();
+        assert!(has_audible_speech(&loud));
+    }
+
+    #[test]
+    fn cleans_whisper_hallucinations() {
+        let raw = "[BLANK_AUDIO]\n(music)\nHello world\nThank you.\n";
+        assert_eq!(clean_whisper_output(raw), "Hello world");
+    }
+
+    #[test]
+    fn writes_valid_pcm16_mono_wav_header() {
+        let tmp = std::env::temp_dir().join("nexora_test_pcm16.wav");
+        let pcm = vec![0u8; 640];
+        write_pcm16_mono_wav(&tmp, &pcm, 16_000).expect("wav write succeeds");
+        let bytes = fs::read(&tmp).expect("wav read succeeds");
+        let _ = fs::remove_file(&tmp);
+        assert_eq!(bytes.len(), 44 + 640);
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(&bytes[8..12], b"WAVE");
     }
 }

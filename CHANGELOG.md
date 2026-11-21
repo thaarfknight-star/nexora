@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.6] - 2026-11-21
+
+### What's New
+- **Pure Internal Audio Capture (No Microphone)**: Replaced PowerShell/WinMM microphone recording with native Windows WASAPI loopback — external microphone audio is never captured.
+- **Two Audio Source Modes**: Choose between **System audio (all apps)** and **Specific window / app** (Windows process-tree loopback) in **Settings → Engines → Live Translate**.
+- **Target Window / App Picker**: Lists currently open applications with a **Refresh** button so you can lock live subtitles onto a specific browser, video player, or game.
+- **Silence Gating**: Skips Whisper transcription when captured audio is silent, reducing CPU usage and preventing silence hallucinations.
+
+### Bug Fixes
+- Fixed Live Subtitles not picking up YouTube or desktop playback audio (previously captured default microphone input instead of WASAPI render loopback).
+- Removed periodic PowerShell process spawning during live audio capture for smoother streaming and instant Stop response.
+
 ## [0.2.5] - 2026-11-21
 
 ### What's New
