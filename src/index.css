@@ -2301,3 +2301,14 @@ body,
   color: var(--island-accent-text);
   flex: none;
 }
+
+/* Clickable update notifications */
+.notification-item.clickable {
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.notification-item.clickable:hover {
+  background: var(--island-btn-bg);
+  border-color: var(--island-accent);
+}
