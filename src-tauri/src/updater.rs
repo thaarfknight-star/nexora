@@ -82,6 +82,7 @@ pub async fn download_and_install(app: AppHandle) -> Result<(), String> {
         .ok_or_else(|| "No update is available.".to_string())?;
     let mut downloaded: u64 = 0;
     let progress_app = app.clone();
+    let exit_app = app.clone();
     update
         .download_and_install(
             move |chunk_length, content_length| {
@@ -94,7 +95,10 @@ pub async fn download_and_install(app: AppHandle) -> Result<(), String> {
                     },
                 );
             },
-            || {},
+            move || {
+                // Exit cleanly right before NSIS launches so it never fails with "Failed to kill Nexora".
+                exit_app.exit(0);
+            },
         )
         .await
         .map_err(|e| format!("Update download/install failed: {e}"))?;
