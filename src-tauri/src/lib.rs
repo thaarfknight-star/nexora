@@ -182,6 +182,7 @@ pub fn run() {
             ipc::dismiss_notification,
             diagnostics::log_visibility_transition,
             translator::get_translate_status,
+            translator::list_audio_sources,
             translator::download_translate_engine,
             translator::remove_translate_engine,
             translator::start_live_translate,

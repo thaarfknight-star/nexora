@@ -1,3 +1,4 @@
+import { check as checkPluginUpdate } from "@tauri-apps/plugin-updater";
 import { latestReleaseNote } from "./releaseNotes";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -446,6 +447,12 @@ function SvgSubtitle({ size = 15 }: { size?: number }) {
   );
 }
 
+interface AudioAppTarget {
+  pid: number;
+  title: string;
+  exe_name: string;
+}
+
 interface TranslateEngineStatus {
   installed: boolean;
   downloading: boolean;
@@ -453,6 +460,9 @@ interface TranslateEngineStatus {
   model_size_mb: number;
   source_lang: string;
   target_lang: string;
+  capture_mode: string;
+  target_pid: number | null;
+  target_app_name: string | null;
   model_path: string;
   last_error: string | null;
 }
@@ -726,9 +736,16 @@ function IslandApp() {
             openSettings();
             return;
           }
+          const savedMode = window.localStorage.getItem("nexora-translate-capture-mode") || st.capture_mode || "system";
+          const savedPidRaw = window.localStorage.getItem("nexora-translate-target-pid");
+          const savedPid = savedPidRaw ? Number(savedPidRaw) : st.target_pid;
+          const savedAppName = window.localStorage.getItem("nexora-translate-target-app") || st.target_app_name;
           invoke<TranslateEngineStatus>("start_live_translate", {
             sourceLang: st.source_lang || "auto",
             targetLang: st.target_lang || "fa",
+            captureMode: savedMode,
+            targetPid: savedMode === "app" && savedPid ? savedPid : null,
+            targetAppName: savedMode === "app" ? savedAppName : null,
           })
             .then((next) => setLiveSubActive(next.running))
             .catch(() => {});
@@ -2262,7 +2279,40 @@ function SettingsView() {
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgressPayload | null>(null);
   const [srcLang, setSrcLang] = useState("auto");
   const [tgtLang, setTgtLang] = useState("fa");
+  const [captureMode, setCaptureMode] = useState<"system" | "app">(() =>
+    window.localStorage.getItem("nexora-translate-capture-mode") === "app" ? "app" : "system",
+  );
+  const [audioTargets, setAudioTargets] = useState<AudioAppTarget[]>([]);
+  const [targetPid, setTargetPid] = useState<number | null>(() => {
+    const raw = window.localStorage.getItem("nexora-translate-target-pid");
+    return raw ? Number(raw) : null;
+  });
+  const [targetAppName, setTargetAppName] = useState<string>(
+    () => window.localStorage.getItem("nexora-translate-target-app") || "",
+  );
   const [testSubText, setTestSubText] = useState("Welcome to Nexora live subtitles!");
+
+  const refreshAudioTargets = () => {
+    invoke<AudioAppTarget[]>("list_audio_sources")
+      .then((list) => {
+        setAudioTargets(list);
+        if (list.length > 0 && (!targetPid || !list.some((item) => item.pid === targetPid))) {
+          setTargetPid(list[0].pid);
+          setTargetAppName(list[0].title || list[0].exe_name);
+          try {
+            window.localStorage.setItem("nexora-translate-target-pid", String(list[0].pid));
+            window.localStorage.setItem("nexora-translate-target-app", list[0].title || list[0].exe_name);
+          } catch {
+            // ignore
+          }
+        }
+      })
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    refreshAudioTargets();
+  }, []);
 
   useEffect(() => {
     invoke<TranslateEngineStatus>("get_translate_status")
@@ -2315,9 +2365,16 @@ function SettingsView() {
       invoke<TranslateEngineStatus>("start_live_translate", {
         sourceLang: srcLang,
         targetLang: tgtLang,
+        captureMode,
+        targetPid: captureMode === "app" ? targetPid : null,
+        targetAppName: captureMode === "app" ? targetAppName || null : null,
       })
         .then(setTranslateStatus)
-        .catch(() => {});
+        .catch((err) => {
+          setTranslateStatus((prev) =>
+            prev ? { ...prev, running: false, last_error: String(err) } : prev,
+          );
+        });
     }
   };
 
@@ -2663,11 +2720,40 @@ function SettingsView() {
     setInstallingUpdate(true);
     setUpdateProgressPct(0);
     setUpdateError(null);
-    invoke<void>("download_and_install_update").catch((err) => {
-      setUpdateError(String(err));
-      setInstallingUpdate(false);
-      setUpdateProgressPct(null);
-    });
+    try {
+      window.localStorage.setItem("nexora-show-whats-new", "1");
+    } catch {
+      // ignore
+    }
+    void (async () => {
+      try {
+        const update = await checkPluginUpdate();
+        if (!update) {
+          setInstallingUpdate(false);
+          setUpdateProgressPct(null);
+          return;
+        }
+        let downloaded = 0;
+        let total = 0;
+        await update.downloadAndInstall((ev) => {
+          if (ev.event === "Started") {
+            total = ev.data.contentLength ?? 0;
+            setUpdateProgressPct(1);
+          } else if (ev.event === "Progress") {
+            downloaded += ev.data.chunkLength;
+            if (total > 0) {
+              setUpdateProgressPct(Math.min(99, Math.round((downloaded / total) * 100)));
+            }
+          } else if (ev.event === "Finished") {
+            setUpdateProgressPct(100);
+          }
+        });
+      } catch (err) {
+        setUpdateError(String(err));
+        setInstallingUpdate(false);
+        setUpdateProgressPct(null);
+      }
+    })();
   };
 
   // The Restore-taskbar row (Taskbar section): bring the Windows
@@ -3326,6 +3412,87 @@ function SettingsView() {
       )}
       {translateStatus?.last_error && (
         <div className="translate-error">{translateStatus.last_error}</div>
+      )}
+      <div className="settings-row">
+        <span className="settings-row-text">
+          <span>{t(language, "audioSourceLabel")}</span>
+          <span className="audio-mode-hint">{t(language, "audioSourceNoMicHint")}</span>
+        </span>
+        <div className="audio-mode-pills">
+          <button
+            type="button"
+            className={`audio-mode-pill${captureMode === "system" ? " active" : ""}`}
+            onClick={() => {
+              setCaptureMode("system");
+              try {
+                window.localStorage.setItem("nexora-translate-capture-mode", "system");
+              } catch {
+                // ignore
+              }
+            }}
+          >
+            {t(language, "audioSourceSystem")}
+          </button>
+          <button
+            type="button"
+            className={`audio-mode-pill${captureMode === "app" ? " active" : ""}`}
+            onClick={() => {
+              setCaptureMode("app");
+              refreshAudioTargets();
+              try {
+                window.localStorage.setItem("nexora-translate-capture-mode", "app");
+              } catch {
+                // ignore
+              }
+            }}
+          >
+            {t(language, "audioSourceApp")}
+          </button>
+        </div>
+      </div>
+      {captureMode === "app" && (
+        <div className="settings-row">
+          <span className="settings-row-text">
+            <span>{t(language, "targetAppLabel")}</span>
+          </span>
+          <div className="translate-btn-group">
+            <select
+              className="translate-select"
+              value={targetPid ?? ""}
+              onChange={(e) => {
+                const pid = e.target.value ? Number(e.target.value) : null;
+                setTargetPid(pid);
+                const found = audioTargets.find((item) => item.pid === pid);
+                const label = found ? found.title || found.exe_name : "";
+                setTargetAppName(label);
+                try {
+                  if (pid) {
+                    window.localStorage.setItem("nexora-translate-target-pid", String(pid));
+                  }
+                  window.localStorage.setItem("nexora-translate-target-app", label);
+                } catch {
+                  // ignore
+                }
+              }}
+            >
+              {audioTargets.length === 0 && (
+                <option value="">{t(language, "targetAppPlaceholder")}</option>
+              )}
+              {audioTargets.map((item) => (
+                <option key={item.pid} value={item.pid}>
+                  {item.exe_name} — {item.title}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="mini-btn"
+              onClick={refreshAudioTargets}
+            >
+              {t(language, "refreshAppsBtn")}
+            </button>
+          </div>
+        </div>
       )}
       <div className="settings-row">
         <span className="settings-row-text">

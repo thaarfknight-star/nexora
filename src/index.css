@@ -2435,3 +2435,39 @@ body,
   font-size: 11px;
   color: var(--island-subtext);
 }
+
+.audio-mode-hint {
+  display: block;
+  font-size: 11px;
+  color: rgba(167, 180, 224, 0.78);
+  margin-top: 2px;
+}
+
+.audio-mode-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.audio-mode-pill {
+  padding: 6px 11px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(235, 240, 255, 0.84);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.audio-mode-pill:hover {
+  background: rgba(124, 92, 255, 0.16);
+  border-color: rgba(124, 92, 255, 0.45);
+}
+
+.audio-mode-pill.active {
+  background: linear-gradient(135deg, rgba(124, 92, 255, 0.34), rgba(91, 140, 255, 0.28));
+  border-color: rgba(124, 92, 255, 0.85);
+  color: #ffffff;
+}
