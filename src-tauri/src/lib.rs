@@ -117,7 +117,6 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
     // Taskbar hiding and watchdog are disabled; Nexora runs in floating companion mode.
     crate::diagnostics::log("setup", "floating companion mode (taskbar untouched)");
-    translator::position_subtitle_window(app.handle());
     tray::setup(app.handle())?;
     crate::diagnostics::log("setup", "tray setup ok");
     Ok(())

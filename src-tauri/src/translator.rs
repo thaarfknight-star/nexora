@@ -123,10 +123,29 @@ fn build_status(app: &AppHandle) -> TranslateEngineStatus {
     }
 }
 
-/// Positions the bottom-center floating subtitle overlay on the primary monitor
-/// and marks it click-through so it never intercepts mouse clicks in games/videos.
+/// Creates (lazily) and positions the bottom-center floating subtitle overlay
+/// on the primary monitor, marking it click-through so it never intercepts clicks.
 pub fn position_subtitle_window(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("subtitle") {
+    let win_opt = app.get_webview_window("subtitle").or_else(|| {
+        tauri::WebviewWindowBuilder::new(
+            app,
+            "subtitle",
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .title("Nexora Subtitles")
+        .inner_size(SUBTITLE_WIDTH, SUBTITLE_HEIGHT)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .always_on_top(true)
+        .resizable(false)
+        .skip_taskbar(true)
+        .focused(false)
+        .visible(false)
+        .build()
+        .ok()
+    });
+    if let Some(win) = win_opt {
         let _ = win.set_ignore_cursor_events(true);
         if let Ok(Some(mon)) = win.primary_monitor() {
             let sf = mon.scale_factor().max(1.0);

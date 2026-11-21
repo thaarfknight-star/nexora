@@ -32,20 +32,6 @@
         "resizable": true,
         "minWidth": 420,
         "minHeight": 480
-      },
-      {
-        "label": "subtitle",
-        "title": "Nexora Subtitles",
-        "width": 820,
-        "height": 128,
-        "decorations": false,
-        "transparent": true,
-        "shadow": false,
-        "alwaysOnTop": true,
-        "resizable": false,
-        "skipTaskbar": true,
-        "focus": false,
-        "visible": false
       }
     ],
     "security": {
