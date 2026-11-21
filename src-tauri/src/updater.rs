@@ -116,8 +116,8 @@ pub async fn check(_app: AppHandle) -> Result<UpdateInfo, String> {
         .await
         .map_err(|e| format!("Update check task failed: {e}"))??;
 
-    let newer = is_newer_version(&current, &feed.version)
-        && pick_windows_installer_url(&feed).is_some();
+    let newer =
+        is_newer_version(&current, &feed.version) && pick_windows_installer_url(&feed).is_some();
 
     if newer {
         Ok(UpdateInfo {
@@ -231,8 +231,8 @@ pub async fn download_and_install(app: AppHandle) -> Result<(), String> {
     let current = current_version();
     let app_dl = app.clone();
 
-    let (installer_path, is_msi) =
-        tauri::async_runtime::spawn_blocking(move || -> Result<(std::path::PathBuf, bool), String> {
+    let (installer_path, is_msi) = tauri::async_runtime::spawn_blocking(
+        move || -> Result<(std::path::PathBuf, bool), String> {
             let feed = fetch_feed_blocking()?;
             if !is_newer_version(&current, &feed.version) {
                 return Err("No update is available.".to_string());
@@ -241,8 +241,8 @@ pub async fn download_and_install(app: AppHandle) -> Result<(), String> {
                 .ok_or_else(|| "No Windows installer found in update feed.".to_string())?;
             let is_msi = url.to_ascii_lowercase().ends_with(".msi");
             let ext = if is_msi { "msi" } else { "exe" };
-            let dest = std::env::temp_dir()
-                .join(format!("nexora-update-{}-setup.{ext}", feed.version));
+            let dest =
+                std::env::temp_dir().join(format!("nexora-update-{}-setup.{ext}", feed.version));
 
             let client = reqwest::blocking::Client::builder()
                 .connect_timeout(Duration::from_secs(15))
@@ -265,7 +265,13 @@ pub async fn download_and_install(app: AppHandle) -> Result<(), String> {
             let mut buf = [0u8; 64 * 1024];
             let mut downloaded: u64 = 0;
 
-            let _ = app_dl.emit(PROGRESS_EVENT, UpdateProgress { downloaded: 0, total });
+            let _ = app_dl.emit(
+                PROGRESS_EVENT,
+                UpdateProgress {
+                    downloaded: 0,
+                    total,
+                },
+            );
 
             loop {
                 let n = resp
@@ -288,9 +294,10 @@ pub async fn download_and_install(app: AppHandle) -> Result<(), String> {
             }
 
             Ok((dest, is_msi))
-        })
-        .await
-        .map_err(|e| format!("Update download task failed: {e}"))??;
+        },
+    )
+    .await
+    .map_err(|e| format!("Update download task failed: {e}"))??;
 
     // Stop Live Translate / whisper-server before exiting.
     crate::translator::shutdown_engine();
