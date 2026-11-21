@@ -121,6 +121,13 @@ interface NotificationItem {
 interface UpdateInfo {
   current_version: string;
   update_available: boolean;
+  available_version?: string | null;
+  notes?: string | null;
+}
+
+interface UpdateProgressPayload {
+  downloaded: number;
+  total: number | null;
 }
 
 type IslandTab = "apps" | "media" | "stats" | "notifications" | "quick";
@@ -525,7 +532,7 @@ function IslandApp() {
     handle_width: 120,
     handle_height: 4,
   });
-  const [theme, setTheme] = useState<ThemeId>("neon-glass");
+  const [theme, setTheme] = useState<ThemeId>(() => themeOrDefault(readSavedTheme()));
   useEffect(() => {
     const syncVisuals = () => {
       applyVisualCssVars(readIslandScale(), readIslandGlow());
@@ -1754,7 +1761,22 @@ function IslandApp() {
                           </button>
                         </div>
                         {group.items.map((item) => (
-                          <div key={item.id} className="notification-item">
+                          <div
+                            key={item.id}
+                            className={`notification-item${item.kind === "updates" ? " clickable" : ""}`}
+                            onClick={
+                              item.kind === "updates"
+                                ? () => {
+                                    try {
+                                      window.localStorage.setItem("nexora-settings-nav", "updates");
+                                    } catch {
+                                      // ignore
+                                    }
+                                    openSettings();
+                                  }
+                                : undefined
+                            }
+                          >
                             <div className="notification-text">
                               <span className="notification-title">
                                 {item.title}
@@ -2185,7 +2207,7 @@ function shortcutFromKeyEvent(event: KeyboardEvent): string | null {
 
 function SettingsView() {
   const [settings, setSettings] = useState<NexoraSettings | null>(null);
-  const [theme, setTheme] = useState<ThemeId>("neon-glass");
+  const [theme, setTheme] = useState<ThemeId>(() => themeOrDefault(readSavedTheme()));
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [capturingHotkey, setCapturingHotkey] = useState(false);
   const [hotkeyError, setHotkeyError] = useState(false);
@@ -2342,7 +2364,38 @@ function SettingsView() {
     | "performance"
     | "liveTranslate"
     | "updates";
-  const [section, setSection] = useState<SettingsSection>("language");
+  const [section, setSection] = useState<SettingsSection>(() => {
+    try {
+      const target = window.localStorage.getItem("nexora-settings-nav");
+      if (target === "updates" || target === "liveTranslate" || target === "islandStyle") {
+        window.localStorage.removeItem("nexora-settings-nav");
+        return target;
+      }
+    } catch {
+      // ignore
+    }
+    return "language";
+  });
+
+  useEffect(() => {
+    const consumeNav = () => {
+      try {
+        const target = window.localStorage.getItem("nexora-settings-nav");
+        if (target === "updates" || target === "liveTranslate" || target === "islandStyle") {
+          window.localStorage.removeItem("nexora-settings-nav");
+          setSection(target);
+        }
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener("focus", consumeNav);
+    window.addEventListener("storage", consumeNav);
+    return () => {
+      window.removeEventListener("focus", consumeNav);
+      window.removeEventListener("storage", consumeNav);
+    };
+  }, []);
   // UI language, derived from the settings object (backend `language`
   // field, "en" default). The whole window — strings and reading
   // direction — follows it.
@@ -2497,10 +2550,52 @@ function SettingsView() {
     }
   };
 
-  const checkForUpdates = () => {
-    invoke<UpdateInfo>("check_updates")
-      .then(setUpdateInfo)
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [updateProgressPct, setUpdateProgressPct] = useState<number | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<UpdateProgressPayload>("update-progress", (ev) => {
+      const { downloaded, total } = ev.payload;
+      if (total && total > 0) {
+        setUpdateProgressPct(Math.min(100, Math.round((downloaded / total) * 100)));
+      }
+    })
+      .then((fn) => {
+        unlisten = fn;
+      })
       .catch(() => {});
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  const checkForUpdates = () => {
+    setCheckingUpdate(true);
+    setUpdateError(null);
+    invoke<UpdateInfo>("check_updates")
+      .then((info) => {
+        setUpdateInfo(info);
+      })
+      .catch((err) => {
+        setUpdateError(String(err));
+      })
+      .finally(() => {
+        setCheckingUpdate(false);
+      });
+  };
+
+  const installAvailableUpdate = () => {
+    setInstallingUpdate(true);
+    setUpdateProgressPct(0);
+    setUpdateError(null);
+    invoke<void>("download_and_install_update").catch((err) => {
+      setUpdateError(String(err));
+      setInstallingUpdate(false);
+      setUpdateProgressPct(null);
+    });
   };
 
   // The Restore-taskbar row (Taskbar section): bring the Windows
@@ -3242,14 +3337,52 @@ function SettingsView() {
         <span>
           {updateInfo
             ? updateInfo.update_available
-              ? t(language, "updateAvailable")
+              ? `${t(language, "updateAvailable")}${
+                  updateInfo.available_version ? ` (v${updateInfo.available_version})` : ""
+                }`
               : t(language, "noUpdateAvailable")
             : "—"}
         </span>
-        <button type="button" className="mini-btn" onClick={checkForUpdates}>
-          {t(language, "checkForUpdates")}
-        </button>
+        <div className="translate-btn-group">
+          <button
+            type="button"
+            className="mini-btn"
+            onClick={checkForUpdates}
+            disabled={checkingUpdate || installingUpdate}
+          >
+            {checkingUpdate ? t(language, "checkingUpdates") : t(language, "checkForUpdates")}
+          </button>
+          {updateInfo?.update_available && (
+            <button
+              type="button"
+              className="mini-btn primary-btn"
+              onClick={installAvailableUpdate}
+              disabled={installingUpdate}
+            >
+              {installingUpdate
+                ? `${t(language, "installingUpdate")}${
+                    updateProgressPct !== null ? ` ${updateProgressPct}%` : ""
+                  }`
+                : t(language, "downloadAndInstall")}
+            </button>
+          )}
+        </div>
       </div>
+      {installingUpdate && updateProgressPct !== null && (
+        <div className="translate-progress-box">
+          <div className="translate-progress-label">
+            <span>{t(language, "installingUpdate")}</span>
+            <span>{updateProgressPct}%</span>
+          </div>
+          <div className="translate-progress-track">
+            <div
+              className="translate-progress-fill"
+              style={{ width: `${updateProgressPct}%` }}
+            />
+          </div>
+        </div>
+      )}
+      {updateError && <div className="translate-error">{updateError}</div>}
       <div className="settings-version">
         Nexora v{updateInfo ? updateInfo.current_version : "—"}
       </div>

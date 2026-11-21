@@ -4,6 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nexora</title>
+    <script>
+      try {
+        var t = localStorage.getItem("nexora-theme");
+        if (t) document.documentElement.setAttribute("data-theme", t);
+        var s = localStorage.getItem("nexora-island-size");
+        if (s) document.documentElement.style.setProperty("--island-scale", String(Number(s) / 100));
+        var g = localStorage.getItem("nexora-island-glow");
+        if (g) document.documentElement.style.setProperty("--island-glow", String(Number(g) / 100));
+      } catch (e) {}
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
