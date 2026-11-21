@@ -1,3 +1,4 @@
+import { latestReleaseNote } from "./releaseNotes";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -885,6 +886,23 @@ function IslandApp() {
       .catch(() => applyTheme(themeOrDefault(saved)));
     invoke<IslandState>("get_island_state")
       .then(setState)
+      .catch(() => {});
+    invoke<UpdateInfo>("check_updates")
+      .then((info) => {
+        try {
+          const cur = info.current_version;
+          const prev = window.localStorage.getItem("nexora-last-seen-version");
+          if (prev && prev !== cur) {
+            window.localStorage.setItem("nexora-show-whats-new", cur);
+            window.localStorage.setItem("nexora-last-seen-version", cur);
+            openSettings();
+          } else if (!prev && cur) {
+            window.localStorage.setItem("nexora-last-seen-version", cur);
+          }
+        } catch {
+          // ignore
+        }
+      })
       .catch(() => {});
     // The Settings window persists a new theme with set_settings, which
     // emits settings-changed — apply it here at once, no restart.
@@ -2578,6 +2596,36 @@ function SettingsView() {
   const [installingUpdate, setInstallingUpdate] = useState(false);
   const [updateProgressPct, setUpdateProgressPct] = useState<number | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [showWhatsNew, setShowWhatsNew] = useState<boolean>(() => {
+    try {
+      if (window.localStorage.getItem("nexora-show-whats-new")) {
+        window.localStorage.removeItem("nexora-show-whats-new");
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const checkWhatsNewFlag = () => {
+      try {
+        if (window.localStorage.getItem("nexora-show-whats-new")) {
+          window.localStorage.removeItem("nexora-show-whats-new");
+          setShowWhatsNew(true);
+        }
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener("focus", checkWhatsNewFlag);
+    window.addEventListener("storage", checkWhatsNewFlag);
+    return () => {
+      window.removeEventListener("focus", checkWhatsNewFlag);
+      window.removeEventListener("storage", checkWhatsNewFlag);
+    };
+  }, []);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -3407,13 +3455,77 @@ function SettingsView() {
         </div>
       )}
       {updateError && <div className="translate-error">{updateError}</div>}
-      <div className="settings-version">
-        Nexora v{updateInfo ? updateInfo.current_version : "—"}
+      <div className="settings-row">
+        <span className="settings-version">
+          Nexora v{updateInfo ? updateInfo.current_version : "0.2.5"}
+        </span>
+        <button
+          type="button"
+          className="mini-btn"
+          onClick={() => setShowWhatsNew(true)}
+        >
+          ✨ {t(language, "whatsNewBtn")}
+        </button>
       </div>
         </>
       )}
       </div>
       </div>
+      {showWhatsNew && (() => {
+        const release = latestReleaseNote(updateInfo?.current_version);
+        return (
+          <div
+            className="whats-new-backdrop"
+            onClick={() => setShowWhatsNew(false)}
+          >
+            <div
+              className="whats-new-modal"
+              dir={language === "fa" ? "rtl" : "ltr"}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="whats-new-header">
+                <div>
+                  <div className="whats-new-kicker">{t(language, "whatsNewTitle")}</div>
+                  <h3 className="whats-new-title">{release.title[language]}</h3>
+                </div>
+                <span className="whats-new-badge">v{release.version}</span>
+              </div>
+              <div className="whats-new-body">
+                <div className="whats-new-group">
+                  <div className="whats-new-group-title features">
+                    ✦ {t(language, "whatsNewFeatures")}
+                  </div>
+                  <ul className="whats-new-list">
+                    {release.features[language].map((item, idx) => (
+                      <li key={idx}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="whats-new-group">
+                  <div className="whats-new-group-title fixes">
+                    ✓ {t(language, "whatsNewFixes")}
+                  </div>
+                  <ul className="whats-new-list">
+                    {release.fixes[language].map((item, idx) => (
+                      <li key={idx}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+              <div className="whats-new-footer">
+                <span className="whats-new-date">{release.date}</span>
+                <button
+                  type="button"
+                  className="mini-btn primary-btn"
+                  onClick={() => setShowWhatsNew(false)}
+                >
+                  {t(language, "whatsNewGotIt")}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </main>
   );
 }

@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.2.5] - 2026-11-21
+
+### What's New
+- Added an automatic post-update **What's New** glassmorphic showcase modal that opens after updating Nexora to highlight new features and bug fixes.
+- Added a **What's New** button inside **Settings → Updates** to review release highlights anytime in English or Persian.
+- Automated structured release notes publishing from `CHANGELOG.md` to every GitHub Release and `update-feed.json`.
+
+### Bug Fixes
+- Fixed `Not Responding` UI freeze on **Start Live Subtitles** by running lazy subtitle window creation in an `async` Tauri command.
+- Fixed Windows NSIS auto-updater exit timing so updates install cleanly without exiting prematurely.
+- Replaced external `curl`/`powershell` downloads in Live Translate with native Rust `reqwest` streaming and `zip` extraction (smooth 0–100% progress, zero console flashes).
+
+## [0.2.4] - 2026-11-21
+
+### What's New
+- Added the modular **Engines** hub in Settings with optional downloadable **Live Translate** speech-to-subtitle engine, version badge, update button, and custom shortcut recorder.
+- Replaced static Bell and Gear PNGs with theme-adaptive SVG icons that match all 7 themes.
+- Merged **Appearance** themes into **Island Style**, added Island size (`75%–115%`) and Outer glow (`0%–100% / Off`) sliders, and added a **Minimize** button to Settings.
+
+### Bug Fixes
+- Fixed left/right pill clipping at `115%` scale by widening the island canvas to `880px`.
+- Disabled hover-to-open at the top screen edge so the island opens only on top handle click or global shortcut.
+- Fixed startup default-theme flash by applying saved theme synchronously in `index.html`.
+- Fixed Stats tab null-dereference crash (`gpu_percent`, `net_up_kbps`, `net_down_kbps`) and Settings close button (`core:window:allow-hide`).
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
