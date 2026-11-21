@@ -10,6 +10,7 @@ pub mod settings;
 pub mod stats;
 pub mod taskbar;
 pub mod taskbar_content;
+pub mod translator;
 pub mod tray;
 pub mod updater;
 pub mod vibrancy;
@@ -116,6 +117,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
     // Taskbar hiding and watchdog are disabled; Nexora runs in floating companion mode.
     crate::diagnostics::log("setup", "floating companion mode (taskbar untouched)");
+    translator::position_subtitle_window(app.handle());
     tray::setup(app.handle())?;
     crate::diagnostics::log("setup", "tray setup ok");
     Ok(())
@@ -180,6 +182,12 @@ pub fn run() {
             ipc::clear_notifications,
             ipc::dismiss_notification,
             diagnostics::log_visibility_transition,
+            translator::get_translate_status,
+            translator::download_translate_engine,
+            translator::remove_translate_engine,
+            translator::start_live_translate,
+            translator::stop_live_translate,
+            translator::test_subtitle_overlay,
         ])
         .build(tauri::generate_context!())
         .expect("error while running Nexora Tauri application")
