@@ -64,7 +64,7 @@ pub struct DownloadProgressPayload {
 }
 
 /// Builds a `Command` that never flashes a console window on Windows.
-fn hidden_command(program: &str) -> std::process::Command {
+fn hidden_command<S: AsRef<std::ffi::OsStr>>(program: S) -> std::process::Command {
     let mut cmd = hidden_command(program);
     #[cfg(target_os = "windows")]
     {
