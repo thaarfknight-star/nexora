@@ -4,8 +4,6 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import emblem from "./assets/emblem.svg";
 import wordmark from "./assets/wordmark.png";
-import gear from "./assets/gear.png";
-import bell from "./assets/bell.png";
 import {
   THEMES,
   themeById,
@@ -381,6 +379,88 @@ function SvgRefresh({ size = 14 }: { size?: number }) {
   );
 }
 
+function SvgBell({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+    </svg>
+  );
+}
+
+function SvgGear({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
+
+function SvgSubtitle({ size = 15 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="2.5" y="4.5" width="19" height="15" rx="3" />
+      <path d="M6.5 13h4" />
+      <path d="M13 13h4.5" />
+      <path d="M6.5 16h7" />
+    </svg>
+  );
+}
+
+interface TranslateEngineStatus {
+  installed: boolean;
+  downloading: boolean;
+  running: boolean;
+  model_size_mb: number;
+  source_lang: string;
+  target_lang: string;
+  model_path: string;
+  last_error: string | null;
+}
+
+interface SubtitlePayload {
+  original: string;
+  translated: string;
+  target_lang: string;
+  active: boolean;
+}
+
+interface DownloadProgressPayload {
+  percent: number;
+  stage: string;
+}
+
 const RgbaIcon = memo(function RgbaIcon({
   rgbaBase64,
   size,
@@ -435,11 +515,11 @@ function IslandApp() {
     mode: "compact",
     title: "Nexora Island",
     // Backend constants (island.rs) until get_island_state answers.
-    width: 760,
+    width: 880,
     height: 440,
     content_x: 40,
     content_y: 40,
-    content_width: 680,
+    content_width: 800,
     content_height: 360,
     compact_height: 64,
     handle_width: 120,
@@ -602,6 +682,30 @@ function IslandApp() {
   };
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [liveSubActive, setLiveSubActive] = useState(false);
+
+  const toggleLiveSubtitles = () => {
+    if (liveSubActive) {
+      invoke<TranslateEngineStatus>("stop_live_translate")
+        .then((st) => setLiveSubActive(st.running))
+        .catch(() => setLiveSubActive(false));
+    } else {
+      invoke<TranslateEngineStatus>("get_translate_status")
+        .then((st) => {
+          if (!st.installed) {
+            openSettings();
+            return;
+          }
+          invoke<TranslateEngineStatus>("start_live_translate", {
+            sourceLang: st.source_lang || "auto",
+            targetLang: st.target_lang || "fa",
+          })
+            .then((next) => setLiveSubActive(next.running))
+            .catch(() => {});
+        })
+        .catch(() => openSettings());
+    }
+  };
   const [seenIds, setSeenIds] = useState<string[]>([]);
   // Compact bar's taskbar zone: open windows + pinned apps.
   const [taskbarWindows, setTaskbarWindows] = useState<TaskbarWindow[]>([]);
@@ -792,14 +896,10 @@ function IslandApp() {
     // auto-close timer. The watcher also fires once at startup.
     let unlistenHotZone: (() => void) | undefined;
     listen<{ in_hot_zone: boolean }>("island-hot-zone", (event) => {
-      if (event.payload.in_hot_zone) {
+      // Hovering the top edge no longer auto-opens the island;
+      // users open it explicitly via clicking the top handle or hotkey.
+      if (event.payload.in_hot_zone && visibleRef.current !== "hidden") {
         clearAutoCloseTimer();
-        showIsland(
-          nextVisible(visibleRef.current, "hot-zone-enter", machineGuards()),
-          "hot-zone-enter",
-        );
-      } else if (visibleRef.current === "compact") {
-        armAutoClose();
       }
     })
       .then((stop) => {
@@ -1147,11 +1247,11 @@ function IslandApp() {
           transitionDuration: `${stageMs}ms`,
           transitionTimingFunction: stageEasing,
           // Geometry comes from the backend (island.rs), one source of truth.
-          left: state.content_x,
+          left: Math.max(0, Math.round((state.width - Math.min(680, state.content_width)) / 2)),
           // Hidden: the handle sits exactly at y=0 (top edge) and
           // slides down to content_y when the island opens (item 1).
           top: visible === "hidden" ? 0 : state.content_y,
-          width: state.content_width,
+          width: Math.min(680, state.content_width),
           height:
             visible === "hidden"
               ? HANDLE_HIT_HEIGHT
@@ -1394,13 +1494,22 @@ function IslandApp() {
           </button>
           <button
             type="button"
-            className="bell-btn"
+            className={`theme-icon-btn${liveSubActive ? " active" : ""}`}
+            onClick={toggleLiveSubtitles}
+            title={t(language, "liveSubtitlesTooltip")}
+            aria-label={t(language, "liveSubtitlesTooltip")}
+          >
+            <SvgSubtitle size={15} />
+          </button>
+          <button
+            type="button"
+            className="bell-btn theme-icon-btn"
             onClick={openNotificationsTab}
             title={t(language, "notifications")}
             aria-label={t(language, "notifications")}
             aria-expanded={visible === "expanded" && tab === "notifications"}
           >
-            <img src={bell} alt="" width={28} height={28} />
+            <SvgBell size={15} />
             {unreadCount > 0 && (
               <span className="bell-badge">
                 {unreadCount > 9 ? "9+" : unreadCount}
@@ -1409,12 +1518,12 @@ function IslandApp() {
           </button>
           <button
             type="button"
-            className="gear-btn"
+            className="gear-btn theme-icon-btn"
             onClick={openSettings}
             title={t(language, "openSettings")}
             aria-label={t(language, "openSettings")}
           >
-            <img src={gear} alt="" width={28} height={28} />
+            <SvgGear size={15} />
           </button>
           {visible === "expanded" && (
             <button
@@ -2085,6 +2194,75 @@ function SettingsView() {
   // must stay OUTSIDE the drag region, or the drag eats its clicks.
   const [islandScalePct, setIslandScalePct] = useState<number>(() => readIslandScale());
   const [islandGlowPct, setIslandGlowPct] = useState<number>(() => readIslandGlow());
+  const [translateStatus, setTranslateStatus] = useState<TranslateEngineStatus | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<DownloadProgressPayload | null>(null);
+  const [srcLang, setSrcLang] = useState("auto");
+  const [tgtLang, setTgtLang] = useState("fa");
+  const [testSubText, setTestSubText] = useState("Welcome to Nexora live subtitles!");
+
+  useEffect(() => {
+    invoke<TranslateEngineStatus>("get_translate_status")
+      .then((st) => {
+        setTranslateStatus(st);
+        if (st.source_lang) setSrcLang(st.source_lang);
+        if (st.target_lang) setTgtLang(st.target_lang);
+      })
+      .catch(() => {});
+    let unlisten: (() => void) | undefined;
+    listen<DownloadProgressPayload>("translate-download-progress", (ev) => {
+      setDownloadProgress(ev.payload);
+    })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  const handleDownloadEngine = () => {
+    setDownloadProgress({ percent: 5, stage: "Starting download..." });
+    invoke<TranslateEngineStatus>("download_translate_engine")
+      .then((st) => {
+        setTranslateStatus(st);
+        setDownloadProgress(null);
+      })
+      .catch((err) => {
+        setDownloadProgress(null);
+        setTranslateStatus((prev) =>
+          prev ? { ...prev, downloading: false, last_error: String(err) } : prev,
+        );
+      });
+  };
+
+  const handleRemoveEngine = () => {
+    invoke<TranslateEngineStatus>("remove_translate_engine")
+      .then(setTranslateStatus)
+      .catch(() => {});
+  };
+
+  const handleToggleTranslate = () => {
+    if (translateStatus?.running) {
+      invoke<TranslateEngineStatus>("stop_live_translate")
+        .then(setTranslateStatus)
+        .catch(() => {});
+    } else {
+      invoke<TranslateEngineStatus>("start_live_translate", {
+        sourceLang: srcLang,
+        targetLang: tgtLang,
+      })
+        .then(setTranslateStatus)
+        .catch(() => {});
+    }
+  };
+
+  const handleTestSubtitle = () => {
+    invoke<SubtitlePayload>("test_subtitle_overlay", {
+      text: testSubText,
+      targetLang: tgtLang,
+    }).catch(() => {});
+  };
 
   const updateIslandScale = (pct: number) => {
     const clamped = Math.min(115, Math.max(75, Math.round(pct)));
@@ -2108,6 +2286,47 @@ function SettingsView() {
     applyVisualCssVars(islandScalePct, clamped);
   };
 
+  const [engineHotkey, setEngineHotkey] = useState<string>(() => {
+    try {
+      return window.localStorage.getItem("nexora-engine-translate-hotkey") || "Ctrl+Shift+T";
+    } catch {
+      return "Ctrl+Shift+T";
+    }
+  });
+  const [capturingEngineHotkey, setCapturingEngineHotkey] = useState(false);
+
+  useEffect(() => {
+    if (!capturingEngineHotkey) return;
+    const onKey = (ev: KeyboardEvent) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (ev.key === "Escape") {
+        setCapturingEngineHotkey(false);
+        return;
+      }
+      if (["Control", "Shift", "Alt", "Meta"].includes(ev.key)) return;
+      const mods: string[] = [];
+      if (ev.ctrlKey) mods.push("Ctrl");
+      if (ev.altKey) mods.push("Alt");
+      if (ev.shiftKey) mods.push("Shift");
+      const keyName = ev.key.length === 1 ? ev.key.toUpperCase() : ev.key;
+      const combo = mods.length > 0 ? `${mods.join("+")}+${keyName}` : keyName;
+      setEngineHotkey(combo);
+      try {
+        window.localStorage.setItem("nexora-engine-translate-hotkey", combo);
+      } catch {
+        // ignore
+      }
+      setCapturingEngineHotkey(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [capturingEngineHotkey]);
+
+  const minimizeSettingsWindow = () => {
+    getCurrentWindow().minimize().catch(() => undefined);
+  };
+
   const closeSettingsWindow = () => {
     const win = getCurrentWindow();
     win.hide().catch(() => win.close().catch(() => undefined));
@@ -2118,10 +2337,10 @@ function SettingsView() {
   // EAgent5).
   type SettingsSection =
     | "language"
-    | "appearance"
     | "islandStyle"
     | "clock"
     | "performance"
+    | "liveTranslate"
     | "updates";
   const [section, setSection] = useState<SettingsSection>("language");
   // UI language, derived from the settings object (backend `language`
@@ -2374,10 +2593,10 @@ function SettingsView() {
 
   const sections: { id: SettingsSection; label: string }[] = [
     { id: "language", label: t(language, "sectionLanguage") },
-    { id: "appearance", label: t(language, "sectionAppearance") },
     { id: "islandStyle", label: t(language, "sectionIslandStyle") },
     { id: "clock", label: t(language, "sectionClock") },
     { id: "performance", label: t(language, "sectionPerformance") },
+    { id: "liveTranslate", label: t(language, "sectionEngines") },
     { id: "updates", label: t(language, "sectionUpdates") },
   ];
 
@@ -2387,15 +2606,26 @@ function SettingsView() {
         <div className="settings-titlebar-drag" data-tauri-drag-region>
           <span>◈ Nexora Settings</span>
         </div>
-        <button
-          type="button"
-          className="settings-close-btn"
-          onClick={closeSettingsWindow}
-          title={t(language, "closeWindow")}
-          aria-label={t(language, "closeWindow")}
-        >
-          ✕
-        </button>
+        <div className="settings-window-controls">
+          <button
+            type="button"
+            className="settings-min-btn"
+            onClick={minimizeSettingsWindow}
+            title={t(language, "minimizeWindow")}
+            aria-label={t(language, "minimizeWindow")}
+          >
+            ─
+          </button>
+          <button
+            type="button"
+            className="settings-close-btn"
+            onClick={closeSettingsWindow}
+            title={t(language, "closeWindow")}
+            aria-label={t(language, "closeWindow")}
+          >
+            ✕
+          </button>
+        </div>
       </div>
       <div className="settings-body">
       <aside className="settings-sidebar">
@@ -2458,8 +2688,9 @@ function SettingsView() {
       </div>
         </>
       )}
-      {section === "appearance" && (
+      {section === "islandStyle" && (
         <>
+
       <h2 className="settings-section-title">
         {t(language, "sectionAppearance")}
       </h2>
@@ -2502,11 +2733,9 @@ function SettingsView() {
           </button>
         ))}
       </div>
-        </>
-      )}
 
-      {section === "islandStyle" && (
-        <>
+      <div className="island-style-divider" />
+
       <h2 className="settings-section-title">
         {t(language, "sectionIslandStyle")}
       </h2>
@@ -2847,6 +3076,160 @@ function SettingsView() {
       </div>
         </>
       )}
+      {section === "liveTranslate" && (
+        <>
+      <h2 className="settings-section-title">
+        {t(language, "sectionEngines")}
+      </h2>
+      <p className="settings-section-desc">
+        {t(language, "enginesDesc")}
+      </p>
+      <div className="engine-card">
+        <div className="engine-card-header">
+          <div>
+            <div className="engine-card-title">{t(language, "sectionLiveTranslate")}</div>
+            <div className="settings-row-desc">{t(language, "liveTranslateDesc")}</div>
+          </div>
+          <span className="engine-version-badge">v1.0.0</span>
+        </div>
+      <div className="settings-row">
+        <span className="settings-row-text">
+          <span>{t(language, "engineStatusLabel")}</span>
+          <span className="settings-row-desc">
+            {translateStatus?.installed
+              ? `${t(language, "engineInstalled")} (${translateStatus.model_size_mb} MB)`
+              : t(language, "engineNotInstalled")}
+          </span>
+        </span>
+        <div className="translate-btn-group">
+          {!translateStatus?.installed ? (
+            <button
+              type="button"
+              className="mini-btn primary-btn"
+              onClick={handleDownloadEngine}
+              disabled={translateStatus?.downloading || downloadProgress !== null}
+            >
+              {downloadProgress
+                ? `${t(language, "downloadingEngineBtn")} ${downloadProgress.percent}%`
+                : t(language, "downloadEngineBtn")}
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className={`mini-btn${translateStatus.running ? " danger-btn" : " primary-btn"}`}
+                onClick={handleToggleTranslate}
+              >
+                {translateStatus.running
+                  ? t(language, "stopTranslateBtn")
+                  : t(language, "startTranslateBtn")}
+              </button>
+              <button
+                type="button"
+                className="mini-btn"
+                onClick={handleDownloadEngine}
+                disabled={translateStatus?.downloading || downloadProgress !== null}
+              >
+                {t(language, "updateEngineBtn")}
+              </button>
+              <button
+                type="button"
+                className="mini-btn"
+                onClick={handleRemoveEngine}
+              >
+                {t(language, "removeEngineBtn")}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      {downloadProgress && (
+        <div className="translate-progress-box">
+          <div className="translate-progress-label">
+            <span>{downloadProgress.stage}</span>
+            <span>{downloadProgress.percent}%</span>
+          </div>
+          <div className="translate-progress-track">
+            <div
+              className="translate-progress-fill"
+              style={{ width: `${downloadProgress.percent}%` }}
+            />
+          </div>
+        </div>
+      )}
+      {translateStatus?.last_error && (
+        <div className="translate-error">{translateStatus.last_error}</div>
+      )}
+      <div className="settings-row">
+        <span className="settings-row-text">
+          <span>{t(language, "sourceLangLabel")}</span>
+        </span>
+        <select
+          className="translate-select"
+          value={srcLang}
+          onChange={(e) => setSrcLang(e.target.value)}
+        >
+          <option value="auto">Auto Detect</option>
+          <option value="en">English</option>
+          <option value="ja">Japanese</option>
+          <option value="ru">Russian</option>
+          <option value="de">German</option>
+          <option value="fr">French</option>
+        </select>
+      </div>
+      <div className="settings-row">
+        <span className="settings-row-text">
+          <span>{t(language, "targetLangLabel")}</span>
+        </span>
+        <select
+          className="translate-select"
+          value={tgtLang}
+          onChange={(e) => setTgtLang(e.target.value)}
+        >
+          <option value="fa">فارسی (Persian)</option>
+          <option value="en">English</option>
+          <option value="ar">العربية (Arabic)</option>
+          <option value="tr">Türkçe (Turkish)</option>
+        </select>
+      </div>
+      <div className="settings-row">
+        <span className="settings-row-text">
+          <span>{t(language, "testSubtitleLabel")}</span>
+        </span>
+        <div className="translate-btn-group">
+          <input
+            type="text"
+            className="translate-input"
+            value={testSubText}
+            onChange={(e) => setTestSubText(e.target.value)}
+          />
+          <button
+            type="button"
+            className="mini-btn"
+            onClick={handleTestSubtitle}
+          >
+            {t(language, "testSubtitleBtn")}
+          </button>
+        </div>
+      </div>
+      <div className="settings-row">
+        <span className="settings-row-text">
+          <span>{t(language, "engineShortcutLabel")}</span>
+        </span>
+        <div className="translate-btn-group">
+          <span className="settings-slider-value">{engineHotkey}</span>
+          <button
+            type="button"
+            className="mini-btn"
+            onClick={() => setCapturingEngineHotkey((v) => !v)}
+          >
+            {capturingEngineHotkey ? "..." : t(language, "changeHotkey")}
+          </button>
+        </div>
+      </div>
+      </div>
+        </>
+      )}
       {section === "updates" && (
         <>
       <h2 className="settings-section-title">
@@ -2878,6 +3261,47 @@ function SettingsView() {
   );
 }
 
+function SubtitleOverlay() {
+  const [payload, setPayload] = useState<SubtitlePayload>({
+    original: "",
+    translated: "",
+    target_lang: "fa",
+    active: false,
+  });
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<SubtitlePayload>("subtitle-update", (ev) => {
+      setPayload(ev.payload);
+    })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  if (!payload.active || (!payload.translated && !payload.original)) {
+    return null;
+  }
+
+  const isRtl = payload.target_lang === "fa" || payload.target_lang === "ar";
+  return (
+    <div className="subtitle-overlay-root" dir={isRtl ? "rtl" : "ltr"}>
+      <div className="subtitle-box">
+        {payload.original && (
+          <div className="subtitle-original" dir="auto">
+            {payload.original}
+          </div>
+        )}
+        <div className="subtitle-translated">{payload.translated}</div>
+      </div>
+    </div>
+  );
+}
+
 export function App() {
   const [windowLabel, setWindowLabel] = useState<string | null>(null);
 
@@ -2896,7 +3320,13 @@ export function App() {
   if (windowLabel === null) {
     return null;
   }
-  return windowLabel === "settings" ? <SettingsView /> : <IslandApp />;
+  if (windowLabel === "settings") {
+    return <SettingsView />;
+  }
+  if (windowLabel === "subtitle") {
+    return <SubtitleOverlay />;
+  }
+  return <IslandApp />;
 }
 
 export default App;

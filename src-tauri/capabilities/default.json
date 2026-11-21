@@ -4,7 +4,8 @@
   "description": "Default capability for Nexora",
   "windows": [
     "main",
-    "settings"
+    "settings",
+    "subtitle"
   ],
   "permissions": [
     "core:default",
