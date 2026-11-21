@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -352,7 +352,7 @@ function SvgRefresh({ size = 14 }: { size?: number }) {
   );
 }
 
-function RgbaIcon({
+const RgbaIcon = memo(function RgbaIcon({
   rgbaBase64,
   size,
   title,
@@ -398,7 +398,7 @@ function RgbaIcon({
       aria-label={title}
     />
   );
-}
+});
 
 function IslandApp() {
   const [state, setState] = useState<IslandState>({
@@ -543,15 +543,15 @@ function IslandApp() {
     }
     autoCloseTimer.current = window.setTimeout(() => {
       const current = visibleRef.current;
+      if (current !== "expanded") {
+        return;
+      }
       const next = nextVisible(
         current,
         "auto-close-timeout",
         machineGuards(),
       );
       showIsland(next, "auto-close-timeout");
-      if (current === "expanded" && next === "compact") {
-        armAutoClose();
-      }
     }, AUTO_CLOSE_DELAY_MS);
   };
 
@@ -815,14 +815,6 @@ function IslandApp() {
       launchHintTimer.current = window.setTimeout(() => {
         launchHintRef.current = false;
         setLaunchHint(false);
-        showIsland(
-          nextVisible(
-            visibleRef.current,
-            "launch-hint-timeout",
-            machineGuards(),
-          ),
-          "launch-hint-timeout",
-        );
       }, LAUNCH_HINT_MS);
     }
     return () => {
@@ -849,18 +841,26 @@ function IslandApp() {
       return;
     }
     refreshAll();
-    const id = window.setInterval(
-      () => {
-        refreshStats();
-        refreshMedia();
+    const pollMs = clampPollSecs(displaySettings.pollIntervalSecs) * 1000;
+    const id = window.setInterval(() => {
+      if (document.hidden) return;
+      refreshStats();
+      refreshMedia();
+      if (visibleRef.current === "expanded") {
         refreshNotifications();
-        refreshTaskbar();
-      },
-      clampPollSecs(displaySettings.pollIntervalSecs) * 1000,
-    );
-    const clockId = window.setInterval(() => setNow(new Date()), 1000);
+      }
+    }, pollMs);
+    const appsId = window.setInterval(() => {
+      if (document.hidden) return;
+      refreshTaskbar();
+    }, Math.max(4000, pollMs));
+    const clockMs = displaySettings.showSeconds ? 1000 : 15000;
+    const clockId = window.setInterval(() => {
+      if (!document.hidden) setNow(new Date());
+    }, clockMs);
     return () => {
       window.clearInterval(id);
+      window.clearInterval(appsId);
       window.clearInterval(clockId);
     };
     // Refresh helpers only use stable setters and invoke.
@@ -2047,7 +2047,6 @@ function SettingsView() {
   type SettingsSection =
     | "language"
     | "appearance"
-    | "taskbar"
     | "islandStyle"
     | "clock"
     | "performance"
@@ -2216,9 +2215,7 @@ function SettingsView() {
   // The Restore-taskbar row (Taskbar section): bring the Windows
   // taskbar back right now. The result is the taskbar itself coming
   // back, so there is nothing to show here.
-  const restoreTaskbarNow = () => {
-    invoke<boolean>("restore_taskbar_now").catch(() => {});
-  };
+
 
   // Change the island hotkey: the backend validates the shortcut,
   // re-registers it and persists it only on success, so a false
@@ -2306,7 +2303,6 @@ function SettingsView() {
   const sections: { id: SettingsSection; label: string }[] = [
     { id: "language", label: t(language, "sectionLanguage") },
     { id: "appearance", label: t(language, "sectionAppearance") },
-    { id: "taskbar", label: t(language, "sectionTaskbar") },
     { id: "islandStyle", label: t(language, "sectionIslandStyle") },
     { id: "clock", label: t(language, "sectionClock") },
     { id: "performance", label: t(language, "sectionPerformance") },
@@ -2436,15 +2432,15 @@ function SettingsView() {
       </div>
         </>
       )}
-      {section === "taskbar" && (
+
+      {section === "islandStyle" && (
         <>
       <h2 className="settings-section-title">
-        {t(language, "sectionTaskbar")}
+        {t(language, "sectionIslandStyle")}
       </h2>
       <p className="settings-section-desc">
-        {t(language, "taskbarDesc")}
+        {t(language, "islandStyleDesc")}
       </p>
-
       <div className="settings-row">
         <span className="settings-row-text">
           <span>{t(language, "alwaysOnTop")}</span>
@@ -2460,31 +2456,6 @@ function SettingsView() {
           {settings ? onOff(settings.always_on_top, language) : "—"}
         </button>
       </div>
-      <div className="settings-row">
-        <span className="settings-row-text">
-          <span>{t(language, "restoreTaskbar")}</span>
-          <span className="settings-row-desc">
-            {t(language, "restoreTaskbarDesc")}
-          </span>
-        </span>
-        <button
-          type="button"
-          className="mini-btn"
-          onClick={restoreTaskbarNow}
-        >
-          {t(language, "restoreTaskbarBtn")}
-        </button>
-      </div>
-        </>
-      )}
-      {section === "islandStyle" && (
-        <>
-      <h2 className="settings-section-title">
-        {t(language, "sectionIslandStyle")}
-      </h2>
-      <p className="settings-section-desc">
-        {t(language, "islandStyleDesc")}
-      </p>
       <div className="settings-slider-row">
         <div className="settings-row-text">
           <span>{t(language, "islandBlur")}</span>
