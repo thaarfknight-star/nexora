@@ -690,6 +690,28 @@ function IslandApp() {
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [liveSubActive, setLiveSubActive] = useState(false);
+  const [translateInstalled, setTranslateInstalled] = useState(false);
+
+  useEffect(() => {
+    invoke<TranslateEngineStatus>("get_translate_status")
+      .then((st) => {
+        setTranslateInstalled(st.installed);
+        setLiveSubActive(st.running);
+      })
+      .catch(() => {});
+    let unlisten: (() => void) | undefined;
+    listen<TranslateEngineStatus>("translate-status-changed", (ev) => {
+      setTranslateInstalled(ev.payload.installed);
+      setLiveSubActive(ev.payload.running);
+    })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   const toggleLiveSubtitles = () => {
     if (liveSubActive) {
@@ -1499,15 +1521,17 @@ function IslandApp() {
               </div>
             )}
           </button>
-          <button
-            type="button"
-            className={`theme-icon-btn${liveSubActive ? " active" : ""}`}
-            onClick={toggleLiveSubtitles}
-            title={t(language, "liveSubtitlesTooltip")}
-            aria-label={t(language, "liveSubtitlesTooltip")}
-          >
-            <SvgSubtitle size={15} />
-          </button>
+          {translateInstalled && (
+            <button
+              type="button"
+              className={`theme-icon-btn${liveSubActive ? " active" : ""}`}
+              onClick={toggleLiveSubtitles}
+              title={t(language, "liveSubtitlesTooltip")}
+              aria-label={t(language, "liveSubtitlesTooltip")}
+            >
+              <SvgSubtitle size={15} />
+            </button>
+          )}
           <button
             type="button"
             className="bell-btn theme-icon-btn"

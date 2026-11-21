@@ -16,7 +16,7 @@ use tauri::{AppHandle, Emitter, Manager};
 const MODEL_FILENAME: &str = "ggml-tiny.bin";
 const MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin";
 const WHISPER_ZIP_URL: &str =
-    "https://github.com/ggml-org/whisper.cpp/releases/latest/download/whisper-bin-x64.zip";
+    "https://github.com/ggml-org/whisper.cpp/releases/download/b5907/whisper-bin-x64.zip";
 
 const SUBTITLE_WIDTH: f64 = 820.0;
 const SUBTITLE_HEIGHT: f64 = 128.0;
@@ -61,6 +61,21 @@ pub struct SubtitlePayload {
 pub struct DownloadProgressPayload {
     pub percent: u8,
     pub stage: String,
+}
+
+/// Builds a `Command` that never flashes a console window on Windows.
+fn hidden_command(program: &str) -> std::process::Command {
+    let mut cmd = hidden_command(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    cmd
+}
+
+fn emit_status_changed(app: &AppHandle, status: &TranslateEngineStatus) {
+    let _ = app.emit("translate-status-changed", status);
 }
 
 fn engine_dir(app: &AppHandle) -> PathBuf {
@@ -221,7 +236,7 @@ fn translate_text(text: &str, source_lang: &str, target_lang: &str) -> String {
         "https://translate.googleapis.com/translate_a/single?client=gtx&sl={sl}&tl={tl}&dt=t&q={}",
         url_encode_query(clean)
     );
-    let output = std::process::Command::new("curl")
+    let output = hidden_command("curl")
         .args(["-sS", "--max-time", "6", &url])
         .output();
     if let Ok(out) = output {
@@ -263,7 +278,7 @@ pub async fn download_translate_engine(app: AppHandle) -> Result<TranslateEngine
         );
 
         let zip_path = dir.join("whisper-bin-x64.zip");
-        let curl_bin = std::process::Command::new("curl")
+        let curl_bin = hidden_command("curl")
             .args([
                 "-L",
                 "-f",
@@ -294,7 +309,7 @@ pub async fn download_translate_engine(app: AppHandle) -> Result<TranslateEngine
                 zip_path.to_string_lossy(),
                 dir.to_string_lossy()
             );
-            let extract = std::process::Command::new("powershell")
+            let extract = hidden_command("powershell")
                 .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps_cmd])
                 .status()
                 .map_err(|e| format!("Failed to extract archive: {e}"))?;
@@ -313,7 +328,7 @@ pub async fn download_translate_engine(app: AppHandle) -> Result<TranslateEngine
         );
 
         let model_file = model_path(&dir);
-        let curl_model = std::process::Command::new("curl")
+        let curl_model = hidden_command("curl")
             .args([
                 "-L",
                 "-f",
@@ -347,7 +362,9 @@ pub async fn download_translate_engine(app: AppHandle) -> Result<TranslateEngine
         prefs.last_error = result.as_ref().err().cloned();
     }
     result?;
-    Ok(build_status(&app))
+    let st = build_status(&app);
+    emit_status_changed(&app, &st);
+    Ok(st)
 }
 
 #[tauri::command]
@@ -364,7 +381,9 @@ pub fn remove_translate_engine(app: AppHandle) -> Result<TranslateEngineStatus, 
         let mut prefs = ENGINE_STATE.lock().unwrap_or_else(|e| e.into_inner());
         prefs.last_error = None;
     }
-    Ok(build_status(&app))
+    let st = build_status(&app);
+    emit_status_changed(&app, &st);
+    Ok(st)
 }
 
 #[tauri::command]
@@ -434,7 +453,7 @@ pub fn start_live_translate(
                             args.push("-l".to_string());
                             args.push(source_lang.clone());
                         }
-                        if let Ok(out) = std::process::Command::new(&bin).args(&args).output() {
+                        if let Ok(out) = hidden_command(&bin).args(&args).output() {
                             if out.status.success() {
                                 let text = String::from_utf8_lossy(&out.stdout)
                                     .lines()
@@ -489,7 +508,7 @@ fn record_windows_audio_chunk(wav_path: &Path) -> bool {
         "[WinMM]::mciSendString('close nxrec',$null,0,[IntPtr]::Zero)|Out-Null",
     ];
     let script = lines.join("; ");
-    std::process::Command::new("powershell")
+    hidden_command("powershell")
         .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
         .status()
         .map(|s| s.success() && wav_path.exists())
@@ -511,7 +530,9 @@ pub fn stop_live_translate(app: AppHandle) -> TranslateEngineStatus {
     if let Some(win) = app.get_webview_window("subtitle") {
         let _ = win.hide();
     }
-    build_status(&app)
+    let st = build_status(&app);
+    emit_status_changed(&app, &st);
+    st
 }
 
 #[tauri::command]
@@ -538,6 +559,24 @@ pub async fn test_subtitle_overlay(
         active: true,
     };
     emit_subtitle(&app, &payload);
+    let app_hide = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        if !RUNNING.load(Ordering::SeqCst) {
+            emit_subtitle(
+                &app_hide,
+                &SubtitlePayload {
+                    original: String::new(),
+                    translated: String::new(),
+                    target_lang: "fa".to_string(),
+                    active: false,
+                },
+            );
+            if let Some(win) = app_hide.get_webview_window("subtitle") {
+                let _ = win.hide();
+            }
+        }
+    });
     Ok(payload)
 }
 
