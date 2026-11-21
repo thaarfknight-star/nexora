@@ -36,12 +36,15 @@ const SUBTITLE_BOTTOM_MARGIN: f64 = 72.0;
 #[cfg(target_os = "windows")]
 const CAPTURE_SAMPLE_RATE: usize = 16_000;
 #[cfg(target_os = "windows")]
-const MIN_SPEECH_MS: u64 = 850;
+const MIN_SPEECH_MS: u64 = 550;
 #[cfg(target_os = "windows")]
-const PAUSE_FLUSH_MS: u64 = 240;
+const PAUSE_FLUSH_MS: u64 = 180;
 #[cfg(target_os = "windows")]
-const MAX_CHUNK_MS: u64 = 2_000;
-const SPEECH_RMS_THRESHOLD: f32 = 135.0;
+const MAX_CHUNK_MS: u64 = 1_150;
+/// 160 ms overlap tail at 16 kHz 16-bit mono so words at chunk boundaries never clip.
+#[cfg(target_os = "windows")]
+const OVERLAP_TAIL_BYTES: usize = (CAPTURE_SAMPLE_RATE * 2 * 160) / 1000;
+const SPEECH_RMS_THRESHOLD: f32 = 125.0;
 
 static DOWNLOADING: AtomicBool = AtomicBool::new(false);
 static RUNNING: AtomicBool = AtomicBool::new(false);
@@ -646,6 +649,8 @@ impl ResidentWhisperServer {
             "1".to_string(),
             "-bs".to_string(),
             "1".to_string(),
+            "-ac".to_string(),
+            "512".to_string(),
             "-nt".to_string(),
             "-nf".to_string(),
             "-sns".to_string(),
@@ -734,6 +739,8 @@ fn transcribe_cli_fallback(
         "1".to_string(),
         "-bs".to_string(),
         "1".to_string(),
+        "-ac".to_string(),
+        "512".to_string(),
         "-nt".to_string(),
         "-nf".to_string(),
         "-sns".to_string(),
@@ -818,18 +825,58 @@ fn run_wasapi_loopback_worker(
         .start_stream()
         .map_err(|e| format!("Failed to start WASAPI loopback stream: {e}"))?;
 
-    // Pipelined consumer thread: runs warm resident whisper-server.exe + pooled
-    // HTTP translation concurrently while this thread keeps capturing audio.
-    let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(2);
-    let app_consumer = app.clone();
+    // 3-stage decoupled streaming pipeline:
+    // Thread 1 (this): WASAPI loopback capture with 160 ms overlap tail & rapid 550-1150 ms flush
+    // Thread 2: Warm resident whisper-server.exe (-ac 512, ~60-90 ms inference)
+    // Thread 3: Dedicated pooled keep-alive translation worker with phrase cache
+    let (audio_tx, audio_rx) = mpsc::sync_channel::<Vec<u8>>(2);
+    let (text_tx, text_rx) = mpsc::sync_channel::<String>(2);
+
+    let app_translator = app.clone();
+    let src_for_tr = source_lang.to_string();
+    let tgt_for_tr = target_lang.to_string();
+    let translator_handle = std::thread::spawn(move || {
+        let mut cache: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut last_emitted = String::new();
+        while let Ok(text) = text_rx.recv() {
+            if !RUNNING.load(Ordering::SeqCst) {
+                break;
+            }
+            if text.eq_ignore_ascii_case(&last_emitted) {
+                continue;
+            }
+            let translated = if let Some(cached) = cache.get(&text) {
+                cached.clone()
+            } else {
+                let res = translate_text(&text, &src_for_tr, &tgt_for_tr);
+                if cache.len() >= 128 {
+                    cache.clear();
+                }
+                cache.insert(text.clone(), res.clone());
+                res
+            };
+            last_emitted = text.clone();
+            if RUNNING.load(Ordering::SeqCst) {
+                emit_subtitle(
+                    &app_translator,
+                    &SubtitlePayload {
+                        original: text,
+                        translated,
+                        target_lang: tgt_for_tr.clone(),
+                        active: true,
+                    },
+                );
+            }
+        }
+    });
+
     let server_bin_opt = find_whisper_server(dir);
     let cli_bin_owned = cli_bin.to_path_buf();
     let model_owned = model.to_path_buf();
     let wav_owned = wav_path.to_path_buf();
     let src_owned = source_lang.to_string();
-    let tgt_owned = target_lang.to_string();
 
-    let consumer_handle = std::thread::spawn(move || {
+    let whisper_handle = std::thread::spawn(move || {
         let threads = std::thread::available_parallelism()
             .map(|n| n.get().clamp(2, 6))
             .unwrap_or(4);
@@ -837,7 +884,7 @@ fn run_wasapi_loopback_worker(
             .as_deref()
             .and_then(|sb| ResidentWhisperServer::start(sb, &model_owned, &src_owned, threads));
 
-        while let Ok(pcm_bytes) = rx.recv() {
+        while let Ok(pcm_bytes) = audio_rx.recv() {
             if !RUNNING.load(Ordering::SeqCst) {
                 break;
             }
@@ -857,30 +904,21 @@ fn run_wasapi_loopback_worker(
 
             if let Some(text) = text_opt {
                 if !text.is_empty() && RUNNING.load(Ordering::SeqCst) {
-                    let translated = translate_text(&text, &src_owned, &tgt_owned);
-                    emit_subtitle(
-                        &app_consumer,
-                        &SubtitlePayload {
-                            original: text,
-                            translated,
-                            target_lang: tgt_owned.clone(),
-                            active: true,
-                        },
-                    );
+                    let _ = text_tx.try_send(text);
                 }
             }
         }
+        drop(text_tx);
     });
 
-    // Producer loop with VAD pause endpointing (flushes immediately on natural
-    // 240 ms pause once >= 850 ms of speech is collected, hard cap 2,000 ms).
-    let mut deque: VecDeque<u8> = VecDeque::with_capacity(CAPTURE_SAMPLE_RATE * 2 * 3);
+    // Producer loop with rapid VAD endpointing + 160 ms overlap tail for continuous flow.
+    let mut deque: VecDeque<u8> = VecDeque::with_capacity(CAPTURE_SAMPLE_RATE * 2 * 2);
     let mut speech_started: Option<Instant> = None;
     let mut last_voice_at: Option<Instant> = None;
     let mut packet_buf: VecDeque<u8> = VecDeque::with_capacity(8192);
 
     while RUNNING.load(Ordering::SeqCst) {
-        let _ = h_event.wait_for_event(80);
+        let _ = h_event.wait_for_event(40);
         let mut received_any = false;
 
         loop {
@@ -907,7 +945,6 @@ fn run_wasapi_loopback_worker(
                         last_voice_at = Some(now);
                         deque.extend(pkt_slice);
                     } else if speech_started.is_some() {
-                        // Keep short trailing silence inside an active phrase.
                         deque.extend(pkt_slice);
                     }
                 }
@@ -930,11 +967,17 @@ fn run_wasapi_loopback_worker(
 
             if pause_ready || cap_ready {
                 let pcm_bytes: Vec<u8> = deque.drain(..).collect();
-                speech_started = None;
-                last_voice_at = None;
-                if pcm_bytes.len() >= CAPTURE_SAMPLE_RATE / 2 && has_audible_speech(&pcm_bytes) {
-                    // Non-blocking send: never build up multi-second backlog if CPU is busy.
-                    let _ = tx.try_send(pcm_bytes);
+                if cap_ready && pcm_bytes.len() > OVERLAP_TAIL_BYTES {
+                    // Carry over 160 ms into the next slice so mid-sentence words never clip.
+                    let tail_start = pcm_bytes.len() - OVERLAP_TAIL_BYTES;
+                    deque.extend(&pcm_bytes[tail_start..]);
+                    speech_started = Some(now);
+                } else {
+                    speech_started = None;
+                    last_voice_at = None;
+                }
+                if pcm_bytes.len() >= CAPTURE_SAMPLE_RATE / 3 && has_audible_speech(&pcm_bytes) {
+                    let _ = audio_tx.try_send(pcm_bytes);
                 }
             }
         } else if !received_any {
@@ -942,9 +985,10 @@ fn run_wasapi_loopback_worker(
         }
     }
 
-    drop(tx);
+    drop(audio_tx);
     let _ = audio_client.stop_stream();
-    let _ = consumer_handle.join();
+    let _ = whisper_handle.join();
+    let _ = translator_handle.join();
     Ok(())
 }
 
@@ -1189,6 +1233,11 @@ pub async fn start_live_translate(
     let st = build_status(&app);
     emit_status_changed(&app, &st);
     Ok(st)
+}
+
+/// Signals the live translation worker (and resident whisper-server) to stop.
+pub fn shutdown_engine() {
+    RUNNING.store(false, Ordering::SeqCst);
 }
 
 #[tauri::command]

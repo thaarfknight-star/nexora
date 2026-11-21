@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.8] - 2026-11-21
+
+### What's New
+- **3-Stage Decoupled Real-Time Streaming Subtitles**: Separated WASAPI capture, Whisper inference (`-ac 512` for ~3× faster encoder), and Google Translate (with in-memory phrase cache) onto three independent threads so continuous speech flows with near-zero delay and no pauses.
+- **160 ms Overlap Tail & Rapid 550–1,150 ms Chunks**: Eliminates boundary word clipping and cuts waiting time before subtitles appear.
+- **Custom Native Rust Update Engine (Rewritten from Scratch)**: Streams the per-user NSIS `.exe` installer with live 0–100% progress, validates the binary header, and hands off to a hidden detached Windows apply script that waits for `nexora.exe` and Whisper to exit 100% before running `setup.exe /P`, then relaunches Nexora cleanly.
+
+### Bug Fixes
+- Permanently fixed the `Failed to kill Nexora. Please close it first then try again` NSIS abort during in-app updates.
+- Eliminated remaining subtitle pauses and boundary word drops during continuous speech.
+
 ## [0.2.7] - 2026-11-21
 
 ### What's New
