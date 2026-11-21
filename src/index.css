@@ -1919,3 +1919,162 @@ body,
 .settings-content {
   contain: layout style;
 }
+
+/* ==========================================================================
+   v3 Polish: Expanded Layout Alignment, Zero Clipping, Scalable Island,
+   Adjustable Neon Glow, Crystal-Clear iOS Liquid Glass
+   ========================================================================== */
+
+:root {
+  --island-scale: 1;
+  --island-glow: 0.45;
+}
+
+/* Smooth top-centered Island Size scaling */
+.island-stage {
+  transform: scale(var(--island-scale, 1));
+  transform-origin: top center;
+}
+
+/* Fix Expanded vertical alignment (no empty gap at top!) & prevent clipping */
+.island-pill {
+  padding: 8px 14px;
+}
+
+.island-pill.expanded {
+  flex-direction: column;
+  justify-content: flex-start !important;
+  align-items: stretch !important;
+  gap: 8px !important;
+  padding: 12px 14px !important;
+  border-radius: 22px;
+}
+
+.island-row {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.island-brand {
+  flex: none;
+  gap: 7px;
+}
+
+.island-title {
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.island-sub {
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.taskbar-zone {
+  flex: 1 1 0;
+  min-width: 44px !important;
+  gap: 4px;
+}
+
+.taskbar-app,
+.taskbar-start {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+}
+
+.taskbar-icon {
+  width: 22px;
+  height: 22px;
+}
+
+.compact-stats {
+  flex: none;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.island-clock {
+  flex: none;
+  white-space: nowrap;
+}
+
+.island-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.island-tabs {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.island-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.island-tab {
+  flex: none;
+  white-space: nowrap;
+  padding: 5px 10px;
+  font-size: 11.5px;
+}
+
+/* Tight, adjustable Neon Glass outer glow (never hits rectangular 40px window edge; 0% = completely off) */
+:root[data-theme="neon-glass"],
+[data-theme="neon-glass"] {
+  --theme-shadow:
+    0 0 0 1px rgba(167, 139, 250, 0.34),
+    0 6px 20px rgba(124, 92, 255, calc(0.45 * var(--island-glow, 0.45))),
+    0 10px 26px rgba(91, 140, 255, calc(0.28 * var(--island-glow, 0.45))),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+/* Crystal-Clear iOS 26 Liquid Glass (no cloudy white top curtain) */
+:root[data-theme="liquid-glass"],
+[data-theme="liquid-glass"] {
+  --island-bg: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.16) 0%,
+    rgba(24, 30, 46, 0.34) 45%,
+    rgba(16, 22, 36, 0.42) 100%
+  );
+  --island-border: rgba(255, 255, 255, 0.48);
+  --island-text: #ffffff;
+  --island-subtext: rgba(241, 245, 249, 0.84);
+  --island-accent: #ffffff;
+  --island-accent-text: #f8fafc;
+  --island-btn-bg: rgba(255, 255, 255, 0.16);
+  --island-btn-border: rgba(255, 255, 255, 0.42);
+  --island-blur: 28px;
+  --theme-shadow:
+    0 0 0 0.5px rgba(255, 255, 255, 0.42),
+    0 8px 22px rgba(0, 0, 0, calc(0.32 * var(--island-glow, 0.45) + 0.18)),
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.85),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.22);
+}
+
+/* Replace foggy 48% white overlay with razor-thin crystal specular top rim */
+:root[data-theme="liquid-glass"] .island-pill::before,
+[data-theme="liquid-glass"].island-pill::before {
+  inset: 0 8% auto 8%;
+  height: 1px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.85),
+    transparent
+  );
+}

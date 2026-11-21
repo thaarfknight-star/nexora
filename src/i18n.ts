@@ -120,6 +120,11 @@ const EN = {
   islandStyleDesc:
     "Blur and corner radius override the theme defaults — set them back to Default to follow the theme again.",
   islandBlur: "Island blur",
+  islandSize: "Island size",
+  islandSizeDesc: "Scale the Dynamic Island width and height.",
+  islandGlow: "Outer glow",
+  islandGlowDesc: "Adjust or turn off the ambient glow around the island.",
+  glowOff: "Off",
   cornerRadius: "Corner radius",
   overridePx: "Override: {n} px.",
   themeDefaultPx: "Theme default: {n} px.",
@@ -267,6 +272,11 @@ const FA: Record<StringKey, string> = {
   islandStyleDesc:
     "بلور و گردی گوشه روی پیش‌فرض تم می‌نشینند — برای اینکه دوباره از تم پیروی کنند، آن‌ها را به «پیش‌فرض» برگردان.",
   islandBlur: "بلور جزیره",
+  islandSize: "اندازه جزیره",
+  islandSizeDesc: "مقیاس اندازه داینامیک آیلند را تغییر دهید.",
+  islandGlow: "هاله نور بیرونی",
+  islandGlowDesc: "شدت هاله نور دور جزیره را تنظیم یا خاموش کنید.",
+  glowOff: "خاموش",
   cornerRadius: "گردی گوشه",
   overridePx: "جایگزین: {n} پیکسل.",
   themeDefaultPx: "پیش‌فرض تم: {n} پیکسل.",

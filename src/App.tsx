@@ -128,6 +128,35 @@ interface UpdateInfo {
 type IslandTab = "apps" | "media" | "stats" | "notifications" | "quick";
 
 const STORAGE_KEY = "nexora-theme";
+const SIZE_STORAGE_KEY = "nexora-island-size";
+const GLOW_STORAGE_KEY = "nexora-island-glow";
+
+function readIslandScale(): number {
+  try {
+    const raw = window.localStorage.getItem(SIZE_STORAGE_KEY);
+    const val = raw ? Number(raw) : 100;
+    if (Number.isFinite(val)) return Math.min(115, Math.max(75, Math.round(val)));
+  } catch {
+    // ignore
+  }
+  return 100;
+}
+
+function readIslandGlow(): number {
+  try {
+    const raw = window.localStorage.getItem(GLOW_STORAGE_KEY);
+    const val = raw ? Number(raw) : 45;
+    if (Number.isFinite(val)) return Math.min(100, Math.max(0, Math.round(val)));
+  } catch {
+    // ignore
+  }
+  return 45;
+}
+
+function applyVisualCssVars(scalePct: number, glowPct: number) {
+  document.documentElement.style.setProperty("--island-scale", String(scalePct / 100));
+  document.documentElement.style.setProperty("--island-glow", String(glowPct / 100));
+}
 
 function readSavedTheme(): string | null {
   try {
@@ -417,6 +446,23 @@ function IslandApp() {
     handle_height: 4,
   });
   const [theme, setTheme] = useState<ThemeId>("neon-glass");
+  useEffect(() => {
+    const syncVisuals = () => {
+      applyVisualCssVars(readIslandScale(), readIslandGlow());
+    };
+    syncVisuals();
+    const onStorage = (ev: StorageEvent) => {
+      if (ev.key === SIZE_STORAGE_KEY || ev.key === GLOW_STORAGE_KEY) {
+        syncVisuals();
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    const pollVisual = window.setInterval(syncVisuals, 1500);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.clearInterval(pollVisual);
+    };
+  }, []);
   const [tab, setTab] = useState<IslandTab>("media");
   // First-run onboarding (design artifact): three pages shown in the
   // expanded panel instead of the tabs, until the user finishes page
@@ -1842,7 +1888,7 @@ function IslandApp() {
                   <div
                     className="stat-chip"
                     title={
-                      stats?.gpu_percent !== undefined
+                      stats?.gpu_percent != null
                         ? tf(language, "gpuUsageValue", {
                             v: stats.gpu_percent.toFixed(1),
                           })
@@ -1851,7 +1897,7 @@ function IslandApp() {
                   >
                     <span className="stat-chip-label">GPU</span>
                     <span className="stat-chip-value">
-                      {stats?.gpu_percent !== undefined
+                      {stats?.gpu_percent != null
                         ? formatPercent(
                             stats.gpu_percent,
                             displaySettings.percentStyle,
@@ -1863,7 +1909,7 @@ function IslandApp() {
                 <div className="net-speed">
                   <span
                     title={
-                      stats?.net_up_kbps !== undefined
+                      stats?.net_up_kbps != null
                         ? tf(language, "uploadValue", {
                             v: stats.net_up_kbps.toFixed(2),
                           })
@@ -1871,7 +1917,7 @@ function IslandApp() {
                     }
                   >
                     ↑{" "}
-                    {stats?.net_up_kbps !== undefined
+                    {stats?.net_up_kbps != null
                       ? formatSpeed(
                           stats.net_up_kbps,
                           displaySettings.speedUnit,
@@ -1880,7 +1926,7 @@ function IslandApp() {
                   </span>
                   <span
                     title={
-                      stats?.net_down_kbps !== undefined
+                      stats?.net_down_kbps != null
                         ? tf(language, "downloadValue", {
                             v: stats.net_down_kbps.toFixed(2),
                           })
@@ -1888,7 +1934,7 @@ function IslandApp() {
                     }
                   >
                     ↓{" "}
-                    {stats?.net_down_kbps !== undefined
+                    {stats?.net_down_kbps != null
                       ? formatSpeed(
                           stats.net_down_kbps,
                           displaySettings.speedUnit,
@@ -2037,8 +2083,34 @@ function SettingsView() {
   // Window controls (frameless frame): the title bar is the drag
   // region and the × button closes this window. The close button
   // must stay OUTSIDE the drag region, or the drag eats its clicks.
+  const [islandScalePct, setIslandScalePct] = useState<number>(() => readIslandScale());
+  const [islandGlowPct, setIslandGlowPct] = useState<number>(() => readIslandGlow());
+
+  const updateIslandScale = (pct: number) => {
+    const clamped = Math.min(115, Math.max(75, Math.round(pct)));
+    setIslandScalePct(clamped);
+    try {
+      window.localStorage.setItem(SIZE_STORAGE_KEY, String(clamped));
+    } catch {
+      // ignore
+    }
+    applyVisualCssVars(clamped, islandGlowPct);
+  };
+
+  const updateIslandGlow = (pct: number) => {
+    const clamped = Math.min(100, Math.max(0, Math.round(pct)));
+    setIslandGlowPct(clamped);
+    try {
+      window.localStorage.setItem(GLOW_STORAGE_KEY, String(clamped));
+    } catch {
+      // ignore
+    }
+    applyVisualCssVars(islandScalePct, clamped);
+  };
+
   const closeSettingsWindow = () => {
-    getCurrentWindow().close().catch(() => undefined);
+    const win = getCurrentWindow();
+    win.hide().catch(() => win.close().catch(() => undefined));
   };
   // The sidebar section on screen. The window is 900x620 with a
   // 7-section sidebar (design artifact); the title bar above it is
@@ -2455,6 +2527,64 @@ function SettingsView() {
         >
           {settings ? onOff(settings.always_on_top, language) : "—"}
         </button>
+      </div>
+      <div className="settings-slider-row">
+        <div className="settings-row-text">
+          <span>{t(language, "islandSize")}</span>
+          <span className="settings-row-desc">
+            {t(language, "islandSizeDesc")}
+          </span>
+        </div>
+        <div className="settings-slider-line">
+          <input
+            type="range"
+            className="settings-slider"
+            min={75}
+            max={115}
+            step={5}
+            value={islandScalePct}
+            aria-label={t(language, "islandSize")}
+            onChange={(event) => updateIslandScale(Number(event.target.value))}
+          />
+          <span className="settings-slider-value">{islandScalePct}%</span>
+          <button
+            type="button"
+            className="mini-btn"
+            onClick={() => updateIslandScale(100)}
+          >
+            {t(language, "defaultLabel")}
+          </button>
+        </div>
+      </div>
+      <div className="settings-slider-row">
+        <div className="settings-row-text">
+          <span>{t(language, "islandGlow")}</span>
+          <span className="settings-row-desc">
+            {t(language, "islandGlowDesc")}
+          </span>
+        </div>
+        <div className="settings-slider-line">
+          <input
+            type="range"
+            className="settings-slider"
+            min={0}
+            max={100}
+            step={5}
+            value={islandGlowPct}
+            aria-label={t(language, "islandGlow")}
+            onChange={(event) => updateIslandGlow(Number(event.target.value))}
+          />
+          <span className="settings-slider-value">
+            {islandGlowPct === 0 ? t(language, "glowOff") : `${islandGlowPct}%`}
+          </span>
+          <button
+            type="button"
+            className="mini-btn"
+            onClick={() => updateIslandGlow(islandGlowPct === 0 ? 45 : 0)}
+          >
+            {islandGlowPct === 0 ? t(language, "defaultLabel") : t(language, "glowOff")}
+          </button>
+        </div>
       </div>
       <div className="settings-slider-row">
         <div className="settings-row-text">
