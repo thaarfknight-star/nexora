@@ -1,16 +1,16 @@
 //! Optional downloadable real-time audio-to-subtitle translation engine.
 //!
 //! The engine is downloaded on demand into `<app_data_dir>/live-translate/`
-//! so the base Nexora installer stays lightweight. When started, it captures
-//! short audio chunks on Windows, transcribes them locally with `whisper-cli`,
-//! translates into the chosen target language, and broadcasts `subtitle-update`
-//! events to the click-through bottom-center `"subtitle"` overlay window.
+//! using pure native Rust HTTP streaming (`reqwest`) and native ZIP extraction
+//! (`zip`) — never spawning `curl.exe` or `powershell.exe` during download.
 
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::fs::{self, File};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 const MODEL_FILENAME: &str = "ggml-tiny.bin";
@@ -65,7 +65,7 @@ pub struct DownloadProgressPayload {
 
 /// Builds a `Command` that never flashes a console window on Windows.
 fn hidden_command<S: AsRef<std::ffi::OsStr>>(program: S) -> std::process::Command {
-    let mut cmd = hidden_command(program);
+    let mut cmd = std::process::Command::new(program);
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -216,7 +216,7 @@ pub fn parse_google_translate_response(raw: &str) -> Option<String> {
     }
 }
 
-/// Translates `text` into `target_lang` using curl.exe (built into Windows 10/11).
+/// Translates `text` into `target_lang` natively using `reqwest` (no external curl process).
 fn translate_text(text: &str, source_lang: &str, target_lang: &str) -> String {
     let clean = text.trim();
     if clean.is_empty() {
@@ -236,18 +236,113 @@ fn translate_text(text: &str, source_lang: &str, target_lang: &str) -> String {
         "https://translate.googleapis.com/translate_a/single?client=gtx&sl={sl}&tl={tl}&dt=t&q={}",
         url_encode_query(clean)
     );
-    let output = hidden_command("curl")
-        .args(["-sS", "--max-time", "6", &url])
-        .output();
-    if let Ok(out) = output {
-        if out.status.success() {
-            let body = String::from_utf8_lossy(&out.stdout);
-            if let Some(translated) = parse_google_translate_response(&body) {
-                return translated;
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(6))
+        .user_agent("Nexora/0.2")
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return clean.to_string(),
+    };
+    if let Ok(resp) = client.get(&url).send() {
+        if resp.status().is_success() {
+            if let Ok(body) = resp.text() {
+                if let Some(translated) = parse_google_translate_response(&body) {
+                    return translated;
+                }
             }
         }
     }
     clean.to_string()
+}
+
+/// Streams an HTTP file to disk natively via `reqwest`, emitting smooth progress percentages.
+fn download_file_streaming(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    dest: &Path,
+    start_pct: u8,
+    end_pct: u8,
+    stage: &str,
+    app: &AppHandle,
+) -> Result<(), String> {
+    let mut resp = client
+        .get(url)
+        .send()
+        .map_err(|e| format!("Network error downloading {stage}: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {} downloading {stage}", resp.status()));
+    }
+    let total = resp.content_length().unwrap_or(0);
+    let mut file = File::create(dest).map_err(|e| format!("Failed to create file: {e}"))?;
+    let mut buf = [0u8; 64 * 1024];
+    let mut downloaded: u64 = 0;
+    let mut last_emitted = start_pct;
+
+    let _ = app.emit(
+        "translate-download-progress",
+        DownloadProgressPayload {
+            percent: start_pct,
+            stage: stage.to_string(),
+        },
+    );
+
+    loop {
+        let n = resp
+            .read(&mut buf)
+            .map_err(|e| format!("Read error during {stage}: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        file.write_all(&buf[..n])
+            .map_err(|e| format!("Write error during {stage}: {e}"))?;
+        downloaded = downloaded.saturating_add(n as u64);
+
+        if total > 0 {
+            let span = u64::from(end_pct.saturating_sub(start_pct));
+            let pct = start_pct.saturating_add(((downloaded * span) / total) as u8);
+            if pct > last_emitted {
+                last_emitted = pct;
+                let _ = app.emit(
+                    "translate-download-progress",
+                    DownloadProgressPayload {
+                        percent: pct.min(end_pct),
+                        stage: stage.to_string(),
+                    },
+                );
+            }
+        }
+    }
+    file.flush().map_err(|e| format!("Flush error: {e}"))?;
+    Ok(())
+}
+
+/// Extracts a ZIP archive natively in Rust (no PowerShell process spawning).
+fn extract_zip_native(zip_path: &Path, dest_dir: &Path) -> Result<(), String> {
+    let file = File::open(zip_path).map_err(|e| format!("Failed to open archive: {e}"))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("Invalid ZIP archive: {e}"))?;
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("Failed reading archive entry: {e}"))?;
+        let Some(rel_path) = entry.enclosed_name() else {
+            continue;
+        };
+        let out_path = dest_dir.join(rel_path);
+        if entry.is_dir() {
+            fs::create_dir_all(&out_path).map_err(|e| format!("Failed to create dir: {e}"))?;
+        } else {
+            if let Some(parent) = out_path.parent() {
+                fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {e}"))?;
+            }
+            let mut out_file =
+                File::create(&out_path).map_err(|e| format!("Failed to write extracted file: {e}"))?;
+            std::io::copy(&mut entry, &mut out_file)
+                .map_err(|e| format!("Failed extracting file: {e}"))?;
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -269,30 +364,23 @@ pub async fn download_translate_engine(app: AppHandle) -> Result<TranslateEngine
         let dir = engine_dir(&app_clone);
         fs::create_dir_all(&dir).map_err(|e| format!("Failed to create engine dir: {e}"))?;
 
-        let _ = app_clone.emit(
-            "translate-download-progress",
-            DownloadProgressPayload {
-                percent: 10,
-                stage: "Downloading Whisper runtime...".to_string(),
-            },
-        );
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(300))
+            .user_agent("Nexora/0.2")
+            .build()
+            .map_err(|e| format!("Failed to initialize HTTP client: {e}"))?;
 
         let zip_path = dir.join("whisper-bin-x64.zip");
-        let curl_bin = hidden_command("curl")
-            .args([
-                "-L",
-                "-f",
-                "-sS",
-                "-o",
-                &zip_path.to_string_lossy(),
-                WHISPER_ZIP_URL,
-            ])
-            .status()
-            .map_err(|e| format!("Failed to launch curl: {e}"))?;
-
-        if !curl_bin.success() {
-            return Err("Failed to download whisper runtime archive".to_string());
-        }
+        download_file_streaming(
+            &client,
+            WHISPER_ZIP_URL,
+            &zip_path,
+            5,
+            35,
+            "Downloading Whisper runtime...",
+            &app_clone,
+        )?;
 
         let _ = app_clone.emit(
             "translate-download-progress",
@@ -302,47 +390,19 @@ pub async fn download_translate_engine(app: AppHandle) -> Result<TranslateEngine
             },
         );
 
-        #[cfg(target_os = "windows")]
-        {
-            let ps_cmd = format!(
-                "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-                zip_path.to_string_lossy(),
-                dir.to_string_lossy()
-            );
-            let extract = hidden_command("powershell")
-                .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps_cmd])
-                .status()
-                .map_err(|e| format!("Failed to extract archive: {e}"))?;
-            if !extract.success() {
-                return Err("Failed to extract Whisper runtime zip".to_string());
-            }
-        }
+        extract_zip_native(&zip_path, &dir)?;
         let _ = fs::remove_file(&zip_path);
 
-        let _ = app_clone.emit(
-            "translate-download-progress",
-            DownloadProgressPayload {
-                percent: 55,
-                stage: "Downloading ggml-tiny speech model (~75 MB)...".to_string(),
-            },
-        );
-
         let model_file = model_path(&dir);
-        let curl_model = hidden_command("curl")
-            .args([
-                "-L",
-                "-f",
-                "-sS",
-                "-o",
-                &model_file.to_string_lossy(),
-                MODEL_URL,
-            ])
-            .status()
-            .map_err(|e| format!("Failed to download speech model: {e}"))?;
-
-        if !curl_model.success() {
-            return Err("Failed to download ggml-tiny speech model".to_string());
-        }
+        download_file_streaming(
+            &client,
+            MODEL_URL,
+            &model_file,
+            45,
+            98,
+            "Downloading ggml-tiny speech model (~75 MB)...",
+            &app_clone,
+        )?;
 
         let _ = app_clone.emit(
             "translate-download-progress",
@@ -360,6 +420,9 @@ pub async fn download_translate_engine(app: AppHandle) -> Result<TranslateEngine
     {
         let mut prefs = ENGINE_STATE.lock().unwrap_or_else(|e| e.into_inner());
         prefs.last_error = result.as_ref().err().cloned();
+    }
+    if let Err(ref err) = result {
+        crate::diagnostics::log("translator", &format!("download failed: {err}"));
     }
     result?;
     let st = build_status(&app);
@@ -489,7 +552,9 @@ pub fn start_live_translate(
         });
     }
 
-    Ok(build_status(&app))
+    let st = build_status(&app);
+    emit_status_changed(&app, &st);
+    Ok(st)
 }
 
 #[cfg(target_os = "windows")]
