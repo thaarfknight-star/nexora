@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.9] - 2026-11-21
+
+### What's New
+- **True Word-by-Word Incremental Live Subtitles**: Replaced sentence-end chunking with a continuous rolling-window streamer that snapshots active speech every **250 ms** (starting at 300 ms), updating both the original text and translation live in place as each word is spoken.
+- **Latest-Only Shared Slots (Zero Queue Backlog)**: Replaced FIFO channels with `Condvar`-backed Latest-Only slots for both Whisper and Translation so Nexora always renders the latest spoken words immediately.
+- **6× Faster Whisper Encoder (`--audio-ctx 256`)**: Cuts `ggml-tiny.bin` inference time to ~35–60 ms on CPU while smoothly rolling continuous speech windows without hard resets.
+
+### Bug Fixes
+- Fixed Live Translate waiting for the end of each sentence before translating and displaying subtitles.
+
 ## [0.2.8] - 2026-11-21
 
 ### What's New
