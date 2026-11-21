@@ -336,8 +336,8 @@ fn extract_zip_native(zip_path: &Path, dest_dir: &Path) -> Result<(), String> {
             if let Some(parent) = out_path.parent() {
                 fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {e}"))?;
             }
-            let mut out_file =
-                File::create(&out_path).map_err(|e| format!("Failed to write extracted file: {e}"))?;
+            let mut out_file = File::create(&out_path)
+                .map_err(|e| format!("Failed to write extracted file: {e}"))?;
             std::io::copy(&mut entry, &mut out_file)
                 .map_err(|e| format!("Failed extracting file: {e}"))?;
         }
