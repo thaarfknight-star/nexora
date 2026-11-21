@@ -2233,3 +2233,71 @@ body,
   color: #ffffff;
   text-shadow: 0 2px 6px rgba(0, 0, 0, 0.75);
 }
+
+/* Settings Minimize button + Merged Island Style divider + Engines Hub Card */
+.settings-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.settings-min-btn {
+  width: 40px;
+  height: 36px;
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--island-subtext);
+  font: inherit;
+  cursor: pointer;
+}
+
+.settings-min-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--island-text);
+}
+
+.island-style-divider {
+  height: 1px;
+  width: 100%;
+  background: var(--island-border);
+  margin: 18px 0 14px;
+  opacity: 0.6;
+}
+
+.engine-card {
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--island-border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.engine-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.engine-card-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--island-text);
+}
+
+.engine-version-badge {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-family: var(--nx-mono);
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--island-btn-bg);
+  border: 1px solid var(--island-btn-border);
+  color: var(--island-accent-text);
+  flex: none;
+}

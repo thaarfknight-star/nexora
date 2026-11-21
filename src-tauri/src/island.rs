@@ -63,7 +63,7 @@ use tauri::{Emitter, Manager};
 
 /// Fixed window size, in logical pixels: expanded panel 560x360
 /// (approved design) plus `GLOW_PADDING` on every side.
-pub const WINDOW_WIDTH: u32 = 760;
+pub const WINDOW_WIDTH: u32 = 880;
 pub const WINDOW_HEIGHT: u32 = 440;
 /// Glow room around the content box, in logical pixels.
 pub const GLOW_PADDING: u32 = 40;
@@ -726,10 +726,10 @@ mod tests {
 
     #[test]
     fn fixed_window_fits_panel_with_glow() {
-        assert_eq!(window_size(), (760, 440));
+        assert_eq!(window_size(), (880, 440));
         // The content box IS the expanded panel (560x360, approved
         // design), with equal glow padding on every side.
-        assert_eq!(content_rect(), (40, 40, 680, 360));
+        assert_eq!(content_rect(), (40, 40, 800, 360));
         assert_eq!(CONTENT_X, GLOW_PADDING);
         assert_eq!(CONTENT_Y, GLOW_PADDING);
         assert_eq!(WINDOW_WIDTH - (CONTENT_X + CONTENT_WIDTH), GLOW_PADDING);
@@ -739,7 +739,7 @@ mod tests {
     #[test]
     fn state_reports_fixed_size() {
         let state = current_state();
-        assert_eq!((state.width, state.height), (760, 440));
+        assert_eq!((state.width, state.height), (880, 440));
         assert_eq!(
             (
                 state.content_x,
@@ -747,7 +747,7 @@ mod tests {
                 state.content_width,
                 state.content_height
             ),
-            (40, 40, 680, 360)
+            (40, 40, 800, 360)
         );
         assert_eq!(state.compact_height, 64);
         assert_eq!((state.handle_width, state.handle_height), (120, 4));
@@ -857,8 +857,8 @@ mod tests {
         // The visible bar sits at the very top of the window
         // (stage offset 0), centered; the hit rectangle around it
         // is top-center at y=0 too, with room to grab.
-        assert_eq!(handle_bar_rect(), (320.0, 0.0, 120.0, 4.0));
-        assert_eq!(handle_hit_rect(), (300.0, 0.0, 160.0, 12.0));
+        assert_eq!(handle_bar_rect(), (380.0, 0.0, 120.0, 4.0));
+        assert_eq!(handle_hit_rect(), (360.0, 0.0, 160.0, 12.0));
         assert!(rect_contains(handle_hit_rect(), handle_bar_rect()));
         // The hot zone is exactly tall enough to contain the whole
         // hit rectangle: the strip the watcher watches and the
@@ -879,18 +879,18 @@ mod tests {
     #[test]
     fn hit_test_covers_only_the_handle() {
         // Inside: center, corners (edges count).
-        assert!(cursor_in_handle_hit_rect(380.0, 6.0));
-        assert!(cursor_in_handle_hit_rect(300.0, 0.0));
-        assert!(cursor_in_handle_hit_rect(460.0, 12.0));
+        assert!(cursor_in_handle_hit_rect(440.0, 6.0));
+        assert!(cursor_in_handle_hit_rect(360.0, 0.0));
+        assert!(cursor_in_handle_hit_rect(520.0, 12.0));
         // Outside: one pixel past every side.
-        assert!(!cursor_in_handle_hit_rect(299.0, 6.0));
-        assert!(!cursor_in_handle_hit_rect(461.0, 6.0));
-        assert!(!cursor_in_handle_hit_rect(380.0, 13.0));
-        assert!(!cursor_in_handle_hit_rect(380.0, -1.0));
+        assert!(!cursor_in_handle_hit_rect(359.0, 6.0));
+        assert!(!cursor_in_handle_hit_rect(521.0, 6.0));
+        assert!(!cursor_in_handle_hit_rect(440.0, 13.0));
+        assert!(!cursor_in_handle_hit_rect(440.0, -1.0));
         // The rest of the window (below the handle) is not a hit.
-        assert!(!cursor_in_handle_hit_rect(380.0, 40.0));
+        assert!(!cursor_in_handle_hit_rect(440.0, 40.0));
         assert!(!cursor_in_handle_hit_rect(0.0, 0.0));
-        assert!(!cursor_in_handle_hit_rect(760.0, 0.0));
+        assert!(!cursor_in_handle_hit_rect(880.0, 0.0));
     }
 
     #[test]
