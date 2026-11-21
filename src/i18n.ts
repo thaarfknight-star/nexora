@@ -34,13 +34,13 @@ const EN = {
   tabQuick: "Quick settings",
   onboardingWelcomeTitle: "Welcome to Nexora",
   onboardingWelcomeText:
-    "A small island at the top of your screen replaces your taskbar — your apps, music, stats and clock, all in one place.",
+    "A floating Dynamic Island at the top of your screen — your apps, music, stats and clock, all in one place.",
   onboardingGetStarted: "Get started →",
-  onboardingTaskbarTitle: "Your taskbar, replaced — safely",
+  onboardingTaskbarTitle: "Your apps, always at hand",
   onboardingTaskbarText:
-    "Nexora hides the Windows taskbar and shows your pinned & open apps in the island instead, so you never lose a way to switch apps.",
+    "Nexora floats cleanly at the top of your screen and shows your pinned & open apps for instant one-click switching.",
   onboardingTaskbarSafe:
-    "🛡️ Your taskbar always comes back when Nexora closes — and there's a “Restore taskbar now” button in Settings → Taskbar.",
+    "✨ Nexora stays non-intrusive and lightweight while giving you quick access to apps, media, and live stats.",
   onboardingContinue: "Continue →",
   onboardingLookTitle: "Pick your look",
   onboardingLookText:
@@ -87,7 +87,7 @@ const EN = {
   uploadEmpty: "Upload: —",
   downloadValue: "Download: {v} KB/s",
   downloadEmpty: "Download: —",
-  taskbarLabel: "Taskbar",
+  taskbarLabel: "Apps",
   taskbarHidden: "hidden",
   taskbarShown: "shown",
   watchdogLabel: "Watchdog",
@@ -181,13 +181,13 @@ const FA: Record<StringKey, string> = {
   tabQuick: "تنظیمات سریع",
   onboardingWelcomeTitle: "به Nexora خوش آمدید",
   onboardingWelcomeText:
-    "جزیره‌ای کوچک در بالای صفحه‌ات جای تسک‌بار را می‌گیرد — اپ‌ها، موزیک، آمار و ساعت، همه در یک جا.",
+    "جزیره هوشمند شناور در بالای صفحه‌ات — اپ‌ها، موزیک، آمار و ساعت، همه در یک جا.",
   onboardingGetStarted: "شروع کن ←",
-  onboardingTaskbarTitle: "تسک‌بارت، با خیال راحت جایگزین شد",
+  onboardingTaskbarTitle: "برنامه‌هایت همیشه در دسترس",
   onboardingTaskbarText:
-    "Nexora تسک‌بار ویندوز را پنهان می‌کند و اپ‌های پین‌شده و باز را به‌جایش در جزیره نشان می‌دهد، پس هیچ‌وقت راه جابه‌جایی بین اپ‌ها را از دست نمی‌دهی.",
+    "Nexora به‌صورت شناور در بالای صفحه قرار می‌گیرد و برنامه‌های باز و سنجاق‌شده را برای جابه‌جایی سریع نمایش می‌دهد.",
   onboardingTaskbarSafe:
-    "🛡️ تسک‌بارت همیشه با بستن Nexora برمی‌گردد — و دکمه‌ی «بازگرداندن تسک‌بار» در بخش تسک‌بارِ تنظیمات هست.",
+    "✨ Nexora سبک و کم‌مصرف است و بدون هیچ تداخلی با ویندوز، دسترسی سریع به مدیا، آمار و برنامه‌ها می‌دهد.",
   onboardingContinue: "ادامه ←",
   onboardingLookTitle: "ظاهرت را انتخاب کن",
   onboardingLookText:
@@ -234,7 +234,7 @@ const FA: Record<StringKey, string> = {
   uploadEmpty: "آپلود: —",
   downloadValue: "دانلود: {v} KB/s",
   downloadEmpty: "دانلود: —",
-  taskbarLabel: "تسک‌بار",
+  taskbarLabel: "برنامه‌ها",
   taskbarHidden: "مخفی",
   taskbarShown: "نمایان",
   watchdogLabel: "واچ‌داگ",
