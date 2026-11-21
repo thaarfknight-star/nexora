@@ -287,7 +287,8 @@ pub fn write_pcm16_mono_wav(path: &Path, pcm_bytes: &[u8], sample_rate: u32) -> 
 pub fn has_audible_speech(pcm_bytes: &[u8]) -> bool {
     let mut sum_sq: f64 = 0.0;
     let mut count: u64 = 0;
-    for chunk in pcm_bytes.chunks_exact(2) {
+    let (chunks, _) = pcm_bytes.as_chunks::<2>();
+    for chunk in chunks {
         let sample = f64::from(i16::from_le_bytes([chunk[0], chunk[1]]));
         sum_sq += sample * sample;
         count += 1;
@@ -553,6 +554,7 @@ fn list_windows_audio_targets() -> Vec<AudioAppTarget> {
 }
 
 #[cfg(target_os = "windows")]
+#[allow(clippy::too_many_arguments)]
 fn run_wasapi_loopback_worker(
     app: &AppHandle,
     bin: &Path,
@@ -573,7 +575,7 @@ fn run_wasapi_loopback_worker(
     let _ = initialize_mta();
 
     let desired_format = WaveFormat::new(16, 16, SampleType::Int, CAPTURE_SAMPLE_RATE, 1, None);
-    let mut audio_client = if capture_mode == "app" {
+    let audio_client = if capture_mode == "app" {
         let pid = target_pid.ok_or_else(|| "No target application selected".to_string())?;
         let mut client = AudioClient::new_application_loopback_client(pid, true)
             .map_err(|e| format!("Failed to attach audio loopback to PID {pid}: {e}"))?;

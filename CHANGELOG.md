@@ -11,6 +11,7 @@
 ### Bug Fixes
 - Fixed Live Subtitles not picking up YouTube or desktop playback audio (previously captured default microphone input instead of WASAPI render loopback).
 - Removed periodic PowerShell process spawning during live audio capture for smoother streaming and instant Stop response.
+- Adopted ReChat's native `@tauri-apps/plugin-updater` engine and NSIS `installMode: "currentUser"` + passive updater config (with clean `cleanup_before_exit` + `process::exit(0)` in `on_before_exit`), fixing the Windows `Failed to kill Nexora` installer abort during in-app updates.
 
 ## [0.2.5] - 2026-11-21
 

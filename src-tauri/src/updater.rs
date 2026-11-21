@@ -82,6 +82,7 @@ pub async fn download_and_install(app: AppHandle) -> Result<(), String> {
         .ok_or_else(|| "No update is available.".to_string())?;
     let mut downloaded: u64 = 0;
     let progress_app = app.clone();
+    let exit_app = app.clone();
     update
         .download_and_install(
             move |chunk_length, content_length| {
@@ -94,17 +95,16 @@ pub async fn download_and_install(app: AppHandle) -> Result<(), String> {
                     },
                 );
             },
-            || {},
+            move || {
+                // On Windows, tauri-plugin-updater spawns the passive NSIS
+                // installer and then invokes on_before_exit so the running
+                // process exits immediately and releases Nexora.exe before
+                // NSIS overwrites it (matching ReChat's native plugin flow).
+                exit_app.cleanup_before_exit();
+                std::process::exit(0);
+            },
         )
         .await
         .map_err(|e| format!("Update download/install failed: {e}"))?;
-    #[cfg(target_os = "windows")]
-    {
-        app.exit(0);
-        Ok(())
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        app.restart()
-    }
+    app.restart()
 }
