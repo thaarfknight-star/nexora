@@ -63,7 +63,7 @@ use tauri::{Emitter, Manager};
 
 /// Fixed window size, in logical pixels: expanded panel 560x360
 /// (approved design) plus `GLOW_PADDING` on every side.
-pub const WINDOW_WIDTH: u32 = 640;
+pub const WINDOW_WIDTH: u32 = 760;
 pub const WINDOW_HEIGHT: u32 = 440;
 /// Glow room around the content box, in logical pixels.
 pub const GLOW_PADDING: u32 = 40;

@@ -92,16 +92,6 @@ interface MediaInfo {
   source_icon?: string;
 }
 
-interface TaskbarStatus {
-  hidden: boolean;
-  mode: string;
-}
-
-interface WatchdogStatus {
-  healthy: boolean;
-  explorer_ok: boolean;
-}
-
 /** One open window for the compact bar's taskbar zone. Icons are
  * raw RGBA pixels as base64 (32x32), not PNG data-URLs. */
 interface TaskbarWindow {
@@ -135,7 +125,7 @@ interface UpdateInfo {
   update_available: boolean;
 }
 
-type IslandTab = "media" | "stats" | "notifications" | "quick";
+type IslandTab = "apps" | "media" | "stats" | "notifications" | "quick";
 
 const STORAGE_KEY = "nexora-theme";
 
@@ -289,6 +279,79 @@ function decodeRgbaIcon(
  * backend sends pixels, not PNG). No icon data renders a placeholder
  * square with the title's first letter — never a fake app icon.
  */
+function SvgStart() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1.2" />
+      <rect x="9" y="1.5" width="5.5" height="5.5" rx="1.2" />
+      <rect x="1.5" y="9" width="5.5" height="5.5" rx="1.2" />
+      <rect x="9" y="9" width="5.5" height="5.5" rx="1.2" />
+    </svg>
+  );
+}
+
+function SvgPlay({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M8 5.14v13.72a1 1 0 0 0 1.52.85l11.02-6.86a1 1 0 0 0 0-1.7L9.52 4.29A1 1 0 0 0 8 5.14z" />
+    </svg>
+  );
+}
+
+function SvgPause({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <rect x="6" y="4.5" width="4.5" height="15" rx="1.4" />
+      <rect x="13.5" y="4.5" width="4.5" height="15" rx="1.4" />
+    </svg>
+  );
+}
+
+function SvgStop({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <rect x="5" y="5" width="14" height="14" rx="2.5" />
+    </svg>
+  );
+}
+
+function SvgPrev({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <rect x="5" y="5" width="2.5" height="14" rx="1" />
+      <path d="M18.2 5.4a1 1 0 0 1 1.3.95v11.3a1 1 0 0 1-1.56.83l-8.4-5.65a1 1 0 0 1 0-1.66l8.4-5.65c.08-.05.17-.09.26-.12z" />
+    </svg>
+  );
+}
+
+function SvgNext({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <rect x="16.5" y="5" width="2.5" height="14" rx="1" />
+      <path d="M5.8 5.4a1 1 0 0 0-1.3.95v11.3a1 1 0 0 0 1.56.83l8.4-5.65a1 1 0 0 0 0-1.66l-8.4-5.65a1 1 0 0 0-.26-.12z" />
+    </svg>
+  );
+}
+
+function SvgRefresh({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.1"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <polyline points="21 3 21 9 15 9" />
+    </svg>
+  );
+}
+
 function RgbaIcon({
   rgbaBase64,
   size,
@@ -343,11 +406,11 @@ function IslandApp() {
     mode: "compact",
     title: "Nexora Island",
     // Backend constants (island.rs) until get_island_state answers.
-    width: 640,
+    width: 760,
     height: 440,
     content_x: 40,
     content_y: 40,
-    content_width: 560,
+    content_width: 680,
     content_height: 360,
     compact_height: 64,
     handle_width: 120,
@@ -367,8 +430,6 @@ function IslandApp() {
   const [settings, setSettings] = useState<NexoraSettings | null>(null);
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [media, setMedia] = useState<MediaInfo | null>(null);
-  const [taskbar, setTaskbar] = useState<TaskbarStatus | null>(null);
-  const [watchdog, setWatchdog] = useState<WatchdogStatus | null>(null);
   const [now, setNow] = useState(() => new Date());
   // Island visibility state machine (design artifact): the window
   // never resizes — the pill animates inside the fixed canvas. The
@@ -547,6 +608,7 @@ function IslandApp() {
   type MediaCommand =
     | "media_play"
     | "media_pause"
+    | "media_stop"
     | "media_next"
     | "media_previous";
 
@@ -618,12 +680,6 @@ function IslandApp() {
     refreshMedia();
     refreshNotifications();
     refreshTaskbar();
-    invoke<TaskbarStatus>("get_taskbar_status")
-      .then(setTaskbar)
-      .catch(() => {});
-    invoke<WatchdogStatus>("get_watchdog_status")
-      .then(setWatchdog)
-      .catch(() => {});
   };
 
   useEffect(() => {
@@ -828,7 +884,7 @@ function IslandApp() {
       return;
     }
     taskbarHideSignaledRef.current = true;
-    invoke<TaskbarStatus>("notify_island_shown").catch(() => {});
+    // Taskbar hiding disabled: Nexora runs in floating companion mode.
   }, [visible, taskbarContentLoaded]);
 
   // Clicking the island itself toggles expand / collapse; the bell
@@ -1025,6 +1081,7 @@ function IslandApp() {
     }
   }
   const tabs: { id: IslandTab; label: string }[] = [
+    { id: "apps", label: t(language, "tabApps") },
     { id: "media", label: t(language, "tabMedia") },
     { id: "stats", label: t(language, "tabStats") },
     { id: "notifications", label: t(language, "notifications") },
@@ -1138,7 +1195,7 @@ function IslandApp() {
               title={t(language, "startMenu")}
               aria-label={t(language, "startMenu")}
             >
-              ⊞
+              <SvgStart />
             </button>
             {pinnedApps.map((app) => (
               <button
@@ -1244,7 +1301,16 @@ function IslandApp() {
                       : t(language, "mediaPlay")
                   }
                 >
-                  {media.playing ? "⏸" : "▶"}
+                  {media.playing ? <SvgPause size={12} /> : <SvgPlay size={12} />}
+                </button>
+                <button
+                  type="button"
+                  className="compact-media-btn"
+                  onClick={() => sendMediaCommand("media_stop")}
+                  title={t(language, "mediaStop")}
+                  aria-label={t(language, "mediaStop")}
+                >
+                  <SvgStop size={10} />
                 </button>
               </div>
             </>
@@ -1568,6 +1634,61 @@ function IslandApp() {
                 )}
               </div>
             )}
+            {tab === "apps" && (
+              <div className="island-panel apps-panel" role="tabpanel">
+                <div className="apps-section-head">
+                  <span>{t(language, "runningAppsTitle")} ({taskbarWindows.length})</span>
+                  {pinnedApps.length > 0 && (
+                    <div className="pinned-strip">
+                      {pinnedApps.slice(0, 4).map((app) => (
+                        <button
+                          key={app.target}
+                          type="button"
+                          className="pinned-chip"
+                          onClick={() => launchPinnedApp(app.target)}
+                          title={app.name}
+                        >
+                          <RgbaIcon
+                            rgbaBase64={app.icon_rgba_base64}
+                            size={app.icon_size}
+                            title={app.name}
+                          />
+                          <span className="pinned-chip-name">{app.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {taskbarWindows.length === 0 ? (
+                  <div className="apps-empty">{t(language, "noRunningApps")}</div>
+                ) : (
+                  <div className="apps-list">
+                    {taskbarWindows.map((win) => (
+                      <button
+                        key={win.id}
+                        type="button"
+                        className={`app-list-item${win.active ? " active" : ""}${
+                          win.minimized ? " minimized" : ""
+                        }`}
+                        onClick={() => activateTaskbarWindow(win.id)}
+                        title={win.title}
+                      >
+                        <RgbaIcon
+                          rgbaBase64={win.icon_rgba_base64}
+                          size={win.icon_size}
+                          title={win.title}
+                        />
+                        <span className="app-list-title">{win.title}</span>
+                        <span
+                          className={`app-status-dot${win.active ? " active" : ""}`}
+                          aria-hidden="true"
+                        />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             {tab === "media" && (
               <div className="island-panel" role="tabpanel">
                 <div className="media-card">
@@ -1609,40 +1730,63 @@ function IslandApp() {
                   )}
                 </div>
                 <div className="panel-line">
-                  <span className="panel-controls">
+                  <span className="panel-controls media-icon-controls">
                     <button
                       type="button"
-                      className="mini-btn"
+                      className="media-icon-btn"
                       onClick={() => sendMediaCommand("media_previous")}
+                      title={t(language, "mediaPrev")}
+                      aria-label={t(language, "mediaPrev")}
                     >
-                      {t(language, "mediaPrev")}
+                      <SvgPrev size={15} />
                     </button>
                     <button
                       type="button"
-                      className="mini-btn"
+                      className="media-icon-btn primary"
                       onClick={() =>
                         sendMediaCommand(
                           media?.playing ? "media_pause" : "media_play",
                         )
                       }
+                      title={
+                        media?.playing
+                          ? t(language, "mediaPause")
+                          : t(language, "mediaPlay")
+                      }
+                      aria-label={
+                        media?.playing
+                          ? t(language, "mediaPause")
+                          : t(language, "mediaPlay")
+                      }
                     >
-                      {media?.playing
-                        ? t(language, "mediaPause")
-                        : t(language, "mediaPlay")}
+                      {media?.playing ? <SvgPause size={16} /> : <SvgPlay size={16} />}
                     </button>
                     <button
                       type="button"
-                      className="mini-btn"
+                      className="media-icon-btn"
+                      onClick={() => sendMediaCommand("media_stop")}
+                      title={t(language, "mediaStop")}
+                      aria-label={t(language, "mediaStop")}
+                    >
+                      <SvgStop size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="media-icon-btn"
                       onClick={() => sendMediaCommand("media_next")}
+                      title={t(language, "mediaNext")}
+                      aria-label={t(language, "mediaNext")}
                     >
-                      {t(language, "mediaNext")}
+                      <SvgNext size={15} />
                     </button>
                     <button
                       type="button"
-                      className="mini-btn"
+                      className="media-icon-btn"
                       onClick={refreshMedia}
+                      title={t(language, "mediaRefresh")}
+                      aria-label={t(language, "mediaRefresh")}
                     >
-                      {t(language, "mediaRefresh")}
+                      <SvgRefresh size={14} />
                     </button>
                   </span>
                   <span>
@@ -1752,34 +1896,7 @@ function IslandApp() {
                       : "—"}
                   </span>
                 </div>
-                <div className="panel-line">
-                  <span>
-                    {t(language, "taskbarLabel")}:{" "}
-                    {taskbar
-                      ? t(
-                          language,
-                          taskbar.hidden ? "taskbarHidden" : "taskbarShown",
-                        )
-                      : "—"}
-                  </span>
-                  <span>
-                    {t(language, "watchdogLabel")}:{" "}
-                    {watchdog
-                      ? t(language, watchdog.healthy ? "healthy" : "unhealthy")
-                      : "—"}
-                  </span>
-                </div>
-                <div className="panel-line">
-                  <span>
-                    {t(language, "explorerLabel")}:{" "}
-                    {watchdog
-                      ? t(
-                          language,
-                          watchdog.explorer_ok ? "explorerOk" : "explorerDown",
-                        )
-                      : "—"}
-                  </span>
-                </div>
+
               </div>
             )}
             {tab === "quick" && (
@@ -1800,24 +1917,7 @@ function IslandApp() {
                     {currentTheme.name}
                   </button>
                 </div>
-                <div className="settings-row">
-                  <span className="settings-row-text">
-                    <span>{t(language, "autoHideTaskbar")}</span>
-                    <span className="settings-row-desc">
-                      {t(language, "autoHideTaskbarDesc")}
-                    </span>
-                  </span>
-                  <button
-                    type="button"
-                    className="mini-btn"
-                    onClick={() => toggleQuickSetting("auto_hide_taskbar")}
-                    disabled={!settings}
-                  >
-                    {settings
-                      ? onOff(settings.auto_hide_taskbar, language)
-                      : "—"}
-                  </button>
-                </div>
+
                 <div className="settings-row">
                   <span className="settings-row-text">
                     <span>{t(language, "alwaysOnTop")}</span>
@@ -2092,7 +2192,7 @@ function SettingsView() {
       saveSettings({
         ...settings,
         theme: "neon-glass",
-        auto_hide_taskbar: true,
+        auto_hide_taskbar: false,
         always_on_top: true,
         island_blur_px: null,
         island_radius_px: null,
@@ -2344,21 +2444,7 @@ function SettingsView() {
       <p className="settings-section-desc">
         {t(language, "taskbarDesc")}
       </p>
-      <div className="settings-row">
-        <span className="settings-row-text">
-          <span>{t(language, "autoHideTaskbar")}</span>
-          <span className="settings-row-desc">
-            {t(language, "autoHideTaskbarDesc")}
-          </span>
-        </span>
-        <button
-          type="button"
-          className="mini-btn"
-          onClick={() => toggleSetting("auto_hide_taskbar")}
-        >
-          {settings ? onOff(settings.auto_hide_taskbar, language) : "—"}
-        </button>
-      </div>
+
       <div className="settings-row">
         <span className="settings-row-text">
           <span>{t(language, "alwaysOnTop")}</span>

@@ -100,7 +100,7 @@ pub fn should_list_window(props: WindowProps) -> bool {
         && !props.cloaked
         && !props.is_nexora_island
         && (!props.is_tool_window || props.is_app_window)
-        && !props.has_owner
+        && (!props.has_owner || props.is_app_window)
 }
 
 /// Pure decision: what does a click on this window do?
@@ -222,7 +222,7 @@ mod win {
     use base64::Engine as _;
     use std::ffi::c_void;
     use windows::core::{Interface as _, BOOL, PCWSTR, PWSTR};
-    use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM};
+    use windows::Win32::Foundation::{CloseHandle, HINSTANCE, HWND, LPARAM};
     use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
     use windows::Win32::Graphics::Gdi::{
         CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject, BITMAPINFO,
@@ -231,6 +231,10 @@ mod win {
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, IPersistFile,
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, STGM_READ,
+    };
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
     };
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
@@ -242,7 +246,7 @@ mod win {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         DestroyIcon, DrawIconEx, EnumWindows, GetForegroundWindow, GetWindow, GetWindowLongPtrW,
-        GetWindowModuleFileNameW, GetWindowTextW, IsIconic, IsWindow, SetForegroundWindow,
+        GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, SetForegroundWindow,
         ShowWindow, DI_NORMAL, GWL_EXSTYLE, GW_OWNER, SW_MINIMIZE, SW_RESTORE, SW_SHOWNORMAL,
     };
 
@@ -316,13 +320,13 @@ mod win {
             has_title: !title.trim().is_empty(),
             is_tool_window: exstyle & 0x80 != 0, // WS_EX_TOOLWINDOW
             is_app_window: exstyle & 0x40000 != 0, // WS_EX_APPWINDOW
-            has_owner: unsafe { GetWindow(hwnd, GW_OWNER) }.is_ok(),
+            has_owner: unsafe { GetWindow(hwnd, GW_OWNER) }
+                .map(|h| !h.0.is_null())
+                .unwrap_or(false),
             cloaked: is_cloaked(hwnd),
             is_nexora_island: hwnd.0 as isize == crate::taskbar::island_window(),
         };
-        let mut exe_buf = [0u16; 260];
-        let exe_len = unsafe { GetWindowModuleFileNameW(hwnd, &mut exe_buf) };
-        let exe_path = buf_to_string(&exe_buf, exe_len as usize);
+        let exe_path = process_exe_path(hwnd);
         out.push(RawWindow {
             hwnd,
             title,
@@ -332,6 +336,40 @@ mod win {
             props,
         });
         BOOL(1)
+    }
+
+    /// Resolves the full executable path for any top-level window across
+    /// processes using `QueryFullProcessImageNameW` (unlike
+    /// `GetWindowModuleFileNameW`, which only works within the caller process).
+    fn process_exe_path(hwnd: HWND) -> String {
+        let mut pid: u32 = 0;
+        unsafe {
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        }
+        if pid == 0 {
+            return String::new();
+        }
+        let handle = match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
+            Ok(h) => h,
+            Err(_) => return String::new(),
+        };
+        let mut buf = [0u16; 512];
+        let mut size = buf.len() as u32;
+        let ok = unsafe {
+            QueryFullProcessImageNameW(
+                handle,
+                PROCESS_NAME_WIN32,
+                PWSTR(buf.as_mut_ptr()),
+                &mut size,
+            )
+        }
+        .is_ok();
+        let _ = unsafe { CloseHandle(handle) };
+        if ok && size > 0 {
+            buf_to_string(&buf, size as usize)
+        } else {
+            String::new()
+        }
     }
 
     fn is_window_visible(hwnd: HWND) -> bool {

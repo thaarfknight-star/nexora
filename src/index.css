@@ -1281,3 +1281,562 @@ body,
   font-size: 12px;
   color: var(--island-subtext);
 }
+
+/* ==========================================================================
+   Nexora UI/UX Design System v1.0 — Deep Violet Glass + 7 Distinct Theme Worlds
+   Responsive Island & Settings + Crisp Media Icon Controls + Apps Deck
+   ========================================================================== */
+
+:root {
+  --nx-base: #0b0720;
+  --nx-base2: #120a33;
+  --nx-surface: #17103a;
+  --nx-surface2: #1e1548;
+  --nx-a1: #7c5cff;
+  --nx-a2: #5b8cff;
+  --nx-highlight: #a78bfa;
+  --nx-grad: linear-gradient(135deg, #7c5cff, #5b8cff);
+  --nx-grad-soft: linear-gradient(135deg, rgba(124, 92, 255, 0.25), rgba(91, 140, 255, 0.18));
+  --nx-glow: 0 0 0 1px rgba(167, 139, 250, 0.28),
+    0 8px 32px rgba(124, 92, 255, 0.35),
+    0 24px 80px rgba(91, 140, 255, 0.18);
+  --nx-success: #34d399;
+  --nx-warning: #fbbf24;
+  --nx-danger: #f87171;
+  --nx-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+[dir="rtl"] {
+  font-family: "Vazirmatn", "Segoe UI Variable", "Inter", system-ui, sans-serif;
+}
+
+:focus-visible {
+  outline: 2px solid var(--island-accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* 1. NEON GLASS (Default — Nexora UI/UX Design System v1.0) */
+:root[data-theme="neon-glass"],
+[data-theme="neon-glass"] {
+  --island-bg: radial-gradient(280px 110px at 18% 0%, rgba(124, 92, 255, 0.36), transparent 68%),
+    radial-gradient(260px 120px at 85% 100%, rgba(91, 140, 255, 0.28), transparent 70%),
+    linear-gradient(180deg, rgba(18, 10, 51, 0.84), rgba(11, 7, 32, 0.9));
+  --island-border: rgba(167, 139, 250, 0.38);
+  --island-text: #f5f3ff;
+  --island-subtext: #a5a0c8;
+  --island-accent: #7c5cff;
+  --island-accent-text: #a78bfa;
+  --island-btn-bg: rgba(124, 92, 255, 0.18);
+  --island-btn-border: rgba(167, 139, 250, 0.36);
+  --island-blur: 22px;
+  --theme-shadow: 0 0 0 1px rgba(167, 139, 250, 0.28),
+    0 8px 32px rgba(124, 92, 255, 0.36),
+    0 20px 60px rgba(91, 140, 255, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.26);
+  --theme-stage-bg: radial-gradient(900px 400px at 20% 0%, #3b1d8f 0%, transparent 60%),
+    radial-gradient(700px 400px at 90% 20%, #1e3a8a 0%, transparent 55%),
+    linear-gradient(180deg, #120a33, #0b0720);
+  --theme-grad: linear-gradient(135deg, #7c5cff, #5b8cff);
+}
+
+/* 2. OBSIDIAN — Matte Architectural Carbon Studio (crisp machined borders, zero neon haze) */
+:root[data-theme="obsidian"],
+[data-theme="obsidian"] {
+  --island-bg: linear-gradient(180deg, #161922 0%, #0e1017 100%);
+  --island-border: rgba(148, 163, 184, 0.22);
+  --island-text: #f8fafc;
+  --island-subtext: #94a3b8;
+  --island-accent: #38bdf8;
+  --island-accent-text: #7dd3fc;
+  --island-btn-bg: rgba(255, 255, 255, 0.06);
+  --island-btn-border: rgba(148, 163, 184, 0.26);
+  --island-blur: 0px;
+  --theme-shadow: 0 14px 34px rgba(0, 0, 0, 0.68),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  --theme-stage-bg: linear-gradient(180deg, #12151d 0%, #0a0c12 100%);
+  --theme-grad: linear-gradient(135deg, #0ea5e9, #38bdf8);
+}
+
+/* 3. LIQUID GLASS — Frosted Crystal Prism with Specular Rim & Icy Frost Sheen */
+:root[data-theme="liquid-glass"],
+[data-theme="liquid-glass"] {
+  --island-bg: linear-gradient(145deg, rgba(255, 255, 255, 0.22) 0%, rgba(186, 230, 253, 0.11) 52%, rgba(255, 255, 255, 0.16) 100%);
+  --island-border: rgba(255, 255, 255, 0.48);
+  --island-text: #ffffff;
+  --island-subtext: rgba(240, 249, 255, 0.8);
+  --island-accent: #e0f2fe;
+  --island-accent-text: #ffffff;
+  --island-btn-bg: rgba(255, 255, 255, 0.2);
+  --island-btn-border: rgba(255, 255, 255, 0.48);
+  --island-blur: 28px;
+  --theme-shadow: 0 12px 38px rgba(15, 23, 42, 0.36),
+    inset 0 1.5px 1px rgba(255, 255, 255, 0.6),
+    inset 0 -1px 1px rgba(186, 230, 253, 0.25);
+  --theme-stage-bg: radial-gradient(780px 380px at 18% 0%, rgba(125, 211, 252, 0.28), transparent 58%),
+    radial-gradient(640px 360px at 85% 90%, rgba(167, 139, 250, 0.22), transparent 60%),
+    linear-gradient(180deg, #18233a, #0e1628);
+  --theme-grad: linear-gradient(135deg, #38bdf8, #818cf8);
+}
+
+/* 4. AURORA — Polar Northern Lights Emerald-Cyan + Indigo Wave */
+:root[data-theme="aurora"],
+[data-theme="aurora"] {
+  --island-bg: radial-gradient(300px 130px at 15% 0%, rgba(45, 212, 191, 0.34), transparent 68%),
+    radial-gradient(280px 140px at 88% 100%, rgba(99, 102, 241, 0.32), transparent 70%),
+    linear-gradient(160deg, rgba(4, 38, 42, 0.9), rgba(6, 24, 38, 0.94));
+  --island-border: rgba(45, 212, 191, 0.42);
+  --island-text: #f0fdfa;
+  --island-subtext: #99f6e4;
+  --island-accent: #2dd4bf;
+  --island-accent-text: #5eead4;
+  --island-btn-bg: rgba(45, 212, 191, 0.16);
+  --island-btn-border: rgba(45, 212, 191, 0.42);
+  --island-blur: 22px;
+  --theme-shadow: 0 0 0 1px rgba(45, 212, 191, 0.26),
+    0 10px 34px rgba(20, 184, 166, 0.3),
+    inset 0 1px 0 rgba(153, 246, 228, 0.28);
+  --theme-stage-bg: radial-gradient(820px 380px at 25% 0%, rgba(20, 184, 166, 0.34), transparent 60%),
+    radial-gradient(640px 380px at 85% 25%, rgba(79, 70, 229, 0.28), transparent 58%),
+    linear-gradient(180deg, #042428, #03131b);
+  --theme-grad: linear-gradient(135deg, #14b8a6, #6366f1);
+}
+
+/* 5. SUNSET — Warm Twilight Dusk Amber-Coral Horizon */
+:root[data-theme="sunset"],
+[data-theme="sunset"] {
+  --island-bg: radial-gradient(280px 120px at 20% 0%, rgba(251, 146, 60, 0.36), transparent 68%),
+    radial-gradient(260px 130px at 85% 100%, rgba(244, 63, 94, 0.3), transparent 70%),
+    linear-gradient(155deg, rgba(58, 20, 18, 0.92), rgba(32, 12, 34, 0.94));
+  --island-border: rgba(251, 146, 60, 0.44);
+  --island-text: #fff7ed;
+  --island-subtext: #fed7aa;
+  --island-accent: #fb923c;
+  --island-accent-text: #fdba74;
+  --island-btn-bg: rgba(251, 146, 60, 0.2);
+  --island-btn-border: rgba(251, 146, 60, 0.46);
+  --island-blur: 20px;
+  --theme-shadow: 0 0 0 1px rgba(251, 146, 60, 0.28),
+    0 10px 32px rgba(249, 115, 22, 0.28),
+    inset 0 1px 0 rgba(254, 215, 170, 0.28);
+  --theme-stage-bg: radial-gradient(840px 380px at 20% 0%, rgba(234, 88, 12, 0.34), transparent 60%),
+    radial-gradient(640px 380px at 85% 30%, rgba(225, 29, 72, 0.28), transparent 58%),
+    linear-gradient(180deg, #2b1018, #160914);
+  --theme-grad: linear-gradient(135deg, #fb923c, #f43f5e);
+}
+
+/* 6. MIDNIGHT — Starry Deep Cosmos with Subtle Starfield & Moonlight Halo */
+:root[data-theme="midnight"],
+[data-theme="midnight"] {
+  --island-bg: radial-gradient(rgba(221, 214, 254, 0.26) 0.6px, transparent 0.6px),
+    radial-gradient(320px 140px at 50% 0%, rgba(139, 92, 246, 0.26), transparent 72%),
+    linear-gradient(180deg, rgba(13, 9, 36, 0.94), rgba(6, 4, 20, 0.97));
+  --island-border: rgba(167, 139, 250, 0.36);
+  --island-text: #f5f3ff;
+  --island-subtext: #c4b5fd;
+  --island-accent: #a78bfa;
+  --island-accent-text: #ddd6fe;
+  --island-btn-bg: rgba(139, 92, 246, 0.18);
+  --island-btn-border: rgba(167, 139, 250, 0.42);
+  --island-blur: 20px;
+  --theme-shadow: 0 12px 38px rgba(4, 2, 16, 0.78),
+    0 0 24px rgba(139, 92, 246, 0.22),
+    inset 0 1px 0 rgba(221, 214, 254, 0.22);
+  --theme-stage-bg: radial-gradient(840px 400px at 50% 0%, rgba(109, 40, 217, 0.28), transparent 60%),
+    linear-gradient(180deg, #0b0720, #04020e);
+  --theme-grad: linear-gradient(135deg, #8b5cf6, #6366f1);
+}
+
+/* 7. FOREST — Deep Moss Canopy with Bioluminescent Emerald Dewlight */
+:root[data-theme="forest"],
+[data-theme="forest"] {
+  --island-bg: radial-gradient(280px 120px at 22% 0%, rgba(74, 222, 128, 0.28), transparent 68%),
+    radial-gradient(240px 120px at 84% 100%, rgba(16, 185, 129, 0.24), transparent 70%),
+    linear-gradient(160deg, rgba(10, 40, 24, 0.92), rgba(5, 22, 13, 0.96));
+  --island-border: rgba(74, 222, 128, 0.38);
+  --island-text: #f0fdf4;
+  --island-subtext: #86efac;
+  --island-accent: #4ade80;
+  --island-accent-text: #bbf7d0;
+  --island-btn-bg: rgba(74, 222, 128, 0.16);
+  --island-btn-border: rgba(74, 222, 128, 0.42);
+  --island-blur: 20px;
+  --theme-shadow: 0 0 0 1px rgba(74, 222, 128, 0.24),
+    0 10px 30px rgba(16, 185, 129, 0.24),
+    inset 0 1px 0 rgba(187, 247, 208, 0.24);
+  --theme-stage-bg: radial-gradient(820px 380px at 20% 0%, rgba(22, 163, 74, 0.3), transparent 60%),
+    linear-gradient(180deg, #082416, #04120b);
+  --theme-grad: linear-gradient(135deg, #22c55e, #10b981);
+}
+
+/* Apply theme depth, specular top rim & ambient stage */
+.island-pill {
+  position: relative;
+  box-shadow: var(--theme-shadow, var(--nx-glow));
+  backdrop-filter: blur(var(--island-blur)) saturate(1.45);
+  -webkit-backdrop-filter: blur(var(--island-blur)) saturate(1.45);
+}
+
+:root[data-theme="midnight"] .island-pill {
+  background-size: 22px 22px, 100% 100%, 100% 100%;
+}
+
+.island-pill::before {
+  content: "";
+  position: absolute;
+  inset: 0 12% auto 12%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.48), transparent);
+  pointer-events: none;
+}
+
+.settings-shell {
+  background: var(--theme-stage-bg, var(--island-bg));
+}
+
+.settings-titlebar {
+  background: rgba(11, 7, 32, 0.62);
+  backdrop-filter: blur(16px);
+}
+
+.settings-sidebar {
+  background: rgba(11, 7, 32, 0.46);
+  backdrop-filter: blur(16px);
+}
+
+.settings-nav-btn.active {
+  background: var(--theme-grad, var(--nx-grad));
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 4px 16px rgba(124, 92, 255, 0.38);
+}
+
+.compact-stat,
+.island-clock {
+  font-family: var(--nx-mono);
+}
+
+/* Ensure Running Apps zone is NEVER squished in Compact mode */
+.island-stage {
+  max-width: calc(100vw - 16px);
+}
+
+.taskbar-zone {
+  min-width: 120px;
+  gap: 5px;
+}
+
+.taskbar-app,
+.taskbar-start {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  transition: background-color 140ms ease, transform 120ms ease;
+}
+
+.taskbar-app:active,
+.taskbar-start:active {
+  transform: scale(0.92);
+}
+
+.taskbar-icon-placeholder {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: var(--theme-grad, var(--nx-grad));
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Crisp SVG Media Transport Icon Controls */
+.compact-media {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.compact-media-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--island-btn-bg);
+  border: 1px solid var(--island-btn-border);
+  color: var(--island-text);
+  cursor: pointer;
+  transition: transform 120ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.compact-media-btn:hover {
+  transform: scale(1.06);
+  box-shadow: 0 0 12px rgba(124, 92, 255, 0.38);
+}
+
+.compact-media-btn:active {
+  transform: scale(0.93);
+}
+
+.media-icon-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.media-icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--island-border);
+  color: var(--island-text);
+  cursor: pointer;
+  transition: transform 120ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+
+.media-icon-btn:hover {
+  background: var(--island-btn-bg);
+  border-color: var(--island-accent);
+  transform: translateY(-1px);
+}
+
+.media-icon-btn:active {
+  transform: scale(0.93);
+}
+
+.media-icon-btn.primary {
+  width: 40px;
+  height: 40px;
+  background: var(--theme-grad, var(--nx-grad));
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow: 0 4px 18px rgba(124, 92, 255, 0.45);
+}
+
+.media-icon-btn.primary:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 6px 22px rgba(124, 92, 255, 0.58);
+}
+
+/* Expanded Running Apps & Pinned Shortcuts Deck */
+.apps-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 220px;
+}
+
+.apps-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--island-accent-text);
+}
+
+.pinned-strip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.pinned-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.pinned-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--island-border);
+  color: var(--island-text);
+  font-size: 11px;
+  cursor: pointer;
+  flex: none;
+}
+
+.pinned-chip:hover {
+  background: var(--island-btn-bg);
+}
+
+.pinned-chip .taskbar-icon,
+.pinned-chip .taskbar-icon-placeholder {
+  width: 16px;
+  height: 16px;
+  font-size: 9px;
+}
+
+.pinned-chip-name {
+  max-width: 76px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.apps-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 6px;
+  overflow-y: auto;
+  padding-inline-end: 2px;
+}
+
+.app-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--island-text);
+  font-size: 12px;
+  text-align: start;
+  cursor: pointer;
+  min-width: 0;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.app-list-item:hover {
+  background: var(--island-btn-bg);
+  border-color: var(--island-border);
+}
+
+.app-list-item.active {
+  background: var(--island-btn-bg);
+  border-color: var(--island-accent);
+  box-shadow: 0 2px 12px rgba(124, 92, 255, 0.28);
+}
+
+.app-list-item.minimized {
+  opacity: 0.62;
+}
+
+.app-list-item .taskbar-icon,
+.app-list-item .taskbar-icon-placeholder {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  font-size: 10px;
+}
+
+.app-list-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.app-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--island-subtext);
+  flex: none;
+}
+
+.app-status-dot.active {
+  background: var(--nx-success);
+  box-shadow: 0 0 8px var(--nx-success);
+}
+
+.apps-empty {
+  padding: 18px 12px;
+  border-radius: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--island-subtext);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed var(--island-border);
+}
+
+/* ==========================================================================
+   Responsive Breakpoints (Island & Settings Window)
+   ========================================================================== */
+@media (max-width: 720px) {
+  .settings-body {
+    flex-direction: column;
+  }
+
+  .settings-sidebar {
+    width: 100%;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-inline-end: 0;
+    border-bottom: 1px solid var(--island-border);
+    overflow-x: auto;
+  }
+
+  .settings-wordmark,
+  .settings-title {
+    display: none;
+  }
+
+  .settings-nav {
+    flex-direction: row;
+    margin-top: 0;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .settings-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .settings-nav-btn {
+    white-space: nowrap;
+    padding: 6px 12px;
+    border-radius: 999px;
+  }
+
+  .settings-content {
+    padding: 16px;
+  }
+
+  .theme-grid {
+    grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
+  }
+
+  .settings-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 580px) {
+  .island-sub,
+  .compact-stat-label {
+    display: none;
+  }
+
+  .island-pill {
+    padding: 6px 8px;
+  }
+
+  .apps-list {
+    grid-template-columns: 1fr;
+  }
+}

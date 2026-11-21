@@ -87,7 +87,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // island anchor log. The RunEvent handler restores it on
     // exit, and the watchdog covers a crash. No-op off
     // Windows.
-    taskbar::set_hide_intent(settings.auto_hide_taskbar);
+    taskbar::set_hide_intent(false);
     crate::diagnostics::log(
         "setup",
         &format!(
@@ -114,11 +114,8 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = hotkey::register_island_hotkey(app.handle(), &settings.island_hotkey) {
         eprintln!("Nexora: failed to register island hotkey: {e}");
     }
-    // Watchdog: a separate process watches Nexora and restores the
-    // taskbar if Nexora crashes or is killed; a monitor thread also
-    // watches explorer.exe while Nexora runs. See watchdog.rs.
-    watchdog::start_watchdog();
-    crate::diagnostics::log("setup", "watchdog started");
+    // Taskbar hiding and watchdog are disabled; Nexora runs in floating companion mode.
+    crate::diagnostics::log("setup", "floating companion mode (taskbar untouched)");
     tray::setup(app.handle())?;
     crate::diagnostics::log("setup", "tray setup ok");
     Ok(())
@@ -194,11 +191,7 @@ pub fn run() {
                 // A clean exit leaves this line: when the next
                 // install's log just stops, the process died
                 // instead of exiting.
-                crate::diagnostics::log("shutdown", "exit requested, restoring taskbar");
-                // Clean exit: restore the taskbar synchronously, then
-                // stop the external watchdog (it would restore anyway).
-                watchdog::restore_taskbar();
-                watchdog::stop_watchdog();
+                crate::diagnostics::log("shutdown", "exit requested");
             }
         });
 }

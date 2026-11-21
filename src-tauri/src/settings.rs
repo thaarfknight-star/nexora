@@ -12,7 +12,7 @@ fn default_always_on_top() -> bool {
 }
 
 fn default_auto_hide_taskbar() -> bool {
-    true
+    false
 }
 
 fn default_theme() -> String {
@@ -98,7 +98,7 @@ impl Default for NexoraSettings {
 
 pub fn defaults() -> NexoraSettings {
     NexoraSettings {
-        auto_hide_taskbar: true,
+        auto_hide_taskbar: false,
         always_on_top: true,
         theme: "neon-glass".into(),
         language: "en".into(),
@@ -275,7 +275,7 @@ mod tests {
         assert_eq!(
             load_from_dir(&dir),
             NexoraSettings {
-                auto_hide_taskbar: true,
+                auto_hide_taskbar: false,
                 always_on_top: true,
                 theme: "sunset".into(),
                 island_blur_px: None,
