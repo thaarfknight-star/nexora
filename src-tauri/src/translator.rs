@@ -298,9 +298,9 @@ fn download_file_streaming(
             .map_err(|e| format!("Write error during {stage}: {e}"))?;
         downloaded = downloaded.saturating_add(n as u64);
 
-        if total > 0 {
-            let span = u64::from(end_pct.saturating_sub(start_pct));
-            let pct = start_pct.saturating_add(((downloaded * span) / total) as u8);
+        let span = u64::from(end_pct.saturating_sub(start_pct));
+        if let Some(delta) = (downloaded * span).checked_div(total) {
+            let pct = start_pct.saturating_add(delta as u8);
             if pct > last_emitted {
                 last_emitted = pct;
                 let _ = app.emit(
