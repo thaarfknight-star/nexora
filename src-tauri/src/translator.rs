@@ -450,7 +450,7 @@ pub fn remove_translate_engine(app: AppHandle) -> Result<TranslateEngineStatus, 
 }
 
 #[tauri::command]
-pub fn start_live_translate(
+pub async fn start_live_translate(
     app: AppHandle,
     source_lang: String,
     target_lang: String,
