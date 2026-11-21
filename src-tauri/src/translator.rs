@@ -460,7 +460,7 @@ fn record_windows_audio_chunk(wav_path: &Path) -> bool {
     let out_file = wav_path.to_string_lossy();
     let lines = [
         "$ErrorActionPreference='SilentlyContinue'",
-        "Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;using System.Text;public class WinMM{[DllImport("winmm.dll",CharSet=CharSet.Auto)]public static extern int mciSendString(string c,StringBuilder r,int l,IntPtr cb);}'",
+        r#"Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;using System.Text;public class WinMM{[DllImport("winmm.dll",CharSet=CharSet.Auto)]public static extern int mciSendString(string c,StringBuilder r,int l,IntPtr cb);}'"#,
         "[WinMM]::mciSendString('open new Type waveaudio Alias nxrec',$null,0,[IntPtr]::Zero)|Out-Null",
         "[WinMM]::mciSendString('set nxrec bitspersample 16 channels 1 samplespersec 16000',$null,0,[IntPtr]::Zero)|Out-Null",
         "[WinMM]::mciSendString('record nxrec',$null,0,[IntPtr]::Zero)|Out-Null",
