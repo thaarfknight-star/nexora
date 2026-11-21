@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "settings",
-  "description": "Window controls for the Settings window: close button and drag region",
+  "description": "Window controls for the Settings window: hide, close button, and drag region",
   "windows": [
     "settings"
   ],
   "permissions": [
+    "core:window:allow-hide",
     "core:window:allow-close",
     "core:window:allow-start-dragging"
   ]
