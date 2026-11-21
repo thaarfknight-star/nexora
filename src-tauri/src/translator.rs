@@ -14,8 +14,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
 const MODEL_FILENAME: &str = "ggml-tiny.bin";
-const MODEL_URL: &str =
-    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin";
+const MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin";
 const WHISPER_ZIP_URL: &str =
     "https://github.com/ggml-org/whisper.cpp/releases/latest/download/whisper-bin-x64.zip";
 
@@ -508,8 +507,8 @@ pub async fn test_subtitle_overlay(
     let tl = target_lang.clone();
     let translated =
         tauri::async_runtime::spawn_blocking(move || translate_text(&clean, "auto", &tl))
-        .await
-        .map_err(|e| e.to_string())?;
+            .await
+            .map_err(|e| e.to_string())?;
 
     let payload = SubtitlePayload {
         original: text,
