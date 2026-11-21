@@ -161,6 +161,7 @@ pub fn run() {
             ipc::media_pause,
             ipc::media_next,
             ipc::media_previous,
+            ipc::media_stop,
             ipc::get_taskbar_status,
             ipc::set_taskbar_hidden,
             taskbar::notify_island_shown,
