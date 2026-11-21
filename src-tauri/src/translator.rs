@@ -566,7 +566,8 @@ fn run_wasapi_loopback_worker(
     use std::collections::VecDeque;
     use std::time::Instant;
     use wasapi::{
-        initialize_mta, AudioClient, DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat,
+        initialize_mta, AudioClient, DeviceEnumerator, Direction, SampleType, StreamMode,
+        WaveFormat,
     };
 
     let _ = initialize_mta();
@@ -629,7 +630,10 @@ fn run_wasapi_loopback_worker(
             loop {
                 match capture_client.get_next_packet_size() {
                     Ok(Some(frames)) if frames > 0 => {
-                        if capture_client.read_from_device_to_deque(&mut deque).is_err() {
+                        if capture_client
+                            .read_from_device_to_deque(&mut deque)
+                            .is_err()
+                        {
                             break;
                         }
                     }
