@@ -4,19 +4,23 @@
 //! using pure native Rust HTTP streaming (`reqwest`) and native ZIP extraction
 //! (`zip`) — never spawning `curl.exe` or `powershell.exe` during download.
 //!
-//! Audio capture on Windows uses native WASAPI loopback ONLY — supporting both:
-//! - `"system"`: Full internal system playback audio (`Direction::Render` loopback)
-//! - `"app"`: Specific application / window process-tree loopback
-//!   (`AudioClient::new_application_loopback_client(pid, true)`)
-//!
-//! External microphone audio is NEVER captured.
+//! Low-latency pipeline on Windows:
+//! 1. **WASAPI Loopback Producer Thread**: Captures internal system audio
+//!    (`"system"`) or a specific app's process-tree (`"app"`) with zero
+//!    microphone input. Uses fast VAD pause endpointing (900–2,000 ms chunks)
+//!    so phrases flush immediately on natural speech pauses.
+//! 2. **Pipelined Inference & Translation Consumer Thread**: Keeps
+//!    `whisper-server.exe` warm in RAM (no 75 MB model reload per chunk,
+//!    in-memory WAV multipart POST, greedy `-bo 1 -bs 1 -nf -sns`), with
+//!    automatic fallback to fast `whisper-cli.exe`, and translates over a
+//!    persistent keep-alive `reqwest` HTTP client.
 
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -32,11 +36,16 @@ const SUBTITLE_BOTTOM_MARGIN: f64 = 72.0;
 #[cfg(target_os = "windows")]
 const CAPTURE_SAMPLE_RATE: usize = 16_000;
 #[cfg(target_os = "windows")]
-const CHUNK_DURATION_MS: u64 = 3_200;
-const SPEECH_RMS_THRESHOLD: f32 = 140.0;
+const MIN_SPEECH_MS: u64 = 850;
+#[cfg(target_os = "windows")]
+const PAUSE_FLUSH_MS: u64 = 240;
+#[cfg(target_os = "windows")]
+const MAX_CHUNK_MS: u64 = 2_000;
+const SPEECH_RMS_THRESHOLD: f32 = 135.0;
 
 static DOWNLOADING: AtomicBool = AtomicBool::new(false);
 static RUNNING: AtomicBool = AtomicBool::new(false);
+static TRANSLATE_HTTP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
 
 static ENGINE_STATE: Mutex<EnginePrefs> = Mutex::new(EnginePrefs {
     source_lang: None,
@@ -92,6 +101,20 @@ pub struct DownloadProgressPayload {
     pub stage: String,
 }
 
+fn shared_http_client() -> &'static reqwest::blocking::Client {
+    TRANSLATE_HTTP_CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .connect_timeout(Duration::from_secs(4))
+            .timeout(Duration::from_secs(8))
+            .pool_idle_timeout(Duration::from_secs(90))
+            .pool_max_idle_per_host(4)
+            .tcp_nodelay(true)
+            .user_agent("Nexora/0.2")
+            .build()
+            .unwrap_or_else(|_| reqwest::blocking::Client::new())
+    })
+}
+
 /// Builds a `Command` that never flashes a console window on Windows.
 fn hidden_command<S: AsRef<std::ffi::OsStr>>(program: S) -> std::process::Command {
     let mut cmd = std::process::Command::new(program);
@@ -124,6 +147,16 @@ fn find_whisper_binary(dir: &Path) -> Option<PathBuf> {
         dir.join("main.exe"),
         dir.join("Release").join("whisper-cli.exe"),
         dir.join("bin").join("whisper-cli.exe"),
+    ];
+    candidates.into_iter().find(|p| p.exists())
+}
+
+#[cfg(target_os = "windows")]
+fn find_whisper_server(dir: &Path) -> Option<PathBuf> {
+    let candidates = [
+        dir.join("whisper-server.exe"),
+        dir.join("Release").join("whisper-server.exe"),
+        dir.join("bin").join("whisper-server.exe"),
     ];
     candidates.into_iter().find(|p| p.exists())
 }
@@ -251,40 +284,75 @@ pub fn parse_google_translate_response(raw: &str) -> Option<String> {
     }
 }
 
-/// Writes 16 kHz, 16-bit signed mono PCM samples into a standard RIFF/WAVE file.
-pub fn write_pcm16_mono_wav(path: &Path, pcm_bytes: &[u8], sample_rate: u32) -> Result<(), String> {
+/// Builds an in-memory 16-bit signed mono RIFF/WAVE buffer for zero-disk-I/O
+/// inference against `whisper-server.exe`.
+pub fn encode_pcm16_mono_wav_bytes(pcm_bytes: &[u8], sample_rate: u32) -> Vec<u8> {
     let data_len = u32::try_from(pcm_bytes.len()).unwrap_or(u32::MAX - 36);
     let riff_size = data_len.saturating_add(36);
     let byte_rate = sample_rate.saturating_mul(2);
+    let mut out = Vec::with_capacity(44 + data_len as usize);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&riff_size.to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&sample_rate.to_le_bytes());
+    out.extend_from_slice(&byte_rate.to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data_len.to_le_bytes());
+    out.extend_from_slice(&pcm_bytes[..data_len as usize]);
+    out
+}
+
+/// Writes 16 kHz, 16-bit signed mono PCM samples into a standard RIFF/WAVE file.
+pub fn write_pcm16_mono_wav(path: &Path, pcm_bytes: &[u8], sample_rate: u32) -> Result<(), String> {
+    let wav = encode_pcm16_mono_wav_bytes(pcm_bytes, sample_rate);
     let mut file = File::create(path).map_err(|e| format!("Failed to create WAV file: {e}"))?;
-    file.write_all(b"RIFF").map_err(|e| e.to_string())?;
-    file.write_all(&riff_size.to_le_bytes())
-        .map_err(|e| e.to_string())?;
-    file.write_all(b"WAVEfmt ").map_err(|e| e.to_string())?;
-    file.write_all(&16u32.to_le_bytes())
-        .map_err(|e| e.to_string())?;
-    file.write_all(&1u16.to_le_bytes())
-        .map_err(|e| e.to_string())?;
-    file.write_all(&1u16.to_le_bytes())
-        .map_err(|e| e.to_string())?;
-    file.write_all(&sample_rate.to_le_bytes())
-        .map_err(|e| e.to_string())?;
-    file.write_all(&byte_rate.to_le_bytes())
-        .map_err(|e| e.to_string())?;
-    file.write_all(&2u16.to_le_bytes())
-        .map_err(|e| e.to_string())?;
-    file.write_all(&16u16.to_le_bytes())
-        .map_err(|e| e.to_string())?;
-    file.write_all(b"data").map_err(|e| e.to_string())?;
-    file.write_all(&data_len.to_le_bytes())
-        .map_err(|e| e.to_string())?;
-    file.write_all(&pcm_bytes[..data_len as usize])
-        .map_err(|e| e.to_string())?;
+    file.write_all(&wav).map_err(|e| e.to_string())?;
     file.flush().map_err(|e| e.to_string())
 }
 
-/// Returns `true` when 16-bit PCM audio exceeds the silence gate RMS threshold.
-pub fn has_audible_speech(pcm_bytes: &[u8]) -> bool {
+/// Builds a lightweight RFC 7578 `multipart/form-data` payload for
+/// `whisper-server.exe /inference`.
+pub fn build_whisper_multipart_body(wav_bytes: &[u8], boundary: &str) -> Vec<u8> {
+    let mut body = Vec::with_capacity(wav_bytes.len() + 512);
+    body.extend_from_slice(
+        format!(
+            "--{boundary}\r\n\
+             Content-Disposition: form-data; name=\"response_format\"\r\n\r\n\
+             text\r\n\
+             --{boundary}\r\n\
+             Content-Disposition: form-data; name=\"temperature\"\r\n\r\n\
+             0.0\r\n\
+             --{boundary}\r\n\
+             Content-Disposition: form-data; name=\"file\"; filename=\"chunk.wav\"\r\n\
+             Content-Type: audio/wav\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(wav_bytes);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    body
+}
+
+/// Parses plain-text or JSON (`{"text": "..."}`) output from `whisper-server.exe`.
+pub fn parse_whisper_server_response(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.starts_with('{') {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            if let Some(txt) = val.get("text").and_then(|v| v.as_str()) {
+                return clean_whisper_output(txt);
+            }
+        }
+    }
+    clean_whisper_output(trimmed)
+}
+
+/// Computes the RMS amplitude of 16-bit little-endian signed PCM bytes.
+pub fn pcm16_rms(pcm_bytes: &[u8]) -> f32 {
     let mut sum_sq: f64 = 0.0;
     let mut count: u64 = 0;
     let (chunks, _) = pcm_bytes.as_chunks::<2>();
@@ -294,10 +362,14 @@ pub fn has_audible_speech(pcm_bytes: &[u8]) -> bool {
         count += 1;
     }
     if count == 0 {
-        return false;
+        return 0.0;
     }
-    let rms = (sum_sq / (count as f64)).sqrt() as f32;
-    rms >= SPEECH_RMS_THRESHOLD
+    (sum_sq / (count as f64)).sqrt() as f32
+}
+
+/// Returns `true` when 16-bit PCM audio exceeds the silence gate RMS threshold.
+pub fn has_audible_speech(pcm_bytes: &[u8]) -> bool {
+    pcm16_rms(pcm_bytes) >= SPEECH_RMS_THRESHOLD
 }
 
 /// Strips Whisper silence hallucinations and bracketed non-speech markers.
@@ -315,7 +387,7 @@ pub fn clean_whisper_output(raw: &str) -> String {
         .join(" ")
 }
 
-/// Translates `text` into `target_lang` natively using `reqwest` (no external curl process).
+/// Translates `text` into `target_lang` over the persistent pooled HTTP client.
 fn translate_text(text: &str, source_lang: &str, target_lang: &str) -> String {
     let clean = text.trim();
     if clean.is_empty() {
@@ -331,19 +403,14 @@ fn translate_text(text: &str, source_lang: &str, target_lang: &str) -> String {
     } else {
         target_lang
     };
+    if sl != "auto" && sl.eq_ignore_ascii_case(tl) {
+        return clean.to_string();
+    }
     let url = format!(
         "https://translate.googleapis.com/translate_a/single?client=gtx&sl={sl}&tl={tl}&dt=t&q={}",
         url_encode_query(clean)
     );
-    let client = match reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(6))
-        .user_agent("Nexora/0.2")
-        .build()
-    {
-        Ok(c) => c,
-        Err(_) => return clean.to_string(),
-    };
-    if let Ok(resp) = client.get(&url).send() {
+    if let Ok(resp) = shared_http_client().get(&url).send() {
         if resp.status().is_success() {
             if let Ok(body) = resp.text() {
                 if let Some(translated) = parse_google_translate_response(&body) {
@@ -554,10 +621,141 @@ fn list_windows_audio_targets() -> Vec<AudioAppTarget> {
 }
 
 #[cfg(target_os = "windows")]
+struct ResidentWhisperServer {
+    child: std::process::Child,
+    endpoint: String,
+}
+
+#[cfg(target_os = "windows")]
+impl ResidentWhisperServer {
+    fn start(server_bin: &Path, model: &Path, source_lang: &str, threads: usize) -> Option<Self> {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
+        let port = listener.local_addr().ok()?.port();
+        drop(listener);
+
+        let mut args = vec![
+            "-m".to_string(),
+            model.to_string_lossy().to_string(),
+            "--host".to_string(),
+            "127.0.0.1".to_string(),
+            "--port".to_string(),
+            port.to_string(),
+            "-t".to_string(),
+            threads.to_string(),
+            "-bo".to_string(),
+            "1".to_string(),
+            "-bs".to_string(),
+            "1".to_string(),
+            "-nt".to_string(),
+            "-nf".to_string(),
+            "-sns".to_string(),
+        ];
+        if !source_lang.is_empty() {
+            args.push("-l".to_string());
+            args.push(source_lang.to_string());
+        }
+
+        let mut child = hidden_command(server_bin)
+            .args(&args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+
+        // Wait up to 4 seconds for whisper-server.exe to finish loading ggml-tiny.bin into RAM.
+        for _ in 0..40 {
+            if !RUNNING.load(Ordering::SeqCst) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                return Some(Self {
+                    child,
+                    endpoint: format!("http://127.0.0.1:{port}/inference"),
+                });
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        let _ = child.kill();
+        let _ = child.wait();
+        None
+    }
+
+    fn transcribe_pcm(&self, pcm_bytes: &[u8]) -> Option<String> {
+        let wav_bytes = encode_pcm16_mono_wav_bytes(pcm_bytes, CAPTURE_SAMPLE_RATE as u32);
+        let boundary = "----NexoraWhisperBoundary9f8e7d";
+        let body = build_whisper_multipart_body(&wav_bytes, boundary);
+        let resp = shared_http_client()
+            .post(&self.endpoint)
+            .header(
+                "Content-Type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(body)
+            .send()
+            .ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let raw = resp.text().ok()?;
+        Some(parse_whisper_server_response(&raw))
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for ResidentWhisperServer {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn transcribe_cli_fallback(
+    bin: &Path,
+    model: &Path,
+    wav_path: &Path,
+    pcm_bytes: &[u8],
+    source_lang: &str,
+    threads: usize,
+) -> Option<String> {
+    write_pcm16_mono_wav(wav_path, pcm_bytes, CAPTURE_SAMPLE_RATE as u32).ok()?;
+    let mut args = vec![
+        "-m".to_string(),
+        model.to_string_lossy().to_string(),
+        "-f".to_string(),
+        wav_path.to_string_lossy().to_string(),
+        "-t".to_string(),
+        threads.to_string(),
+        "-bo".to_string(),
+        "1".to_string(),
+        "-bs".to_string(),
+        "1".to_string(),
+        "-nt".to_string(),
+        "-nf".to_string(),
+        "-sns".to_string(),
+        "-np".to_string(),
+    ];
+    if source_lang != "auto" && !source_lang.is_empty() {
+        args.push("-l".to_string());
+        args.push(source_lang.to_string());
+    }
+    let out = hidden_command(bin).args(&args).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(clean_whisper_output(&String::from_utf8_lossy(&out.stdout)))
+}
+
+#[cfg(target_os = "windows")]
 #[allow(clippy::too_many_arguments)]
 fn run_wasapi_loopback_worker(
     app: &AppHandle,
-    bin: &Path,
+    dir: &Path,
+    cli_bin: &Path,
     model: &Path,
     wav_path: &Path,
     source_lang: &str,
@@ -566,6 +764,7 @@ fn run_wasapi_loopback_worker(
     target_pid: Option<u32>,
 ) -> Result<(), String> {
     use std::collections::VecDeque;
+    use std::sync::mpsc;
     use std::time::Instant;
     use wasapi::{
         initialize_mta, AudioClient, DeviceEnumerator, Direction, SampleType, StreamMode,
@@ -619,78 +818,133 @@ fn run_wasapi_loopback_worker(
         .start_stream()
         .map_err(|e| format!("Failed to start WASAPI loopback stream: {e}"))?;
 
-    let mut deque: VecDeque<u8> = VecDeque::with_capacity(CAPTURE_SAMPLE_RATE * 2 * 4);
+    // Pipelined consumer thread: runs warm resident whisper-server.exe + pooled
+    // HTTP translation concurrently while this thread keeps capturing audio.
+    let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(2);
+    let app_consumer = app.clone();
+    let server_bin_opt = find_whisper_server(dir);
+    let cli_bin_owned = cli_bin.to_path_buf();
+    let model_owned = model.to_path_buf();
+    let wav_owned = wav_path.to_path_buf();
+    let src_owned = source_lang.to_string();
+    let tgt_owned = target_lang.to_string();
 
-    while RUNNING.load(Ordering::SeqCst) {
-        deque.clear();
-        let started = Instant::now();
-        while RUNNING.load(Ordering::SeqCst)
-            && started.elapsed() < Duration::from_millis(CHUNK_DURATION_MS)
-        {
-            // Short timeout so silence never blocks shutdown or stalls the loop.
-            let _ = h_event.wait_for_event(200);
-            loop {
-                match capture_client.get_next_packet_size() {
-                    Ok(Some(frames)) if frames > 0 => {
-                        if capture_client
-                            .read_from_device_to_deque(&mut deque)
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    _ => break,
-                }
+    let consumer_handle = std::thread::spawn(move || {
+        let threads = std::thread::available_parallelism()
+            .map(|n| n.get().clamp(2, 6))
+            .unwrap_or(4);
+        let server = server_bin_opt
+            .as_deref()
+            .and_then(|sb| ResidentWhisperServer::start(sb, &model_owned, &src_owned, threads));
+
+        while let Ok(pcm_bytes) = rx.recv() {
+            if !RUNNING.load(Ordering::SeqCst) {
+                break;
             }
-        }
+            let text_opt = server
+                .as_ref()
+                .and_then(|srv| srv.transcribe_pcm(&pcm_bytes))
+                .or_else(|| {
+                    transcribe_cli_fallback(
+                        &cli_bin_owned,
+                        &model_owned,
+                        &wav_owned,
+                        &pcm_bytes,
+                        &src_owned,
+                        threads,
+                    )
+                });
 
-        if !RUNNING.load(Ordering::SeqCst) {
-            break;
-        }
-        if deque.len() < CAPTURE_SAMPLE_RATE {
-            continue;
-        }
-        let pcm_bytes: Vec<u8> = deque.drain(..).collect();
-        if !has_audible_speech(&pcm_bytes) {
-            continue;
-        }
-        if write_pcm16_mono_wav(wav_path, &pcm_bytes, CAPTURE_SAMPLE_RATE as u32).is_err() {
-            continue;
-        }
-
-        let mut args = vec![
-            "-m".to_string(),
-            model.to_string_lossy().to_string(),
-            "-f".to_string(),
-            wav_path.to_string_lossy().to_string(),
-            "-nt".to_string(),
-            "-np".to_string(),
-        ];
-        if source_lang != "auto" && !source_lang.is_empty() {
-            args.push("-l".to_string());
-            args.push(source_lang.to_string());
-        }
-
-        if let Ok(out) = hidden_command(bin).args(&args).output() {
-            if out.status.success() {
-                let text = clean_whisper_output(&String::from_utf8_lossy(&out.stdout));
-                if !text.is_empty() {
-                    let translated = translate_text(&text, source_lang, target_lang);
+            if let Some(text) = text_opt {
+                if !text.is_empty() && RUNNING.load(Ordering::SeqCst) {
+                    let translated = translate_text(&text, &src_owned, &tgt_owned);
                     emit_subtitle(
-                        app,
+                        &app_consumer,
                         &SubtitlePayload {
                             original: text,
                             translated,
-                            target_lang: target_lang.to_string(),
+                            target_lang: tgt_owned.clone(),
                             active: true,
                         },
                     );
                 }
             }
         }
+    });
+
+    // Producer loop with VAD pause endpointing (flushes immediately on natural
+    // 240 ms pause once >= 850 ms of speech is collected, hard cap 2,000 ms).
+    let mut deque: VecDeque<u8> = VecDeque::with_capacity(CAPTURE_SAMPLE_RATE * 2 * 3);
+    let mut speech_started: Option<Instant> = None;
+    let mut last_voice_at: Option<Instant> = None;
+    let mut packet_buf: VecDeque<u8> = VecDeque::with_capacity(8192);
+
+    while RUNNING.load(Ordering::SeqCst) {
+        let _ = h_event.wait_for_event(80);
+        let mut received_any = false;
+
+        loop {
+            match capture_client.get_next_packet_size() {
+                Ok(Some(frames)) if frames > 0 => {
+                    packet_buf.clear();
+                    if capture_client
+                        .read_from_device_to_deque(&mut packet_buf)
+                        .is_err()
+                    {
+                        break;
+                    }
+                    if packet_buf.is_empty() {
+                        break;
+                    }
+                    received_any = true;
+                    let pkt_slice: Vec<u8> = packet_buf.drain(..).collect();
+                    let voiced = has_audible_speech(&pkt_slice);
+                    let now = Instant::now();
+                    if voiced {
+                        if speech_started.is_none() {
+                            speech_started = Some(now);
+                        }
+                        last_voice_at = Some(now);
+                        deque.extend(pkt_slice);
+                    } else if speech_started.is_some() {
+                        // Keep short trailing silence inside an active phrase.
+                        deque.extend(pkt_slice);
+                    }
+                }
+                _ => break,
+            }
+        }
+
+        if !RUNNING.load(Ordering::SeqCst) {
+            break;
+        }
+
+        if let Some(started) = speech_started {
+            let now = Instant::now();
+            let elapsed_ms = now.duration_since(started).as_millis() as u64;
+            let silence_ms = last_voice_at
+                .map(|t| now.duration_since(t).as_millis() as u64)
+                .unwrap_or(0);
+            let pause_ready = elapsed_ms >= MIN_SPEECH_MS && silence_ms >= PAUSE_FLUSH_MS;
+            let cap_ready = elapsed_ms >= MAX_CHUNK_MS;
+
+            if pause_ready || cap_ready {
+                let pcm_bytes: Vec<u8> = deque.drain(..).collect();
+                speech_started = None;
+                last_voice_at = None;
+                if pcm_bytes.len() >= CAPTURE_SAMPLE_RATE / 2 && has_audible_speech(&pcm_bytes) {
+                    // Non-blocking send: never build up multi-second backlog if CPU is busy.
+                    let _ = tx.try_send(pcm_bytes);
+                }
+            }
+        } else if !received_any {
+            deque.clear();
+        }
     }
 
+    drop(tx);
     let _ = audio_client.stop_stream();
+    let _ = consumer_handle.join();
     Ok(())
 }
 
@@ -884,6 +1138,7 @@ pub async fn start_live_translate(
             {
                 if let Err(err) = run_wasapi_loopback_worker(
                     &app_worker,
+                    &dir,
                     &bin,
                     &model,
                     &wav_path,
@@ -914,6 +1169,7 @@ pub async fn start_live_translate(
             #[cfg(not(target_os = "windows"))]
             {
                 let _ = (
+                    &dir,
                     &bin,
                     &model,
                     &wav_path,
@@ -1054,5 +1310,22 @@ mod tests {
         assert_eq!(bytes.len(), 44 + 640);
         assert_eq!(&bytes[0..4], b"RIFF");
         assert_eq!(&bytes[8..12], b"WAVE");
+    }
+
+    #[test]
+    fn builds_multipart_body_and_parses_server_json_or_text() {
+        let body = build_whisper_multipart_body(b"RIFF", "BOUND");
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("--BOUND\r\n"));
+        assert!(text.contains("filename=\"chunk.wav\""));
+        assert!(text.contains("--BOUND--\r\n"));
+        assert_eq!(
+            parse_whisper_server_response(r#"{"text":"  Hello fast world \n"}"#),
+            "Hello fast world"
+        );
+        assert_eq!(
+            parse_whisper_server_response("  Plain text line  \n"),
+            "Plain text line"
+        );
     }
 }
