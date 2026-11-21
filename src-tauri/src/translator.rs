@@ -464,7 +464,9 @@ fn record_windows_audio_chunk(wav_path: &Path) -> bool {
         "[WinMM]::mciSendString('set nxrec bitspersample 16 channels 1 samplespersec 16000',$null,0,[IntPtr]::Zero)|Out-Null",
         "[WinMM]::mciSendString('record nxrec',$null,0,[IntPtr]::Zero)|Out-Null",
         "Start-Sleep -Milliseconds 3500",
-        &format!("[WinMM]::mciSendString('save nxrec "{out_file}"',$null,0,[IntPtr]::Zero)|Out-Null"),
+        &format!(
+            r#"[WinMM]::mciSendString('save nxrec "{out_file}"',$null,0,[IntPtr]::Zero)|Out-Null"#
+        ),
         "[WinMM]::mciSendString('close nxrec',$null,0,[IntPtr]::Zero)|Out-Null",
     ];
     let script = lines.join("; ");
