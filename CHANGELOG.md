@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.7] - 2026-11-21
+
+### What's New
+- **Warm Resident `whisper-server.exe` in RAM**: Keeps the `ggml-tiny.bin` model loaded in memory and sends in-memory WAV chunks over localhost HTTP (with automatic fast `whisper-cli.exe` fallback), eliminating per-sentence model reload latency.
+- **2-Thread Pipelined Capture & Inference**: Separates WASAPI loopback audio capture from Whisper + translation onto concurrent threads so audio is never dropped while translating.
+- **Smart VAD Pause Endpointing**: Flushes speech chunks immediately on natural 240 ms pauses (850 ms min, 2,000 ms cap) instead of waiting a fixed 3.2 seconds.
+- **Persistent Keep-Alive Translation Client**: Reuses pooled HTTP/TLS connections to Google Translate (`OnceLock<reqwest::blocking::Client>` + `tcp_nodelay`).
+
+### Bug Fixes
+- Fixed multi-second live subtitle lag caused by serial capture, repeated 75 MB model cold-starts, and per-chunk TLS handshakes.
+- Added bounded non-blocking channel backpressure (`try_send`) so subtitle latency never accumulates during long videos.
+
 ## [0.2.6] - 2026-11-21
 
 ### What's New
