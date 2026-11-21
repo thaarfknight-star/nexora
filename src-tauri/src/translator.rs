@@ -35,16 +35,21 @@ const SUBTITLE_BOTTOM_MARGIN: f64 = 72.0;
 
 #[cfg(target_os = "windows")]
 const CAPTURE_SAMPLE_RATE: usize = 16_000;
+/// Minimum audio accumulated before emitting the very first partial words (~300 ms).
 #[cfg(target_os = "windows")]
-const MIN_SPEECH_MS: u64 = 550;
+const MIN_STREAM_BYTES: usize = (CAPTURE_SAMPLE_RATE * 2 * 300) / 1000;
+/// Snapshot interval while speech is active — updates subtitles word-by-word every 250 ms.
 #[cfg(target_os = "windows")]
-const PAUSE_FLUSH_MS: u64 = 180;
+const STREAM_STEP_MS: u64 = 250;
+/// Silence pause that finalizes the current sentence and starts a fresh rolling window.
 #[cfg(target_os = "windows")]
-const MAX_CHUNK_MS: u64 = 1_150;
-/// 160 ms overlap tail at 16 kHz 16-bit mono so words at chunk boundaries never clip.
+const PHRASE_RESET_SILENCE_MS: u64 = 450;
+/// Max rolling speech window (4.2 s); older 1.8 s trims smoothly during continuous speech.
 #[cfg(target_os = "windows")]
-const OVERLAP_TAIL_BYTES: usize = (CAPTURE_SAMPLE_RATE * 2 * 160) / 1000;
-const SPEECH_RMS_THRESHOLD: f32 = 125.0;
+const MAX_ROLLING_BYTES: usize = (CAPTURE_SAMPLE_RATE * 2 * 4200) / 1000;
+#[cfg(target_os = "windows")]
+const ROLLING_TRIM_BYTES: usize = (CAPTURE_SAMPLE_RATE * 2 * 1800) / 1000;
+const SPEECH_RMS_THRESHOLD: f32 = 120.0;
 
 static DOWNLOADING: AtomicBool = AtomicBool::new(false);
 static RUNNING: AtomicBool = AtomicBool::new(false);
@@ -650,7 +655,7 @@ impl ResidentWhisperServer {
             "-bs".to_string(),
             "1".to_string(),
             "-ac".to_string(),
-            "512".to_string(),
+            "256".to_string(),
             "-nt".to_string(),
             "-nf".to_string(),
             "-sns".to_string(),
@@ -740,7 +745,7 @@ fn transcribe_cli_fallback(
         "-bs".to_string(),
         "1".to_string(),
         "-ac".to_string(),
-        "512".to_string(),
+        "256".to_string(),
         "-nt".to_string(),
         "-nf".to_string(),
         "-sns".to_string(),
@@ -771,7 +776,6 @@ fn run_wasapi_loopback_worker(
     target_pid: Option<u32>,
 ) -> Result<(), String> {
     use std::collections::VecDeque;
-    use std::sync::mpsc;
     use std::time::Instant;
     use wasapi::{
         initialize_mta, AudioClient, DeviceEnumerator, Direction, SampleType, StreamMode,
@@ -825,23 +829,42 @@ fn run_wasapi_loopback_worker(
         .start_stream()
         .map_err(|e| format!("Failed to start WASAPI loopback stream: {e}"))?;
 
-    // 3-stage decoupled streaming pipeline:
-    // Thread 1 (this): WASAPI loopback capture with 160 ms overlap tail & rapid 550-1150 ms flush
-    // Thread 2: Warm resident whisper-server.exe (-ac 512, ~60-90 ms inference)
-    // Thread 3: Dedicated pooled keep-alive translation worker with phrase cache
-    let (audio_tx, audio_rx) = mpsc::sync_channel::<Vec<u8>>(2);
-    let (text_tx, text_rx) = mpsc::sync_channel::<String>(2);
+    // True word-by-word incremental streaming pipeline using Latest-Only slots
+    // (zero FIFO backlog — always transcribes and translates the newest words):
+    // Thread 1 (this): Rolling WASAPI speech buffer, snapshotting every 250 ms
+    // Thread 2: Warm resident whisper-server.exe (-ac 256, ~35-60 ms inference)
+    // Thread 3: Dedicated pooled keep-alive translator updating live in place
+    let audio_slot = std::sync::Arc::new((
+        Mutex::new((None::<Vec<u8>>, false)),
+        std::sync::Condvar::new(),
+    ));
+    let text_slot = std::sync::Arc::new((
+        Mutex::new((None::<String>, false)),
+        std::sync::Condvar::new(),
+    ));
 
+    let text_slot_rx = std::sync::Arc::clone(&text_slot);
     let app_translator = app.clone();
     let src_for_tr = source_lang.to_string();
     let tgt_for_tr = target_lang.to_string();
     let translator_handle = std::thread::spawn(move || {
         let mut cache: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let mut last_emitted = String::new();
-        while let Ok(text) = text_rx.recv() {
-            if !RUNNING.load(Ordering::SeqCst) {
-                break;
-            }
+        let (lock, cvar) = &*text_slot_rx;
+        loop {
+            let text = {
+                let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+                while guard.0.is_none() && !guard.1 && RUNNING.load(Ordering::SeqCst) {
+                    guard = cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
+                }
+                if guard.1 || !RUNNING.load(Ordering::SeqCst) {
+                    break;
+                }
+                guard.0.take()
+            };
+            let Some(text) = text else {
+                continue;
+            };
             if text.eq_ignore_ascii_case(&last_emitted) {
                 continue;
             }
@@ -849,7 +872,7 @@ fn run_wasapi_loopback_worker(
                 cached.clone()
             } else {
                 let res = translate_text(&text, &src_for_tr, &tgt_for_tr);
-                if cache.len() >= 128 {
+                if cache.len() >= 256 {
                     cache.clear();
                 }
                 cache.insert(text.clone(), res.clone());
@@ -870,6 +893,8 @@ fn run_wasapi_loopback_worker(
         }
     });
 
+    let audio_slot_rx = std::sync::Arc::clone(&audio_slot);
+    let text_slot_tx = std::sync::Arc::clone(&text_slot);
     let server_bin_opt = find_whisper_server(dir);
     let cli_bin_owned = cli_bin.to_path_buf();
     let model_owned = model.to_path_buf();
@@ -884,10 +909,21 @@ fn run_wasapi_loopback_worker(
             .as_deref()
             .and_then(|sb| ResidentWhisperServer::start(sb, &model_owned, &src_owned, threads));
 
-        while let Ok(pcm_bytes) = audio_rx.recv() {
-            if !RUNNING.load(Ordering::SeqCst) {
-                break;
-            }
+        let (lock, cvar) = &*audio_slot_rx;
+        loop {
+            let pcm_bytes = {
+                let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+                while guard.0.is_none() && !guard.1 && RUNNING.load(Ordering::SeqCst) {
+                    guard = cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
+                }
+                if guard.1 || !RUNNING.load(Ordering::SeqCst) {
+                    break;
+                }
+                guard.0.take()
+            };
+            let Some(pcm_bytes) = pcm_bytes else {
+                continue;
+            };
             let text_opt = server
                 .as_ref()
                 .and_then(|srv| srv.transcribe_pcm(&pcm_bytes))
@@ -904,22 +940,30 @@ fn run_wasapi_loopback_worker(
 
             if let Some(text) = text_opt {
                 if !text.is_empty() && RUNNING.load(Ordering::SeqCst) {
-                    let _ = text_tx.try_send(text);
+                    let (tlock, tcvar) = &*text_slot_tx;
+                    let mut tg = tlock.lock().unwrap_or_else(|e| e.into_inner());
+                    tg.0 = Some(text);
+                    tcvar.notify_one();
                 }
             }
         }
-        drop(text_tx);
+        let (tlock, tcvar) = &*text_slot_tx;
+        let mut tg = tlock.lock().unwrap_or_else(|e| e.into_inner());
+        tg.1 = true;
+        tcvar.notify_all();
     });
 
-    // Producer loop with rapid VAD endpointing + 160 ms overlap tail for continuous flow.
-    let mut deque: VecDeque<u8> = VecDeque::with_capacity(CAPTURE_SAMPLE_RATE * 2 * 2);
-    let mut speech_started: Option<Instant> = None;
+    // Rolling-window producer: snapshots the growing phrase every 250 ms so words
+    // stream live on screen as they are spoken — never waiting for sentence end.
+    let mut rolling_pcm: VecDeque<u8> = VecDeque::with_capacity(MAX_ROLLING_BYTES + 16_384);
+    let mut packet_buf: VecDeque<u8> = VecDeque::with_capacity(8_192);
+    let mut in_speech = false;
     let mut last_voice_at: Option<Instant> = None;
-    let mut packet_buf: VecDeque<u8> = VecDeque::with_capacity(8192);
+    let mut last_snapshot_at = Instant::now();
+    let mut dirty_since_snapshot = false;
 
     while RUNNING.load(Ordering::SeqCst) {
-        let _ = h_event.wait_for_event(40);
-        let mut received_any = false;
+        let _ = h_event.wait_for_event(30);
 
         loop {
             match capture_client.get_next_packet_size() {
@@ -934,18 +978,17 @@ fn run_wasapi_loopback_worker(
                     if packet_buf.is_empty() {
                         break;
                     }
-                    received_any = true;
                     let pkt_slice: Vec<u8> = packet_buf.drain(..).collect();
                     let voiced = has_audible_speech(&pkt_slice);
                     let now = Instant::now();
                     if voiced {
-                        if speech_started.is_none() {
-                            speech_started = Some(now);
-                        }
+                        in_speech = true;
                         last_voice_at = Some(now);
-                        deque.extend(pkt_slice);
-                    } else if speech_started.is_some() {
-                        deque.extend(pkt_slice);
+                        rolling_pcm.extend(pkt_slice);
+                        dirty_since_snapshot = true;
+                    } else if in_speech {
+                        rolling_pcm.extend(pkt_slice);
+                        dirty_since_snapshot = true;
                     }
                 }
                 _ => break,
@@ -956,36 +999,49 @@ fn run_wasapi_loopback_worker(
             break;
         }
 
-        if let Some(started) = speech_started {
+        if rolling_pcm.len() > MAX_ROLLING_BYTES {
+            let drain_n = ROLLING_TRIM_BYTES.min(rolling_pcm.len());
+            rolling_pcm.drain(..drain_n);
+        }
+
+        if in_speech {
             let now = Instant::now();
-            let elapsed_ms = now.duration_since(started).as_millis() as u64;
             let silence_ms = last_voice_at
                 .map(|t| now.duration_since(t).as_millis() as u64)
                 .unwrap_or(0);
-            let pause_ready = elapsed_ms >= MIN_SPEECH_MS && silence_ms >= PAUSE_FLUSH_MS;
-            let cap_ready = elapsed_ms >= MAX_CHUNK_MS;
+            let step_ready = dirty_since_snapshot
+                && rolling_pcm.len() >= MIN_STREAM_BYTES
+                && now.duration_since(last_snapshot_at).as_millis() as u64 >= STREAM_STEP_MS;
+            let finalize_ready = silence_ms >= PHRASE_RESET_SILENCE_MS;
 
-            if pause_ready || cap_ready {
-                let pcm_bytes: Vec<u8> = deque.drain(..).collect();
-                if cap_ready && pcm_bytes.len() > OVERLAP_TAIL_BYTES {
-                    // Carry over 160 ms into the next slice so mid-sentence words never clip.
-                    let tail_start = pcm_bytes.len() - OVERLAP_TAIL_BYTES;
-                    deque.extend(&pcm_bytes[tail_start..]);
-                    speech_started = Some(now);
-                } else {
-                    speech_started = None;
-                    last_voice_at = None;
+            if step_ready || finalize_ready {
+                if rolling_pcm.len() >= MIN_STREAM_BYTES {
+                    let snapshot: Vec<u8> = rolling_pcm.iter().copied().collect();
+                    if has_audible_speech(&snapshot) {
+                        let (alock, acvar) = &*audio_slot;
+                        let mut ag = alock.lock().unwrap_or_else(|e| e.into_inner());
+                        ag.0 = Some(snapshot);
+                        acvar.notify_one();
+                        last_snapshot_at = now;
+                        dirty_since_snapshot = false;
+                    }
                 }
-                if pcm_bytes.len() >= CAPTURE_SAMPLE_RATE / 3 && has_audible_speech(&pcm_bytes) {
-                    let _ = audio_tx.try_send(pcm_bytes);
+                if finalize_ready {
+                    rolling_pcm.clear();
+                    in_speech = false;
+                    last_voice_at = None;
+                    dirty_since_snapshot = false;
                 }
             }
-        } else if !received_any {
-            deque.clear();
         }
     }
 
-    drop(audio_tx);
+    {
+        let (alock, acvar) = &*audio_slot;
+        let mut ag = alock.lock().unwrap_or_else(|e| e.into_inner());
+        ag.1 = true;
+        acvar.notify_all();
+    }
     let _ = audio_client.stop_stream();
     let _ = whisper_handle.join();
     let _ = translator_handle.join();
