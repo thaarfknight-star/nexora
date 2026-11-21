@@ -105,7 +105,10 @@ fn fetch_feed_blocking() -> Result<UpdateFeed, String> {
     if !resp.status().is_success() {
         return Err(format!("Update feed returned HTTP {}", resp.status()));
     }
-    resp.json::<UpdateFeed>()
+    let body = resp
+        .text()
+        .map_err(|e| format!("Failed reading update feed body: {e}"))?;
+    serde_json::from_str::<UpdateFeed>(&body)
         .map_err(|e| format!("Invalid update feed JSON: {e}"))
 }
 
