@@ -1,4 +1,3 @@
-import { check as checkPluginUpdate } from "@tauri-apps/plugin-updater";
 import { latestReleaseNote } from "./releaseNotes";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -2725,35 +2724,11 @@ function SettingsView() {
     } catch {
       // ignore
     }
-    void (async () => {
-      try {
-        const update = await checkPluginUpdate();
-        if (!update) {
-          setInstallingUpdate(false);
-          setUpdateProgressPct(null);
-          return;
-        }
-        let downloaded = 0;
-        let total = 0;
-        await update.downloadAndInstall((ev) => {
-          if (ev.event === "Started") {
-            total = ev.data.contentLength ?? 0;
-            setUpdateProgressPct(1);
-          } else if (ev.event === "Progress") {
-            downloaded += ev.data.chunkLength;
-            if (total > 0) {
-              setUpdateProgressPct(Math.min(99, Math.round((downloaded / total) * 100)));
-            }
-          } else if (ev.event === "Finished") {
-            setUpdateProgressPct(100);
-          }
-        });
-      } catch (err) {
-        setUpdateError(String(err));
-        setInstallingUpdate(false);
-        setUpdateProgressPct(null);
-      }
-    })();
+    invoke<void>("download_and_install_update").catch((err) => {
+      setUpdateError(String(err));
+      setInstallingUpdate(false);
+      setUpdateProgressPct(null);
+    });
   };
 
   // The Restore-taskbar row (Taskbar section): bring the Windows
