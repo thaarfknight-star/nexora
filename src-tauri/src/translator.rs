@@ -571,7 +571,7 @@ pub fn clean_whisper_output(raw: &str) -> String {
             }
             let norm = l
                 .trim_matches(|c: char| {
-                    matches!(c, '.' | ',' | '!' | '?' | ';' | ':' | '"' | ''' | '…' | '-')
+                    matches!(c, '.' | ',' | '!' | '?' | ';' | ':' | '"' | '\'' | '…' | '-')
                 })
                 .trim()
                 .to_lowercase();
