@@ -1540,6 +1540,137 @@ pub async fn test_subtitle_overlay(
     Ok(payload)
 }
 
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ApiKeyStatus {
+    pub google_cloud: bool,
+    pub gemini: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TestProviderResult {
+    pub ok: bool,
+    pub translated: Option<String>,
+    pub latency_ms: u64,
+    pub error: Option<String>,
+}
+
+/// Saves a translation provider API key into Windows Credential Manager.
+/// Restricted to `"main"` and `"settings"` windows; keys are never logged or returned.
+#[tauri::command]
+pub fn set_translate_api_key(
+    window: tauri::Window,
+    provider: String,
+    api_key: String,
+) -> Result<ApiKeyStatus, String> {
+    if !crate::ipc::is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
+    let pid = crate::translate_provider::TranslateProviderId::parse_id(&provider);
+    crate::translate_secrets::set_api_key(pid, &api_key)?;
+    Ok(ApiKeyStatus {
+        google_cloud: crate::translate_secrets::has_api_key(
+            crate::translate_provider::TranslateProviderId::GoogleCloud,
+        ),
+        gemini: crate::translate_secrets::has_api_key(
+            crate::translate_provider::TranslateProviderId::Gemini,
+        ),
+    })
+}
+
+/// Deletes a translation provider API key from Windows Credential Manager.
+#[tauri::command]
+pub fn delete_translate_api_key(
+    window: tauri::Window,
+    provider: String,
+) -> Result<ApiKeyStatus, String> {
+    if !crate::ipc::is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
+    let pid = crate::translate_provider::TranslateProviderId::parse_id(&provider);
+    crate::translate_secrets::delete_api_key(pid)?;
+    Ok(ApiKeyStatus {
+        google_cloud: crate::translate_secrets::has_api_key(
+            crate::translate_provider::TranslateProviderId::GoogleCloud,
+        ),
+        gemini: crate::translate_secrets::has_api_key(
+            crate::translate_provider::TranslateProviderId::Gemini,
+        ),
+    })
+}
+
+/// Returns only whether each cloud provider has a stored API key (never the key itself).
+#[tauri::command]
+pub fn get_translate_api_key_status(window: tauri::Window) -> Result<ApiKeyStatus, String> {
+    if !crate::ipc::is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
+    Ok(ApiKeyStatus {
+        google_cloud: crate::translate_secrets::has_api_key(
+            crate::translate_provider::TranslateProviderId::GoogleCloud,
+        ),
+        gemini: crate::translate_secrets::has_api_key(
+            crate::translate_provider::TranslateProviderId::Gemini,
+        ),
+    })
+}
+
+/// Tests a configured translation provider by translating a short sample phrase
+/// using its stored key from Windows Credential Manager.
+#[tauri::command]
+pub async fn test_translate_provider(
+    window: tauri::Window,
+    app: AppHandle,
+    provider: String,
+    target_lang: String,
+) -> Result<TestProviderResult, String> {
+    if !crate::ipc::is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
+    let pid = crate::translate_provider::TranslateProviderId::parse_id(&provider);
+    let ui_lang = crate::settings::load(&app).language;
+    let tl = if target_lang.trim().is_empty() {
+        "fa".to_string()
+    } else {
+        target_lang
+    };
+    let sample = if tl == "en" {
+        "سلام دنیا"
+    } else {
+        "Hello, world!"
+    };
+    let sl = if tl == "en" { "fa" } else { "en" };
+
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        let start = std::time::Instant::now();
+        let api_key = if pid.requires_api_key() {
+            crate::translate_secrets::get_api_key(pid)
+        } else {
+            None
+        };
+        let outcome = translate_with_provider(pid, api_key.as_deref(), sample, sl, &tl, &[]);
+        let latency_ms = start.elapsed().as_millis() as u64;
+        match outcome {
+            Ok(translated) => TestProviderResult {
+                ok: true,
+                translated: Some(translated),
+                latency_ms,
+                error: None,
+            },
+            Err(err) => TestProviderResult {
+                ok: false,
+                translated: None,
+                latency_ms,
+                error: Some(err.user_message(&ui_lang)),
+            },
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(res)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
