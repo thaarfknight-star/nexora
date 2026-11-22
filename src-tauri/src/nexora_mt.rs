@@ -783,10 +783,8 @@ mod tests {
         vocab.insert("<bos>".into(), 1.into());
         vocab.insert("<eos>".into(), 2.into());
         vocab.insert("<unk>".into(), 3.into());
-        let mut next_id = 4u64;
-        for ch in b2u {
-            vocab.insert(ch.to_string(), next_id.into());
-            next_id += 1;
+        for (idx, ch) in b2u.iter().enumerate() {
+            vocab.insert(ch.to_string(), ((idx + 4) as u64).into());
         }
         let tok_json = serde_json::json!({
             "model": {
@@ -812,12 +810,10 @@ mod tests {
         vocab.insert("<bos>".into(), 1.into());
         vocab.insert("<eos>".into(), 2.into());
         vocab.insert("<unk>".into(), 3.into());
-        let mut next_id = 4u64;
-        for ch in b2u {
-            vocab.insert(ch.to_string(), next_id.into());
-            next_id += 1;
+        for (idx, ch) in b2u.iter().enumerate() {
+            vocab.insert(ch.to_string(), ((idx + 4) as u64).into());
         }
-        let vocab_size = next_id as usize;
+        let vocab_size = b2u.len() + 4;
         let d_model = 4usize;
         let ffn_dim = 8usize;
         let max_len = 16usize;
