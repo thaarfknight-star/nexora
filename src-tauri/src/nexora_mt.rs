@@ -456,6 +456,104 @@ fn mha_single_query(
     concat
 }
 
+/// Computes `(max_logit, sum_exp, top_k_tokens)` over the weight-tied `lm_head`.
+fn lm_head_top_k(
+    tok_emb: &QuantMatrix,
+    final_h: &[f32],
+    top_k: usize,
+    n_workers: usize,
+) -> (f32, f32, Vec<(usize, f32)>) {
+    let cols = tok_emb.cols;
+    let rows = tok_emb.rows;
+    let data = &tok_emb.data;
+    let row_scales = &tok_emb.row_scales;
+    let (h_chunks, h_rem) = final_h.as_chunks::<4>();
+
+    if rows >= 1024 && n_workers > 1 {
+        let chunk_rows = rows.div_ceil(n_workers);
+        let partials: Vec<(f32, f32, Vec<(usize, f32)>)> = std::thread::scope(|s| {
+            let mut handles = Vec::with_capacity(n_workers);
+            for w in 0..n_workers {
+                let start = w * chunk_rows;
+                let end = (start + chunk_rows).min(rows);
+                if start >= end {
+                    continue;
+                }
+                handles.push(s.spawn(move || {
+                    let mut logits = Vec::with_capacity(end - start);
+                    let mut lmax = f32::NEG_INFINITY;
+                    for v_id in start..end {
+                        let row = &data[v_id * cols..(v_id + 1) * cols];
+                        let (qc, qr) = row.as_chunks::<4>();
+                        let mut a0 = 0.0f32;
+                        let mut a1 = 0.0f32;
+                        let mut a2 = 0.0f32;
+                        let mut a3 = 0.0f32;
+                        for (q4, h4) in qc.iter().zip(h_chunks.iter()) {
+                            a0 += f32::from(q4[0]) * h4[0];
+                            a1 += f32::from(q4[1]) * h4[1];
+                            a2 += f32::from(q4[2]) * h4[2];
+                            a3 += f32::from(q4[3]) * h4[3];
+                        }
+                        let mut dot = (a0 + a1) + (a2 + a3);
+                        for (&q, &hv) in qr.iter().zip(h_rem.iter()) {
+                            dot += f32::from(q) * hv;
+                        }
+                        let val = dot * row_scales[v_id];
+                        if val > lmax {
+                            lmax = val;
+                        }
+                        logits.push((v_id, val));
+                    }
+                    let mut sexp = 0.0f32;
+                    for &(_, val) in &logits {
+                        sexp += (val - lmax).exp();
+                    }
+                    let mut best: Vec<(usize, f32)> = Vec::with_capacity(top_k + 1);
+                    for (id, val) in logits {
+                        if best.len() < top_k || val > best.last().map_or(f32::NEG_INFINITY, |x| x.1)
+                        {
+                            best.push((id, val));
+                            best.sort_by(|a, b| {
+                                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+                            });
+                            best.truncate(top_k);
+                        }
+                    }
+                    (lmax, sexp, best)
+                }));
+            }
+            handles.into_iter().filter_map(|h| h.join().ok()).collect()
+        });
+
+        let gmax = partials.iter().map(|p| p.0).fold(f32::NEG_INFINITY, f32::max);
+        let gsum: f32 = partials.iter().map(|p| p.1 * (p.0 - gmax).exp()).sum();
+        let mut merged: Vec<(usize, f32)> = partials.into_iter().flat_map(|p| p.2).collect();
+        merged.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        merged.truncate(top_k);
+        (gmax, gsum, merged)
+    } else {
+        let mut logits = Vec::with_capacity(rows);
+        let mut lmax = f32::NEG_INFINITY;
+        for v_id in 0..rows {
+            let row = &data[v_id * cols..(v_id + 1) * cols];
+            let mut dot = 0.0f32;
+            for (&q, &hv) in row.iter().zip(final_h.iter()) {
+                dot += f32::from(q) * hv;
+            }
+            let val = dot * row_scales[v_id];
+            if val > lmax {
+                lmax = val;
+            }
+            logits.push((v_id, val));
+        }
+        let sexp: f32 = logits.iter().map(|&(_, v)| (v - lmax).exp()).sum();
+        logits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        logits.truncate(top_k);
+        (lmax, sexp, logits)
+    }
+}
+
 impl NexoraMtEngine {
     pub fn from_file(path: &Path) -> Result<Self, String> {
         let bytes = fs::read(path).map_err(|e| format!("Failed reading .nxmt model file: {e}"))?;
@@ -741,10 +839,6 @@ impl NexoraMtEngine {
             self_v: vec![Vec::new(); self.decoder.len()],
         }];
 
-        let cols = self.tok_emb.cols;
-        let rows = self.tok_emb.rows;
-        let data = &self.tok_emb.data;
-        let row_scales = &self.tok_emb.row_scales;
         let n_workers = std::thread::available_parallelism()
             .map(|n| n.get().clamp(1, 4))
             .unwrap_or(2);
@@ -792,113 +886,8 @@ impl NexoraMtEngine {
                 }
 
                 let final_h = rms_norm(&x, &self.dec_norm);
-                let (h_chunks, h_rem) = final_h.as_chunks::<4>();
-
-                // Parallel lm_head logits + log-sum-exp + top-K extraction
-                let top_k = BEAM_WIDTH + 2;
-                let (max_logit, sum_exp, top_tokens): (f32, f32, Vec<(usize, f32)>) =
-                    if rows >= 1024 && n_workers > 1 {
-                        let chunk_rows = rows.div_ceil(n_workers);
-                        let partials: Vec<(f32, f32, Vec<(usize, f32)>)> =
-                            std::thread::scope(|s| {
-                                let mut handles = Vec::with_capacity(n_workers);
-                                for w in 0..n_workers {
-                                    let start = w * chunk_rows;
-                                    let end = (start + chunk_rows).min(rows);
-                                    if start >= end {
-                                        continue;
-                                    }
-                                    handles.push(s.spawn(move || {
-                                        let mut logits = Vec::with_capacity(end - start);
-                                        let mut lmax = f32::NEG_INFINITY;
-                                        for v_id in start..end {
-                                            let row = &data[v_id * cols..(v_id + 1) * cols];
-                                            let (qc, qr) = row.as_chunks::<4>();
-                                            let mut a0 = 0.0f32;
-                                            let mut a1 = 0.0f32;
-                                            let mut a2 = 0.0f32;
-                                            let mut a3 = 0.0f32;
-                                            for (q4, h4) in qc.iter().zip(h_chunks.iter()) {
-                                                a0 += f32::from(q4[0]) * h4[0];
-                                                a1 += f32::from(q4[1]) * h4[1];
-                                                a2 += f32::from(q4[2]) * h4[2];
-                                                a3 += f32::from(q4[3]) * h4[3];
-                                            }
-                                            let mut dot = (a0 + a1) + (a2 + a3);
-                                            for (&q, &hv) in qr.iter().zip(h_rem.iter()) {
-                                                dot += f32::from(q) * hv;
-                                            }
-                                            let val = dot * row_scales[v_id];
-                                            if val > lmax {
-                                                lmax = val;
-                                            }
-                                            logits.push((v_id, val));
-                                        }
-                                        let mut sexp = 0.0f32;
-                                        for &(_, val) in &logits {
-                                            sexp += (val - lmax).exp();
-                                        }
-                                        let mut best: Vec<(usize, f32)> =
-                                            Vec::with_capacity(top_k + 1);
-                                        for (id, val) in logits {
-                                            if best.len() < top_k
-                                                || val > best.last().map_or(f32::NEG_INFINITY, |x| x.1)
-                                            {
-                                                best.push((id, val));
-                                                best.sort_by(|a, b| {
-                                                    b.1.partial_cmp(&a.1)
-                                                        .unwrap_or(std::cmp::Ordering::Equal)
-                                                });
-                                                best.truncate(top_k);
-                                            }
-                                        }
-                                        (lmax, sexp, best)
-                                    }));
-                                }
-                                handles
-                                    .into_iter()
-                                    .filter_map(|h| h.join().ok())
-                                    .collect()
-                            });
-
-                        let gmax = partials
-                            .iter()
-                            .map(|p| p.0)
-                            .fold(f32::NEG_INFINITY, f32::max);
-                        let gsum: f32 = partials
-                            .iter()
-                            .map(|p| p.1 * (p.0 - gmax).exp())
-                            .sum();
-                        let mut merged: Vec<(usize, f32)> =
-                            partials.into_iter().flat_map(|p| p.2).collect();
-                        merged.sort_by(|a, b| {
-                            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                        });
-                        merged.truncate(top_k);
-                        (gmax, gsum, merged)
-                    } else {
-                        let mut logits = Vec::with_capacity(rows);
-                        let mut lmax = f32::NEG_INFINITY;
-                        for v_id in 0..rows {
-                            let row = &data[v_id * cols..(v_id + 1) * cols];
-                            let mut dot = 0.0f32;
-                            for (&q, &hv) in row.iter().zip(final_h.iter()) {
-                                dot += f32::from(q) * hv;
-                            }
-                            let val = dot * row_scales[v_id];
-                            if val > lmax {
-                                lmax = val;
-                            }
-                            logits.push((v_id, val));
-                        }
-                        let sexp: f32 = logits.iter().map(|&(_, v)| (v - lmax).exp()).sum();
-                        logits.sort_by(|a, b| {
-                            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                        });
-                        logits.truncate(top_k);
-                        (lmax, sexp, logits)
-                    };
-
+                let (max_logit, sum_exp, top_tokens) =
+                    lm_head_top_k(&self.tok_emb, &final_h, BEAM_WIDTH + 2, n_workers);
                 let log_denom = max_logit + sum_exp.max(1e-12).ln();
                 let mut added = 0usize;
                 for (tok_id, logit) in top_tokens {
