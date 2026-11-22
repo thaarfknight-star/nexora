@@ -117,7 +117,7 @@ fn shared_http_client() -> &'static reqwest::blocking::Client {
             .pool_idle_timeout(Duration::from_secs(90))
             .pool_max_idle_per_host(4)
             .tcp_nodelay(true)
-            .user_agent("Nexora/0.2")
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
             .build()
             .unwrap_or_else(|_| reqwest::blocking::Client::new())
     })
@@ -395,7 +395,42 @@ pub fn clean_whisper_output(raw: &str) -> String {
         .join(" ")
 }
 
-/// Translates `text` into `target_lang` over the persistent pooled HTTP client.
+/// Parses Google clients5 (`dict-chrome-ex`) JSON response (`[["translated","en"]]` or `["translated"]`).
+pub fn parse_clients5_translate_response(raw: &str) -> Option<String> {
+    let val: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let arr = val.as_array()?;
+    let first = arr.first()?;
+    let text = match first {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(inner) => inner.first()?.as_str()?.to_string(),
+        _ => return None,
+    };
+    let trimmed = text.trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+/// Parses MyMemory JSON response (`{"responseData":{"translatedText":"..."}}`).
+pub fn parse_mymemory_response(raw: &str) -> Option<String> {
+    let val: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let txt = val
+        .get("responseData")?
+        .get("translatedText")?
+        .as_str()?
+        .trim()
+        .to_string();
+    if txt.is_empty() || txt.to_uppercase().contains("MYMEMORY WARNING") {
+        None
+    } else {
+        Some(txt)
+    }
+}
+
+/// Translates `text` into `target_lang` using a 3-provider fallback chain
+/// (Google gtx -> Google clients5 -> MyMemory) over the persistent pooled HTTP client.
 fn translate_text(text: &str, source_lang: &str, target_lang: &str) -> String {
     let clean = text.trim();
     if clean.is_empty() {
@@ -414,19 +449,55 @@ fn translate_text(text: &str, source_lang: &str, target_lang: &str) -> String {
     if sl != "auto" && sl.eq_ignore_ascii_case(tl) {
         return clean.to_string();
     }
-    let url = format!(
-        "https://translate.googleapis.com/translate_a/single?client=gtx&sl={sl}&tl={tl}&dt=t&q={}",
-        url_encode_query(clean)
+
+    let encoded = url_encode_query(clean);
+    let client = shared_http_client();
+
+    // Provider 1: Google Translate gtx
+    let url1 = format!(
+        "https://translate.googleapis.com/translate_a/single?client=gtx&sl={sl}&tl={tl}&dt=t&q={encoded}"
     );
-    if let Ok(resp) = shared_http_client().get(&url).send() {
+    if let Ok(resp) = client.get(&url1).send() {
         if resp.status().is_success() {
             if let Ok(body) = resp.text() {
                 if let Some(translated) = parse_google_translate_response(&body) {
+                    if !translated.eq_ignore_ascii_case(clean) {
+                        return translated;
+                    }
+                }
+            }
+        }
+    }
+
+    // Provider 2: Google Translate clients5 (separate rate-limit bucket)
+    let url2 = format!(
+        "https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl={sl}&tl={tl}&q={encoded}"
+    );
+    if let Ok(resp) = client.get(&url2).send() {
+        if resp.status().is_success() {
+            if let Ok(body) = resp.text() {
+                if let Some(translated) = parse_clients5_translate_response(&body) {
+                    if !translated.eq_ignore_ascii_case(clean) {
+                        return translated;
+                    }
+                }
+            }
+        }
+    }
+
+    // Provider 3: MyMemory public translation API (needs explicit source lang; default en when auto)
+    let mm_sl = if sl == "auto" { "en" } else { sl };
+    let url3 = format!("https://api.mymemory.translated.net/get?q={encoded}&langpair={mm_sl}|{tl}");
+    if let Ok(resp) = client.get(&url3).send() {
+        if resp.status().is_success() {
+            if let Ok(body) = resp.text() {
+                if let Some(translated) = parse_mymemory_response(&body) {
                     return translated;
                 }
             }
         }
     }
+
     clean.to_string()
 }
 
@@ -850,6 +921,9 @@ fn run_wasapi_loopback_worker(
     let translator_handle = std::thread::spawn(move || {
         let mut cache: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let mut last_emitted = String::new();
+        let mut last_remote_call = Instant::now()
+            .checked_sub(Duration::from_secs(2))
+            .unwrap_or_else(Instant::now);
         let (lock, cvar) = &*text_slot_rx;
         loop {
             let text = {
@@ -871,11 +945,22 @@ fn run_wasapi_loopback_worker(
             let translated = if let Some(cached) = cache.get(&text) {
                 cached.clone()
             } else {
-                let res = translate_text(&text, &src_for_tr, &tgt_for_tr);
-                if cache.len() >= 256 {
-                    cache.clear();
+                // Keep remote translation calls <= 2/sec so providers never HTTP 429 rate-limit.
+                let since = last_remote_call.elapsed();
+                if since < Duration::from_millis(500) {
+                    std::thread::sleep(Duration::from_millis(500) - since);
                 }
-                cache.insert(text.clone(), res.clone());
+                if !RUNNING.load(Ordering::SeqCst) {
+                    break;
+                }
+                last_remote_call = Instant::now();
+                let res = translate_text(&text, &src_for_tr, &tgt_for_tr);
+                if !res.eq_ignore_ascii_case(&text) {
+                    if cache.len() >= 256 {
+                        cache.clear();
+                    }
+                    cache.insert(text.clone(), res.clone());
+                }
                 res
             };
             last_emitted = text.clone();
@@ -1431,6 +1516,18 @@ mod tests {
         assert_eq!(
             parse_whisper_server_response("  Plain text line  \n"),
             "Plain text line"
+        );
+    }
+
+    #[test]
+    fn parses_clients5_and_mymemory_fallback_responses() {
+        assert_eq!(
+            parse_clients5_translate_response(r#"[["سلام دنیا","en"]]"#),
+            Some("سلام دنیا".to_string())
+        );
+        assert_eq!(
+            parse_mymemory_response(r#"{"responseData":{"translatedText":"سلام دنیا"}}"#),
+            Some("سلام دنیا".to_string())
         );
     }
 }
