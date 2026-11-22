@@ -3793,6 +3793,14 @@ function SettingsView() {
                       <button
                         type="button"
                         className="mini-btn"
+                        onClick={handleDownloadLocalModel}
+                        disabled={translateStatus?.downloading || downloadProgress !== null}
+                      >
+                        {t(language, "updateLocalModelBtn")}
+                      </button>
+                      <button
+                        type="button"
+                        className="mini-btn"
                         onClick={() => handleTestProvider("local")}
                         disabled={testingProvider}
                       >
