@@ -64,6 +64,7 @@ interface NexoraSettings {
   poll_interval_secs: number;
   /** Speed unit: "auto" (MB/s above 1024 KB/s), "kb" or "mb". */
   stats_speed_unit: string;
+  online_translation?: boolean;
   /** Percent style: "with" (24%) or "without" (24). */
   stats_percent_style: string;
   /** UI language: "en" (default) or "fa". */
@@ -461,6 +462,7 @@ interface TranslateEngineStatus {
   source_lang: string;
   target_lang: string;
   capture_mode: string;
+  online_translation?: boolean;
   target_pid: number | null;
   target_app_name: string | null;
   model_path: string;
@@ -744,6 +746,7 @@ function IslandApp() {
             sourceLang: st.source_lang || "auto",
             targetLang: st.target_lang || "fa",
             captureMode: savedMode,
+            onlineTranslation: window.localStorage.getItem("nexora-online-translation") === "1",
             targetPid: savedMode === "app" && savedPid ? savedPid : null,
             targetAppName: savedMode === "app" ? savedAppName : null,
           })
@@ -904,6 +907,9 @@ function IslandApp() {
     invoke<IslandState>("get_island_state")
       .then(setState)
       .catch(() => {});
+    window.setInterval(() => {
+      invoke("island_heartbeat").catch(() => {});
+    }, 5000);
     // Silent startup update check via official @tauri-apps/plugin-updater (ReChat flow)
     if (window.localStorage.getItem("nexora-auto-update") !== "0") {
       void (async () => {
@@ -2387,6 +2393,7 @@ function SettingsView() {
         sourceLang: srcLang,
         targetLang: tgtLang,
         captureMode,
+        onlineTranslation: Boolean(settings?.online_translation),
         targetPid: captureMode === "app" ? targetPid : null,
         targetAppName: captureMode === "app" ? targetAppName || null : null,
       })
@@ -3528,6 +3535,44 @@ function SettingsView() {
           </div>
         </div>
       )}
+      <div className="settings-row">
+        <span className="settings-row-text">
+          <span>{t(language, "onlineTranslationLabel")}</span>
+          <span className="audio-mode-hint">{t(language, "onlineTranslationDesc")}</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={Boolean(settings?.online_translation)}
+          onChange={(e) => {
+            const wantOn = e.target.checked;
+            if (wantOn) {
+              const consented = window.localStorage.getItem("nexora-online-translation-consent") === "1";
+              if (!consented) {
+                if (!window.confirm(t(language, "onlineTranslationConsent"))) {
+                  return;
+                }
+                try {
+                  window.localStorage.setItem("nexora-online-translation-consent", "1");
+                } catch {
+                  // ignore
+                }
+              }
+            }
+            try {
+              window.localStorage.setItem("nexora-online-translation", wantOn ? "1" : "0");
+            } catch {
+              // ignore
+            }
+            if (settings) {
+              invoke<NexoraSettings>("set_settings", {
+                settings: { ...settings, online_translation: wantOn },
+              })
+                .then(setSettings)
+                .catch(() => {});
+            }
+          }}
+        />
+      </div>
       <div className="settings-row">
         <span className="settings-row-text">
           <span>{t(language, "sourceLangLabel")}</span>

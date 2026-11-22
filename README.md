@@ -4,9 +4,9 @@
 [![Release](https://img.shields.io/github/v/release/thaarfknight-star/nexora)](https://github.com/thaarfknight-star/nexora/releases)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](LICENSE-MIT)
 
-**Nexora** is a floating Dynamic Island shell for **Windows 10 and Windows 11**, built with **Tauri v2**, **Rust**, and **React**. It replaces the traditional Windows taskbar with a sleek, always-on-top floating island that expands on demand — showing live media, real system stats, and quick settings — while a dedicated Watchdog process guarantees the taskbar always comes back.
+**Nexora** is a floating Dynamic Island shell for **Windows 10 and Windows 11**, built with **Tauri v2**, **Rust**, and **React**. It provides a sleek, always-on-top floating Dynamic Island companion (with taskbar hiding currently disabled by default for maximum desktop safety) that expands on demand — showing live media, real system stats, and quick settings — while a dedicated Watchdog process guarantees the taskbar always comes back.
 
-> **Status:** v0.1.0 is the first public release. The full v0.1.0 scope is implemented: island, taskbar replacement, Watchdog, GSMTC media, system stats, settings, tray, themes, brand assets, and the auto-update engine.
+> **Status:** v0.2.14 is the first public release. The full v0.2.14 scope is implemented: island, taskbar replacement, Watchdog, GSMTC media, system stats, settings, tray, themes, brand assets, and the auto-update engine.
 
 ## Features
 
@@ -69,8 +69,8 @@ Seven built-in themes, switchable from the separate Settings window and persiste
 **Requirements:** Windows 10 or Windows 11 (64-bit). No extra runtime is needed — WebView2 ships with Windows 11 and is installed on demand on Windows 10.
 
 1. Download the latest installer from the [**Releases**](https://github.com/thaarfknight-star/nexora/releases) page:
-   - `Nexora_0.1.0_x64-setup.exe` — NSIS installer (recommended)
-   - `Nexora_0.1.0_x64_en-US.msi` — MSI installer
+   - `Nexora_0.2.14_x64-setup.exe` — NSIS installer (recommended)
+   - `Nexora_0.2.14_x64_en-US.msi` — MSI installer
 2. Run the installer and launch **Nexora** from the Start menu.
 3. The island appears top-center. Click it to expand; right-click the tray icon for Show/Hide and Quit.
 
@@ -119,7 +119,7 @@ npm run tauri build   # build the Windows installers
 
 Rust checks run in CI on every push: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test`. The Windows build is the gate — Win32/GSMTC code only compiles on `windows-latest`.
 
-## Out of scope for v0.1.0
+## Out of scope for v0.2.14
 
 - Notification center
 - Extra widgets

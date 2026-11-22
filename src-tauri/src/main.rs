@@ -11,5 +11,8 @@ fn main() {
             .unwrap_or(2);
         std::process::exit(code);
     }
+    if !nexora_lib::watchdog::acquire_single_instance_guard() {
+        std::process::exit(0);
+    }
     nexora_lib::run();
 }

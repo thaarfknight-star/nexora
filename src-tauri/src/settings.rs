@@ -88,6 +88,10 @@ pub struct NexoraSettings {
     /// Stats percent style: `"with"` shows the `%` sign, `"without"` hides it.
     #[serde(default = "default_stats_percent_style")]
     pub stats_percent_style: String,
+    /// Whether Live Subtitles may send transcribed text to external translation
+    /// services (Google Translate / MyMemory). Defaults to `false` (local transcription only).
+    #[serde(default)]
+    pub online_translation: bool,
 }
 
 impl Default for NexoraSettings {
@@ -111,6 +115,7 @@ pub fn defaults() -> NexoraSettings {
         poll_interval_secs: 3,
         stats_speed_unit: "auto".into(),
         stats_percent_style: "with".into(),
+        online_translation: false,
     }
 }
 
@@ -131,6 +136,13 @@ impl NexoraSettings {
         }
         if !crate::hotkey::is_valid_shortcut(&self.island_hotkey) {
             self.island_hotkey = default_island_hotkey();
+        }
+        self.poll_interval_secs = self.poll_interval_secs.clamp(1, 60);
+        if let Some(blur) = self.island_blur_px {
+            self.island_blur_px = Some(blur.min(64));
+        }
+        if let Some(radius) = self.island_radius_px {
+            self.island_radius_px = Some(radius.min(48));
         }
         self
     }
@@ -249,6 +261,7 @@ mod tests {
             poll_interval_secs: 5,
             stats_speed_unit: "mb".into(),
             stats_percent_style: "without".into(),
+            online_translation: false,
             language: "fa".into(),
             island_hotkey: "Ctrl+Alt+N".into(),
         };
@@ -286,6 +299,7 @@ mod tests {
                 poll_interval_secs: 3,
                 stats_speed_unit: "auto".into(),
                 stats_percent_style: "with".into(),
+                online_translation: false,
                 language: "en".into(),
                 island_hotkey: "Alt+Space".into(),
             }
@@ -317,6 +331,7 @@ mod tests {
             poll_interval_secs: 3,
             stats_speed_unit: "auto".into(),
             stats_percent_style: "with".into(),
+            online_translation: false,
             language: "en".into(),
             island_hotkey: "Alt+Space".into(),
         };
@@ -341,6 +356,7 @@ mod tests {
             poll_interval_secs: 3,
             stats_speed_unit: "auto".into(),
             stats_percent_style: "with".into(),
+            online_translation: false,
             island_hotkey: "not-a-key".into(),
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
@@ -363,11 +379,42 @@ mod tests {
             poll_interval_secs: 3,
             stats_speed_unit: "auto".into(),
             stats_percent_style: "with".into(),
+            online_translation: false,
             language: "de".into(),
             island_hotkey: "Alt+Space".into(),
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
         assert_eq!(load_from_dir(&dir).language, "en");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_online_translation_defaults_to_false() {
+        let dir = test_dir();
+        fs::create_dir_all(&dir).expect("create test dir");
+        fs::write(settings_path(&dir), r#"{"theme": "neon-glass"}"#).expect("write legacy");
+        let loaded = load_from_dir(&dir);
+        assert!(!loaded.online_translation);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn numeric_settings_are_clamped_within_safe_bounds() {
+        let dir = test_dir();
+        fs::create_dir_all(&dir).expect("create test dir");
+        fs::write(
+            settings_path(&dir),
+            r#"{"poll_interval_secs": 0, "island_blur_px": 255, "island_radius_px": 200}"#,
+        )
+        .expect("write out-of-range");
+        let low = load_from_dir(&dir);
+        assert_eq!(low.poll_interval_secs, 1);
+        assert_eq!(low.island_blur_px, Some(64));
+        assert_eq!(low.island_radius_px, Some(48));
+
+        fs::write(settings_path(&dir), r#"{"poll_interval_secs": 9999}"#).expect("write high");
+        let high = load_from_dir(&dir);
+        assert_eq!(high.poll_interval_secs, 60);
         let _ = fs::remove_dir_all(&dir);
     }
 }

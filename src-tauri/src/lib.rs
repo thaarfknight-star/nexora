@@ -147,12 +147,20 @@ pub fn run() {
                 }
             }
         })
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::ScaleFactorChanged { .. } = event {
+                    island::reapply_anchor_on_window(window);
+                }
+            }
+        })
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             ipc::get_island_state,
             ipc::set_island_expanded,
             ipc::set_island_click_through,
+            ipc::island_heartbeat,
             ipc::get_system_stats,
             ipc::get_now_playing,
             ipc::media_play,
@@ -191,11 +199,20 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while running Nexora Tauri application")
-        .run(|_app_handle, event| {
+        .run(|app_handle, event| {
             if matches!(
                 event,
                 tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
             ) {
+                // Restore taskbar first (if ever hidden) before tearing down helpers.
+                if taskbar::hidden_by_nexora() {
+                    taskbar::restore();
+                }
+                translator::shutdown_engine();
+                {
+                    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+                    let _ = app_handle.global_shortcut().unregister_all();
+                }
                 // A clean exit leaves this line: when the next
                 // install's log just stops, the process died
                 // instead of exiting.

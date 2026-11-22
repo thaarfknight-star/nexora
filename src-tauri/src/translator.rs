@@ -25,9 +25,15 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 const MODEL_FILENAME: &str = "ggml-tiny.bin";
+// TODO(security): pin HuggingFace commit hash instead of `resolve/main`.
 const MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin";
 const WHISPER_ZIP_URL: &str =
     "https://github.com/ggml-org/whisper.cpp/releases/download/b5907/whisper-bin-x64.zip";
+// TODO(security): fill real SHA-256 hex digests for whisper-bin-x64.zip (b5907) and ggml-tiny.bin.
+const EXPECTED_WHISPER_ZIP_SHA256: &str = "TODO_FILL_WHISPER_ZIP_SHA256";
+const EXPECTED_MODEL_SHA256: &str = "TODO_FILL_GGML_TINY_SHA256";
+const MAX_EXTRACT_BYTES: u64 = 150 * 1024 * 1024;
+const MAX_EXTRACT_FILES: usize = 256;
 
 const SUBTITLE_WIDTH: f64 = 820.0;
 const SUBTITLE_HEIGHT: f64 = 128.0;
@@ -59,6 +65,7 @@ static ENGINE_STATE: Mutex<EnginePrefs> = Mutex::new(EnginePrefs {
     source_lang: None,
     target_lang: None,
     capture_mode: None,
+    online_translation: false,
     target_pid: None,
     target_app_name: None,
     last_error: None,
@@ -68,6 +75,7 @@ struct EnginePrefs {
     source_lang: Option<String>,
     target_lang: Option<String>,
     capture_mode: Option<String>,
+    online_translation: bool,
     target_pid: Option<u32>,
     target_app_name: Option<String>,
     last_error: Option<String>,
@@ -82,6 +90,7 @@ pub struct TranslateEngineStatus {
     pub source_lang: String,
     pub target_lang: String,
     pub capture_mode: String,
+    pub online_translation: bool,
     pub target_pid: Option<u32>,
     pub target_app_name: Option<String>,
     pub model_path: String,
@@ -207,6 +216,7 @@ fn build_status(app: &AppHandle) -> TranslateEngineStatus {
             .capture_mode
             .clone()
             .unwrap_or_else(|| "system".to_string()),
+        online_translation: prefs.online_translation,
         target_pid: prefs.target_pid,
         target_app_name: prefs.target_app_name.clone(),
         model_path: dir.to_string_lossy().to_string(),
@@ -585,13 +595,84 @@ fn download_file_streaming(
     )
 }
 
-/// Extracts a ZIP archive natively in Rust (no PowerShell process spawning).
-fn extract_zip_native(zip_path: &Path, dest_dir: &Path) -> Result<(), String> {
+/// Computes lowercase hex SHA-256 of a file on disk.
+pub fn file_sha256_hex(path: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut file = File::open(path).map_err(|e| format!("Failed to open file for SHA-256: {e}"))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("Failed reading file for SHA-256: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(64);
+    for b in digest {
+        hex.push_str(&format!("{b:02x}"));
+    }
+    Ok(hex)
+}
+
+/// Fail-closed SHA-256 verifier: deletes `path` on mismatch or unconfigured TODO digest.
+pub fn verify_file_sha256(path: &Path, expected_hex: &str) -> Result<(), String> {
+    let expected = expected_hex.trim().to_ascii_lowercase();
+    if expected.len() != 64 || !expected.bytes().all(|b| b.is_ascii_hexdigit()) {
+        let _ = fs::remove_file(path);
+        return Err(format!(
+            "SHA-256 digest is not configured ({expected_hex}); refusing unverified file"
+        ));
+    }
+    let actual = file_sha256_hex(path)?;
+    if actual != expected {
+        let _ = fs::remove_file(path);
+        return Err(format!(
+            "SHA-256 mismatch: expected {expected}, got {actual}"
+        ));
+    }
+    Ok(())
+}
+
+/// Removes any leftover `.part` temporary download files inside `dir`.
+pub fn cleanup_partial_downloads(dir: &Path) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.extension().and_then(|e| e.to_str()) == Some("part") {
+                let _ = fs::remove_file(p);
+            }
+        }
+    }
+}
+
+/// Extracts a ZIP archive natively in Rust with zip-slip (`enclosed_name`) and
+/// ZIP-bomb limits (`MAX_EXTRACT_BYTES` and `MAX_EXTRACT_FILES`).
+pub fn extract_zip_native(zip_path: &Path, dest_dir: &Path) -> Result<(), String> {
+    extract_zip_with_limits(zip_path, dest_dir, MAX_EXTRACT_BYTES, MAX_EXTRACT_FILES)
+}
+
+pub fn extract_zip_with_limits(
+    zip_path: &Path,
+    dest_dir: &Path,
+    max_bytes: u64,
+    max_files: usize,
+) -> Result<(), String> {
     let file = File::open(zip_path).map_err(|e| format!("Failed to open archive: {e}"))?;
     let mut archive =
         zip::ZipArchive::new(file).map_err(|e| format!("Invalid ZIP archive: {e}"))?;
+    if archive.len() > max_files {
+        return Err(format!(
+            "ZIP archive exceeds max file count ({} > {max_files})",
+            archive.len()
+        ));
+    }
+    let mut total_written: u64 = 0;
     for i in 0..archive.len() {
-        let mut entry = archive
+        let entry = archive
             .by_index(i)
             .map_err(|e| format!("Failed reading archive entry: {e}"))?;
         let Some(rel_path) = entry.enclosed_name() else {
@@ -604,10 +685,19 @@ fn extract_zip_native(zip_path: &Path, dest_dir: &Path) -> Result<(), String> {
             if let Some(parent) = out_path.parent() {
                 fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {e}"))?;
             }
+            let remaining = max_bytes.saturating_sub(total_written);
+            let mut limited = entry.take(remaining.saturating_add(1));
             let mut out_file = File::create(&out_path)
                 .map_err(|e| format!("Failed to write extracted file: {e}"))?;
-            std::io::copy(&mut entry, &mut out_file)
+            let copied = std::io::copy(&mut limited, &mut out_file)
                 .map_err(|e| format!("Failed extracting file: {e}"))?;
+            total_written = total_written.saturating_add(copied);
+            if total_written > max_bytes {
+                let _ = fs::remove_file(&out_path);
+                return Err(format!(
+                    "ZIP extraction exceeded safety limit ({max_bytes} bytes)"
+                ));
+            }
         }
     }
     Ok(())
@@ -638,29 +728,32 @@ fn list_windows_audio_targets() -> Vec<AudioAppTarget> {
     };
 
     unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
-            return BOOL(1);
-        }
-        let mut buf = [0u16; 256];
-        let len = unsafe { GetWindowTextW(hwnd, &mut buf) };
-        if len <= 0 {
-            return BOOL(1);
-        }
-        let title = String::from_utf16_lossy(&buf[..len as usize])
-            .trim()
-            .to_string();
-        if title.is_empty() || title == "Program Manager" {
-            return BOOL(1);
-        }
-        let mut pid: u32 = 0;
-        unsafe {
-            GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        }
-        if pid != 0 {
-            let list = unsafe { &mut *(lparam.0 as *mut Vec<(u32, String)>) };
-            list.push((pid, title));
-        }
-        BOOL(1)
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+                return BOOL(1);
+            }
+            let mut buf = [0u16; 256];
+            let len = unsafe { GetWindowTextW(hwnd, &mut buf) };
+            if len <= 0 {
+                return BOOL(1);
+            }
+            let title = String::from_utf16_lossy(&buf[..len as usize])
+                .trim()
+                .to_string();
+            if title.is_empty() || title == "Program Manager" {
+                return BOOL(1);
+            }
+            let mut pid: u32 = 0;
+            unsafe {
+                GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            }
+            if pid != 0 {
+                let list = unsafe { &mut *(lparam.0 as *mut Vec<(u32, String)>) };
+                list.push((pid, title));
+            }
+            BOOL(1)
+        }))
+        .unwrap_or(BOOL(0))
     }
 
     let mut raw_windows: Vec<(u32, String)> = Vec::new();
@@ -731,60 +824,71 @@ struct ResidentWhisperServer {
 #[cfg(target_os = "windows")]
 impl ResidentWhisperServer {
     fn start(server_bin: &Path, model: &Path, source_lang: &str, threads: usize) -> Option<Self> {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
-        let port = listener.local_addr().ok()?.port();
-        drop(listener);
+        // Retry up to 3 times with fresh ephemeral ports to survive TOCTOU port collisions.
+        // Note: whisper-server.exe (b5907) has no built-in auth/token flag; it binds to 127.0.0.1 only.
+        for _attempt in 0..3 {
+            let Ok(listener) = std::net::TcpListener::bind("127.0.0.1:0") else {
+                continue;
+            };
+            let Ok(addr) = listener.local_addr() else {
+                continue;
+            };
+            let port = addr.port();
+            drop(listener);
 
-        let mut args = vec![
-            "-m".to_string(),
-            model.to_string_lossy().to_string(),
-            "--host".to_string(),
-            "127.0.0.1".to_string(),
-            "--port".to_string(),
-            port.to_string(),
-            "-t".to_string(),
-            threads.to_string(),
-            "-bo".to_string(),
-            "1".to_string(),
-            "-bs".to_string(),
-            "1".to_string(),
-            "-ac".to_string(),
-            "256".to_string(),
-            "-nt".to_string(),
-            "-nf".to_string(),
-            "-sns".to_string(),
-        ];
-        if !source_lang.is_empty() {
-            args.push("-l".to_string());
-            args.push(source_lang.to_string());
-        }
-
-        let mut child = hidden_command(server_bin)
-            .args(&args)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .ok()?;
-
-        // Wait up to 4 seconds for whisper-server.exe to finish loading ggml-tiny.bin into RAM.
-        for _ in 0..40 {
-            if !RUNNING.load(Ordering::SeqCst) {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
+            let mut args = vec![
+                "-m".to_string(),
+                model.to_string_lossy().to_string(),
+                "--host".to_string(),
+                "127.0.0.1".to_string(),
+                "--port".to_string(),
+                port.to_string(),
+                "-t".to_string(),
+                threads.to_string(),
+                "-bo".to_string(),
+                "1".to_string(),
+                "-bs".to_string(),
+                "1".to_string(),
+                "-ac".to_string(),
+                "256".to_string(),
+                "-nt".to_string(),
+                "-nf".to_string(),
+                "-sns".to_string(),
+            ];
+            if !source_lang.is_empty() {
+                args.push("-l".to_string());
+                args.push(source_lang.to_string());
             }
-            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                return Some(Self {
-                    child,
-                    endpoint: format!("http://127.0.0.1:{port}/inference"),
-                });
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
 
-        let _ = child.kill();
-        let _ = child.wait();
+            let Ok(mut child) = hidden_command(server_bin)
+                .args(&args)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            else {
+                continue;
+            };
+
+            // Wait up to 4 seconds for whisper-server.exe to finish loading ggml-tiny.bin into RAM.
+            for _ in 0..40 {
+                if !RUNNING.load(Ordering::SeqCst) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                    return Some(Self {
+                        child,
+                        endpoint: format!("http://127.0.0.1:{port}/inference"),
+                    });
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+
+            let _ = child.kill();
+            let _ = child.wait();
+        }
         None
     }
 
@@ -867,6 +971,7 @@ fn run_wasapi_loopback_worker(
     source_lang: &str,
     target_lang: &str,
     capture_mode: &str,
+    online_translation: bool,
     target_pid: Option<u32>,
 ) -> Result<(), String> {
     use std::collections::VecDeque;
@@ -965,7 +1070,10 @@ fn run_wasapi_loopback_worker(
             if text.eq_ignore_ascii_case(&last_emitted) {
                 continue;
             }
-            let translated = if let Some(cached) = cache.get(&text) {
+            let translated = if !online_translation {
+                // Privacy-first: local Whisper transcription only; zero external HTTP calls.
+                text.clone()
+            } else if let Some(cached) = cache.get(&text) {
                 cached.clone()
             } else {
                 // Keep remote calls <= 2/sec so providers never HTTP 429.
@@ -1162,7 +1270,13 @@ pub fn get_translate_status(app: AppHandle) -> TranslateEngineStatus {
 }
 
 #[tauri::command]
-pub async fn download_translate_engine(app: AppHandle) -> Result<TranslateEngineStatus, String> {
+pub async fn download_translate_engine(
+    window: tauri::Window,
+    app: AppHandle,
+) -> Result<TranslateEngineStatus, String> {
+    if !crate::ipc::is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
     if DOWNLOADING
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -1182,16 +1296,22 @@ pub async fn download_translate_engine(app: AppHandle) -> Result<TranslateEngine
             .build()
             .map_err(|e| format!("Failed to initialize HTTP client: {e}"))?;
 
+        cleanup_partial_downloads(&dir);
+
+        let zip_part = dir.join("whisper-bin-x64.zip.part");
         let zip_path = dir.join("whisper-bin-x64.zip");
         download_file_streaming(
             &client,
             WHISPER_ZIP_URL,
-            &zip_path,
+            &zip_part,
             5,
             35,
             "Downloading Whisper runtime...",
             &app_clone,
         )?;
+        verify_file_sha256(&zip_part, EXPECTED_WHISPER_ZIP_SHA256)?;
+        fs::rename(&zip_part, &zip_path)
+            .map_err(|e| format!("Failed finalizing Whisper archive: {e}"))?;
 
         let _ = app_clone.emit(
             "translate-download-progress",
@@ -1204,16 +1324,20 @@ pub async fn download_translate_engine(app: AppHandle) -> Result<TranslateEngine
         extract_zip_native(&zip_path, &dir)?;
         let _ = fs::remove_file(&zip_path);
 
+        let model_part = dir.join(format!("{MODEL_FILENAME}.part"));
         let model_file = model_path(&dir);
         download_file_streaming(
             &client,
             MODEL_URL,
-            &model_file,
+            &model_part,
             45,
             98,
             "Downloading ggml-tiny speech model (~75 MB)...",
             &app_clone,
         )?;
+        verify_file_sha256(&model_part, EXPECTED_MODEL_SHA256)?;
+        fs::rename(&model_part, &model_file)
+            .map_err(|e| format!("Failed finalizing speech model: {e}"))?;
 
         let _ = app_clone.emit(
             "translate-download-progress",
@@ -1242,7 +1366,13 @@ pub async fn download_translate_engine(app: AppHandle) -> Result<TranslateEngine
 }
 
 #[tauri::command]
-pub fn remove_translate_engine(app: AppHandle) -> Result<TranslateEngineStatus, String> {
+pub fn remove_translate_engine(
+    window: tauri::Window,
+    app: AppHandle,
+) -> Result<TranslateEngineStatus, String> {
+    if !crate::ipc::is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
     RUNNING.store(false, Ordering::SeqCst);
     if let Some(win) = app.get_webview_window("subtitle") {
         let _ = win.hide();
@@ -1261,14 +1391,22 @@ pub fn remove_translate_engine(app: AppHandle) -> Result<TranslateEngineStatus, 
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn start_live_translate(
+    window: tauri::Window,
     app: AppHandle,
     source_lang: String,
     target_lang: String,
     capture_mode: Option<String>,
+    online_translation: Option<bool>,
     target_pid: Option<u32>,
     target_app_name: Option<String>,
 ) -> Result<TranslateEngineStatus, String> {
+    if !crate::ipc::is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
+    let allow_online =
+        online_translation.unwrap_or_else(|| crate::settings::load(&app).online_translation);
     let resolved_mode = match capture_mode.as_deref() {
         Some("app") => "app".to_string(),
         _ => "system".to_string(),
@@ -1294,6 +1432,7 @@ pub async fn start_live_translate(
         prefs.source_lang = Some(source_lang.clone());
         prefs.target_lang = Some(target_lang.clone());
         prefs.capture_mode = Some(resolved_mode.clone());
+        prefs.online_translation = allow_online;
         prefs.target_pid = target_pid;
         prefs.target_app_name = target_app_name.clone();
         prefs.last_error = None;
@@ -1353,6 +1492,7 @@ pub async fn start_live_translate(
                     &source_lang,
                     &target_lang,
                     &resolved_mode,
+                    allow_online,
                     target_pid,
                 ) {
                     crate::diagnostics::log("translator", &format!("loopback failed: {err}"));
@@ -1385,6 +1525,7 @@ pub async fn start_live_translate(
                     &source_lang,
                     &target_lang,
                     &resolved_mode,
+                    allow_online,
                     target_pid,
                 );
                 while RUNNING.load(Ordering::SeqCst) {
@@ -1552,5 +1693,43 @@ mod tests {
             parse_mymemory_response(r#"{"responseData":{"translatedText":"سلام دنیا"}}"#),
             Some("سلام دنیا".to_string())
         );
+    }
+
+    #[test]
+    fn sha256_verification_accepts_valid_and_deletes_invalid() {
+        let p = std::env::temp_dir().join("nexora_sha256_test.bin");
+        fs::write(&p, b"abc").expect("write");
+        // Known SHA-256 of "abc"
+        let ok_hash = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert!(verify_file_sha256(&p, ok_hash).is_ok());
+        assert!(p.exists());
+        assert!(verify_file_sha256(&p, "TODO_FILL_HASH").is_err());
+        assert!(!p.exists());
+        fs::write(&p, b"abc").expect("rewrite");
+        assert!(verify_file_sha256(&p, &"0".repeat(64)).is_err());
+        assert!(!p.exists());
+    }
+
+    #[test]
+    fn zip_extraction_enforces_size_and_file_limits() {
+        let zip_path = std::env::temp_dir().join("nexora_zip_limit_test.zip");
+        let out_dir = std::env::temp_dir().join("nexora_zip_limit_out");
+        let _ = fs::remove_dir_all(&out_dir);
+        fs::create_dir_all(&out_dir).expect("mkdir");
+        {
+            let f = File::create(&zip_path).expect("create zip");
+            let mut zw = zip::ZipWriter::new(f);
+            let opts = zip::write::SimpleFileOptions::default();
+            zw.start_file("a.txt", opts).expect("start a");
+            zw.write_all(&[b'x'; 200]).expect("write a");
+            zw.start_file("b.txt", opts).expect("start b");
+            zw.write_all(&[b'y'; 200]).expect("write b");
+            zw.finish().expect("finish");
+        }
+        assert!(extract_zip_with_limits(&zip_path, &out_dir, 500, 1).is_err());
+        assert!(extract_zip_with_limits(&zip_path, &out_dir, 250, 10).is_err());
+        assert!(extract_zip_with_limits(&zip_path, &out_dir, 1024, 10).is_ok());
+        let _ = fs::remove_file(&zip_path);
+        let _ = fs::remove_dir_all(&out_dir);
     }
 }

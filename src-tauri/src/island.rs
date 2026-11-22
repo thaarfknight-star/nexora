@@ -171,6 +171,35 @@ static EXPANDED: Mutex<bool> = Mutex::new(false);
 /// not make the window click-through before the frontend has said
 /// anything.
 static HIDDEN: Mutex<bool> = Mutex::new(false);
+static LAST_UI_HEARTBEAT_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+const UI_HEARTBEAT_TIMEOUT_MS: u64 = 15_000;
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Records a liveness heartbeat from the island frontend.
+pub fn record_ui_heartbeat() {
+    LAST_UI_HEARTBEAT_MS.store(now_millis(), std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Pure helper: returns `true` when the frontend heartbeat has gone stale.
+pub fn is_heartbeat_stale(last_ms: u64, now_ms: u64, timeout_ms: u64) -> bool {
+    last_ms > 0 && now_ms.saturating_sub(last_ms) >= timeout_ms
+}
+
+/// Re-applies top-center anchor and fixed logical size (e.g. after DPI/monitor change).
+pub fn reapply_anchor_on_window(window: &tauri::Window) {
+    let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+        f64::from(WINDOW_WIDTH),
+        f64::from(WINDOW_HEIGHT),
+    )));
+    let pos = top_center_position(window);
+    let _ = window.set_position(tauri::Position::Logical(pos));
+}
 
 /// Record whether the island is hidden. Called by the
 /// `log_visibility_transition` command on every frontend
@@ -697,7 +726,17 @@ pub fn start_hot_zone_watcher(app: &tauri::AppHandle) {
                     let _ = window.set_ignore_cursor_events(ignore);
                 }
             } else {
-                last_ignore = None;
+                // Safety net: if the frontend stops sending heartbeats while visible,
+                // restore click-through so underlying windows are never permanently blocked.
+                let last_hb = LAST_UI_HEARTBEAT_MS.load(std::sync::atomic::Ordering::SeqCst);
+                if is_heartbeat_stale(last_hb, now_millis(), UI_HEARTBEAT_TIMEOUT_MS) {
+                    if last_ignore != Some(true) {
+                        last_ignore = Some(true);
+                        let _ = window.set_ignore_cursor_events(true);
+                    }
+                } else {
+                    last_ignore = None;
+                }
             }
             std::thread::sleep(Duration::from_millis(HOT_ZONE_POLL_MS));
         }
@@ -938,5 +977,13 @@ mod tests {
         assert!(is_hidden());
         set_hidden(false);
         assert!(!is_hidden());
+    }
+
+    #[test]
+    fn heartbeat_staleness_safety_net_detects_frozen_ui() {
+        assert!(!is_heartbeat_stale(0, 50_000, 15_000));
+        assert!(!is_heartbeat_stale(40_000, 50_000, 15_000));
+        assert!(is_heartbeat_stale(30_000, 45_000, 15_000));
+        assert!(is_heartbeat_stale(30_000, 60_000, 15_000));
     }
 }

@@ -202,8 +202,52 @@ pub fn open_start_menu() -> bool {
 /// a `PinnedApp` carries. `true` means the launch was invoked;
 /// `false` means it was not (empty path, or the launch failed).
 /// `false` off Windows. Opens nothing else and logs nothing.
+/// Normalizes a Windows path for case-insensitive allowlist comparison.
+pub fn normalize_target_path(raw: &str) -> String {
+    raw.trim().replace('/', "\\").to_lowercase()
+}
+
+/// Returns `true` if `target` uses a URL scheme (e.g. `http:`, `file:`,
+/// `javascript:`) or UNC path (`\\server\share`).
+pub fn has_url_scheme_or_unc(raw: &str) -> bool {
+    let trimmed = raw.trim();
+    if trimmed.starts_with("\\\\") || trimmed.starts_with("//") {
+        return true;
+    }
+    if let Some(colon) = trimmed.find(':') {
+        if colon >= 2 {
+            let prefix = &trimmed[..colon];
+            if prefix
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Validates that `target` exactly matches (case-insensitively, normalized)
+/// one of the pinned app targets returned by `list_pinned()`.
+pub fn is_allowed_pinned_target(target: &str, allowed_targets: &[String]) -> bool {
+    let norm = normalize_target_path(target);
+    if norm.is_empty() {
+        return false;
+    }
+    if allowed_targets
+        .iter()
+        .any(|allowed| normalize_target_path(allowed) == norm)
+    {
+        return true;
+    }
+    let _ = has_url_scheme_or_unc(target);
+    false
+}
+
 pub fn launch_pinned_app(target: &str) -> bool {
-    if target.is_empty() {
+    let allowed: Vec<String> = list_pinned().into_iter().map(|p| p.target).collect();
+    if !is_allowed_pinned_target(target, &allowed) {
         return false;
     }
     #[cfg(target_os = "windows")]
@@ -309,33 +353,36 @@ mod win {
     /// properties. `lparam` carries a `*mut Vec<RawWindow>`; enumeration
     /// is synchronous, so the pointer stays valid.
     unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        let out = unsafe { &mut *(lparam.0 as *mut Vec<RawWindow>) };
-        let visible = is_window_visible(hwnd);
-        let mut title_buf = [0u16; 512];
-        let title_len = unsafe { GetWindowTextW(hwnd, &mut title_buf) };
-        let title = buf_to_string(&title_buf, title_len.max(0) as usize);
-        let exstyle = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
-        let props = WindowProps {
-            visible,
-            has_title: !title.trim().is_empty(),
-            is_tool_window: exstyle & 0x80 != 0, // WS_EX_TOOLWINDOW
-            is_app_window: exstyle & 0x40000 != 0, // WS_EX_APPWINDOW
-            has_owner: unsafe { GetWindow(hwnd, GW_OWNER) }
-                .map(|h| !h.0.is_null())
-                .unwrap_or(false),
-            cloaked: is_cloaked(hwnd),
-            is_nexora_island: hwnd.0 as isize == crate::taskbar::island_window(),
-        };
-        let exe_path = process_exe_path(hwnd);
-        out.push(RawWindow {
-            hwnd,
-            title,
-            minimized: unsafe { IsIconic(hwnd) }.as_bool(),
-            active: unsafe { GetForegroundWindow() } == hwnd,
-            exe_path,
-            props,
-        });
-        BOOL(1)
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let out = unsafe { &mut *(lparam.0 as *mut Vec<RawWindow>) };
+            let visible = is_window_visible(hwnd);
+            let mut title_buf = [0u16; 512];
+            let title_len = unsafe { GetWindowTextW(hwnd, &mut title_buf) };
+            let title = buf_to_string(&title_buf, title_len.max(0) as usize);
+            let exstyle = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
+            let props = WindowProps {
+                visible,
+                has_title: !title.trim().is_empty(),
+                is_tool_window: exstyle & 0x80 != 0, // WS_EX_TOOLWINDOW
+                is_app_window: exstyle & 0x40000 != 0, // WS_EX_APPWINDOW
+                has_owner: unsafe { GetWindow(hwnd, GW_OWNER) }
+                    .map(|h| !h.0.is_null())
+                    .unwrap_or(false),
+                cloaked: is_cloaked(hwnd),
+                is_nexora_island: hwnd.0 as isize == crate::taskbar::island_window(),
+            };
+            let exe_path = process_exe_path(hwnd);
+            out.push(RawWindow {
+                hwnd,
+                title,
+                minimized: unsafe { IsIconic(hwnd) }.as_bool(),
+                active: unsafe { GetForegroundWindow() } == hwnd,
+                exe_path,
+                props,
+            });
+            BOOL(1)
+        }))
+        .unwrap_or(BOOL(0))
     }
 
     /// Resolves the full executable path for any top-level window across
@@ -843,5 +890,38 @@ mod tests {
         assert!(!activate_window(12345));
         assert!(!open_start_menu());
         assert!(!launch_pinned_app("C:\\Windows\\notepad.exe"));
+    }
+
+    #[test]
+    fn pinned_target_allowlist_validates_allowed_and_rejects_unsafe() {
+        let allowed = vec![
+            r"C:\Program Files\App\app.exe".to_string(),
+            r"\\fileserver\apps\pinned.exe".to_string(),
+        ];
+        assert!(is_allowed_pinned_target(
+            r"c:/program files/app/app.exe",
+            &allowed
+        ));
+        assert!(is_allowed_pinned_target(
+            r"\\fileserver\apps\pinned.exe",
+            &allowed
+        ));
+        assert!(!is_allowed_pinned_target("", &allowed));
+        assert!(!is_allowed_pinned_target("   ", &allowed));
+        assert!(!is_allowed_pinned_target(
+            r"C:\Windows\System32\cmd.exe",
+            &allowed
+        ));
+        assert!(!is_allowed_pinned_target(r"\\evil\share\run.exe", &allowed));
+        assert!(!is_allowed_pinned_target("http://example.com", &allowed));
+        assert!(!is_allowed_pinned_target(
+            "file:///C:/Windows/calc.exe",
+            &allowed
+        ));
+        assert!(!is_allowed_pinned_target("javascript:alert(1)", &allowed));
+        assert!(has_url_scheme_or_unc("http://example.com"));
+        assert!(has_url_scheme_or_unc("javascript:alert(1)"));
+        assert!(has_url_scheme_or_unc(r"\\evil\share\a.exe"));
+        assert!(!has_url_scheme_or_unc(r"C:\Program Files\App\app.exe"));
     }
 }
