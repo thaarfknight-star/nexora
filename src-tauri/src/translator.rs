@@ -65,6 +65,7 @@ static ENGINE_STATE: Mutex<EnginePrefs> = Mutex::new(EnginePrefs {
     source_lang: None,
     target_lang: None,
     capture_mode: None,
+    online_translation: false,
     target_pid: None,
     target_app_name: None,
     last_error: None,
@@ -74,6 +75,7 @@ struct EnginePrefs {
     source_lang: Option<String>,
     target_lang: Option<String>,
     capture_mode: Option<String>,
+    online_translation: bool,
     target_pid: Option<u32>,
     target_app_name: Option<String>,
     last_error: Option<String>,
@@ -88,6 +90,7 @@ pub struct TranslateEngineStatus {
     pub source_lang: String,
     pub target_lang: String,
     pub capture_mode: String,
+    pub online_translation: bool,
     pub target_pid: Option<u32>,
     pub target_app_name: Option<String>,
     pub model_path: String,
@@ -213,6 +216,7 @@ fn build_status(app: &AppHandle) -> TranslateEngineStatus {
             .capture_mode
             .clone()
             .unwrap_or_else(|| "system".to_string()),
+        online_translation: prefs.online_translation,
         target_pid: prefs.target_pid,
         target_app_name: prefs.target_app_name.clone(),
         model_path: dir.to_string_lossy().to_string(),
@@ -953,6 +957,7 @@ fn run_wasapi_loopback_worker(
     source_lang: &str,
     target_lang: &str,
     capture_mode: &str,
+    online_translation: bool,
     target_pid: Option<u32>,
 ) -> Result<(), String> {
     use std::collections::VecDeque;
@@ -1051,7 +1056,10 @@ fn run_wasapi_loopback_worker(
             if text.eq_ignore_ascii_case(&last_emitted) {
                 continue;
             }
-            let translated = if let Some(cached) = cache.get(&text) {
+            let translated = if !online_translation {
+                // Privacy-first: local Whisper transcription only; zero external HTTP calls.
+                text.clone()
+            } else if let Some(cached) = cache.get(&text) {
                 cached.clone()
             } else {
                 // Keep remote calls <= 2/sec so providers never HTTP 429.
@@ -1375,12 +1383,14 @@ pub async fn start_live_translate(
     source_lang: String,
     target_lang: String,
     capture_mode: Option<String>,
+    online_translation: Option<bool>,
     target_pid: Option<u32>,
     target_app_name: Option<String>,
 ) -> Result<TranslateEngineStatus, String> {
     if !crate::ipc::is_privileged_window(window.label()) {
         return Err("Unauthorized window".to_string());
     }
+    let allow_online = online_translation.unwrap_or_else(|| crate::settings::load(&app).online_translation);
     let resolved_mode = match capture_mode.as_deref() {
         Some("app") => "app".to_string(),
         _ => "system".to_string(),
@@ -1406,6 +1416,7 @@ pub async fn start_live_translate(
         prefs.source_lang = Some(source_lang.clone());
         prefs.target_lang = Some(target_lang.clone());
         prefs.capture_mode = Some(resolved_mode.clone());
+        prefs.online_translation = allow_online;
         prefs.target_pid = target_pid;
         prefs.target_app_name = target_app_name.clone();
         prefs.last_error = None;
@@ -1465,6 +1476,7 @@ pub async fn start_live_translate(
                     &source_lang,
                     &target_lang,
                     &resolved_mode,
+                    allow_online,
                     target_pid,
                 ) {
                     crate::diagnostics::log("translator", &format!("loopback failed: {err}"));
@@ -1497,6 +1509,7 @@ pub async fn start_live_translate(
                     &source_lang,
                     &target_lang,
                     &resolved_mode,
+                    allow_online,
                     target_pid,
                 );
                 while RUNNING.load(Ordering::SeqCst) {

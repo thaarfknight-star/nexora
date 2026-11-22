@@ -88,6 +88,10 @@ pub struct NexoraSettings {
     /// Stats percent style: `"with"` shows the `%` sign, `"without"` hides it.
     #[serde(default = "default_stats_percent_style")]
     pub stats_percent_style: String,
+    /// Whether Live Subtitles may send transcribed text to external translation
+    /// services (Google Translate / MyMemory). Defaults to `false` (local transcription only).
+    #[serde(default)]
+    pub online_translation: bool,
 }
 
 impl Default for NexoraSettings {
@@ -111,6 +115,7 @@ pub fn defaults() -> NexoraSettings {
         poll_interval_secs: 3,
         stats_speed_unit: "auto".into(),
         stats_percent_style: "with".into(),
+        online_translation: false,
     }
 }
 
@@ -368,6 +373,16 @@ mod tests {
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
         assert_eq!(load_from_dir(&dir).language, "en");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_online_translation_defaults_to_false() {
+        let dir = test_dir();
+        fs::create_dir_all(&dir).expect("create test dir");
+        fs::write(settings_path(&dir), r#"{"theme": "neon-glass"}"#).expect("write legacy");
+        let loaded = load_from_dir(&dir);
+        assert!(!loaded.online_translation);
         let _ = fs::remove_dir_all(&dir);
     }
 }
