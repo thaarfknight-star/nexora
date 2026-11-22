@@ -413,7 +413,15 @@ impl TranslateProvider for GeminiTranslateProvider {
     }
 }
 
-/// Scaffold for future local offline translation (e.g. custom Nexora-MT v1).
+/// Reserved filename for custom offline translation model (Nexora-MT v1).
+/// `llama-server` / Qwen2.5 was intentionally removed in v0.2.13; no unverified
+/// third-party GGUF hashes are hardcoded here.
+pub const LOCAL_TRANSLATE_MODEL_FILENAME: &str = "nexora-mt-en-fa-v1.nxmt";
+/// TODO: Fill with the verified SHA-256 hex digest once `nexora-mt-en-fa-v1.nxmt`
+/// finishes training and is published to GitHub Releases.
+pub const LOCAL_TRANSLATE_MODEL_SHA256: &str = "TODO_FILL_NEXORA_MT_V1_SHA256";
+
+/// Scaffold for future local offline translation (custom Nexora-MT v1).
 pub struct LocalTranslateProvider;
 
 impl TranslateProvider for LocalTranslateProvider {
