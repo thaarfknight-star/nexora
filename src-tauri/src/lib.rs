@@ -5,6 +5,7 @@ pub mod hotkey;
 pub mod ipc;
 pub mod island;
 pub mod media;
+pub mod nexora_mt;
 pub mod notifications;
 pub mod settings;
 pub mod stats;
@@ -195,6 +196,8 @@ pub fn run() {
             translator::get_translate_status,
             translator::list_audio_sources,
             translator::download_translate_engine,
+            translator::download_local_translate_model,
+            translator::remove_local_translate_model,
             translator::remove_translate_engine,
             translator::start_live_translate,
             translator::stop_live_translate,

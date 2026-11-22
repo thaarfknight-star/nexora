@@ -469,6 +469,7 @@ interface TranslateEngineStatus {
   online_translation?: boolean;
   translate_provider?: string;
   whisper_model?: string;
+  local_model_installed?: boolean;
   target_pid: number | null;
   target_app_name: string | null;
   model_path: string;
@@ -2491,6 +2492,27 @@ function SettingsView() {
       });
   };
 
+  const handleDownloadLocalModel = () => {
+    setDownloadProgress({ percent: 5, stage: "Downloading Nexora-MT v1..." });
+    invoke<TranslateEngineStatus>("download_local_translate_model")
+      .then((st) => {
+        setTranslateStatus(st);
+        setDownloadProgress(null);
+      })
+      .catch((err) => {
+        setDownloadProgress(null);
+        setTranslateStatus((prev) =>
+          prev ? { ...prev, downloading: false, last_error: String(err) } : prev,
+        );
+      });
+  };
+
+  const handleRemoveLocalModel = () => {
+    invoke<TranslateEngineStatus>("remove_local_translate_model")
+      .then(setTranslateStatus)
+      .catch(() => {});
+  };
+
   const handleRemoveEngine = () => {
     invoke<TranslateEngineStatus>("remove_translate_engine")
       .then(setTranslateStatus)
@@ -3737,9 +3759,58 @@ function SettingsView() {
         </div>
       )}
       {activeProvider === "local" && (
-        <div className="translate-notice-box">
-          {t(language, "localProviderNotice")}
-        </div>
+        <>
+          <div className="translate-ok-box">
+            {t(language, "localProviderNotice")}
+          </div>
+          <div className="settings-row">
+            <span className="settings-row-text">
+              <span>{t(language, "localModelLabel")}</span>
+              <span className="audio-mode-hint">
+                {translateStatus?.local_model_installed
+                  ? t(language, "localModelInstalled")
+                  : t(language, "localModelNotInstalled")}
+              </span>
+            </span>
+            <div className="translate-btn-group">
+              {!translateStatus?.local_model_installed ? (
+                <button
+                  type="button"
+                  className="mini-btn primary-btn"
+                  onClick={handleDownloadLocalModel}
+                  disabled={translateStatus?.downloading || downloadProgress !== null}
+                >
+                  {t(language, "downloadLocalModelBtn")}
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="mini-btn"
+                    onClick={handleTestProvider}
+                    disabled={testingProvider}
+                  >
+                    {testingProvider
+                      ? t(language, "testingConnectionBtn")
+                      : t(language, "testConnectionBtn")}
+                  </button>
+                  <button
+                    type="button"
+                    className="mini-btn danger-btn"
+                    onClick={handleRemoveLocalModel}
+                  >
+                    {t(language, "removeEngineBtn")}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+          {apiKeyMsg && (
+            <div className={apiKeyMsg.ok ? "translate-ok-box" : "translate-error"}>
+              {apiKeyMsg.text}
+            </div>
+          )}
+        </>
       )}
       {(activeProvider === "google_cloud" || activeProvider === "gemini") && (
         <>
