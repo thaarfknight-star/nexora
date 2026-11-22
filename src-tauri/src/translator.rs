@@ -24,14 +24,68 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
-const MODEL_FILENAME: &str = "ggml-tiny.bin";
-const MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.bin";
+const WHISPER_HF_COMMIT: &str = "5359861c739e955e79d9a303bcbc70fb988958b1";
 const WHISPER_ZIP_URL: &str =
     "https://github.com/ggml-org/whisper.cpp/releases/download/b5907/whisper-bin-x64.zip";
 const EXPECTED_WHISPER_ZIP_SHA256: &str =
     "ecca07b277d943e9b9f4712856a144b857271a6b333104e511e1988e80db582b";
-const EXPECTED_MODEL_SHA256: &str =
-    "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WhisperModelSpec {
+    pub filename: &'static str,
+    pub sha256: &'static str,
+    pub size_mb: u64,
+    pub english_only: bool,
+    /// Adaptive snapshot interval so heavier models do not stall CPU.
+    pub snapshot_interval_ms: u64,
+}
+
+/// Verified official `ggerganov/whisper.cpp` GGML models pinned to `WHISPER_HF_COMMIT`.
+pub const WHISPER_MODELS: &[WhisperModelSpec] = &[
+    WhisperModelSpec {
+        filename: "ggml-tiny.bin",
+        sha256: "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
+        size_mb: 74,
+        english_only: false,
+        snapshot_interval_ms: 250,
+    },
+    WhisperModelSpec {
+        filename: "ggml-tiny.en.bin",
+        sha256: "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f",
+        size_mb: 74,
+        english_only: true,
+        snapshot_interval_ms: 250,
+    },
+    WhisperModelSpec {
+        filename: "ggml-base.en.bin",
+        sha256: "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
+        size_mb: 141,
+        english_only: true,
+        snapshot_interval_ms: 350,
+    },
+    WhisperModelSpec {
+        filename: "ggml-large-v3-turbo-q5_0.bin",
+        sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+        size_mb: 547,
+        english_only: false,
+        snapshot_interval_ms: 750,
+    },
+];
+
+pub fn whisper_model_spec(filename: &str) -> WhisperModelSpec {
+    WHISPER_MODELS
+        .iter()
+        .copied()
+        .find(|m| m.filename == filename)
+        .unwrap_or(WHISPER_MODELS[0])
+}
+
+pub fn whisper_model_url(spec: WhisperModelSpec) -> String {
+    format!(
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_HF_COMMIT}/{}",
+        spec.filename
+    )
+}
 const MAX_EXTRACT_BYTES: u64 = 150 * 1024 * 1024;
 const MAX_EXTRACT_FILES: usize = 256;
 
@@ -170,8 +224,8 @@ fn engine_dir(app: &AppHandle) -> PathBuf {
         .join("live-translate")
 }
 
-fn model_path(dir: &Path) -> PathBuf {
-    dir.join(MODEL_FILENAME)
+fn model_path(dir: &Path, model_filename: &str) -> PathBuf {
+    dir.join(whisper_model_spec(model_filename).filename)
 }
 
 fn find_whisper_binary(dir: &Path) -> Option<PathBuf> {
@@ -194,8 +248,8 @@ fn find_whisper_server(dir: &Path) -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.exists())
 }
 
-fn is_installed_in(dir: &Path) -> bool {
-    model_path(dir).exists() && find_whisper_binary(dir).is_some()
+fn is_installed_in(dir: &Path, model_filename: &str) -> bool {
+    model_path(dir, model_filename).exists() && find_whisper_binary(dir).is_some()
 }
 
 fn dir_size_mb(dir: &Path) -> u64 {
@@ -225,7 +279,7 @@ fn build_status(app: &AppHandle) -> TranslateEngineStatus {
         .clone()
         .unwrap_or_else(|| cfg.whisper_model.clone());
     TranslateEngineStatus {
-        installed: is_installed_in(&dir),
+        installed: is_installed_in(&dir, &model),
         downloading: DOWNLOADING.load(Ordering::SeqCst),
         running: RUNNING.load(Ordering::SeqCst),
         model_size_mb: dir_size_mb(&dir),
@@ -380,24 +434,162 @@ pub fn pcm16_rms(pcm_bytes: &[u8]) -> f32 {
     (sum_sq / (count as f64)).sqrt() as f32
 }
 
-/// Returns `true` when 16-bit PCM audio exceeds the silence gate RMS threshold.
+/// Returns `true` when 16-bit PCM audio exceeds the base silence gate RMS threshold.
 pub fn has_audible_speech(pcm_bytes: &[u8]) -> bool {
     pcm16_rms(pcm_bytes) >= SPEECH_RMS_THRESHOLD
 }
 
-/// Strips Whisper silence hallucinations and bracketed non-speech markers.
+/// Adaptive background noise-floor VAD gate.
+///
+/// Tracks an exponential moving average of ambient/music RMS during non-speech
+/// frames so steady game music or room hum does not continuously trigger Whisper,
+/// while speech peaks above `noise_floor * multiplier` open the gate cleanly.
+#[derive(Debug, Clone)]
+pub struct AdaptiveVadGate {
+    noise_floor: f32,
+    in_speech: bool,
+}
+
+impl Default for AdaptiveVadGate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AdaptiveVadGate {
+    const MIN_NOISE_FLOOR: f32 = 60.0;
+    const MAX_NOISE_FLOOR: f32 = 900.0;
+    const MIN_SPEECH_RMS: f32 = 140.0;
+    const ENTER_MULTIPLIER: f32 = 2.4;
+    const HOLD_MULTIPLIER: f32 = 1.6;
+    const ALPHA: f32 = 0.08;
+
+    pub fn new() -> Self {
+        Self {
+            noise_floor: 90.0,
+            in_speech: false,
+        }
+    }
+
+    pub fn is_voiced(&mut self, pcm_bytes: &[u8]) -> bool {
+        let rms = pcm16_rms(pcm_bytes);
+        let enter_thresh = (self.noise_floor * Self::ENTER_MULTIPLIER).max(Self::MIN_SPEECH_RMS);
+        let hold_thresh = (self.noise_floor * Self::HOLD_MULTIPLIER).max(SPEECH_RMS_THRESHOLD);
+
+        let voiced = if self.in_speech {
+            rms >= hold_thresh
+        } else {
+            rms >= enter_thresh
+        };
+
+        if !voiced {
+            self.noise_floor = ((1.0 - Self::ALPHA) * self.noise_floor + Self::ALPHA * rms)
+                .clamp(Self::MIN_NOISE_FLOOR, Self::MAX_NOISE_FLOOR);
+        }
+        self.in_speech = voiced;
+        voiced
+    }
+
+    pub fn reset(&mut self) {
+        self.in_speech = false;
+    }
+
+    pub fn noise_floor(&self) -> f32 {
+        self.noise_floor
+    }
+}
+
+/// Extensible list of known Whisper silence/music hallucinations (normalized lowercase,
+/// outer punctuation stripped).
+pub const WHISPER_HALLUCINATIONS: &[&str] = &[
+    "thank you",
+    "thanks for watching",
+    "thank you for watching",
+    "please subscribe",
+    "subscribe",
+    "like and subscribe",
+    "see you next time",
+    "bye",
+    "you",
+    "mbc",
+    "subtitles by",
+    "translated by",
+    "amara.org",
+    "ممنون",
+    "سپاسگزارم",
+    "با تشکر",
+    "زیرنویس",
+];
+
+/// Returns `true` when Whisper loops on the same short word or 2-3 word phrase
+/// 4 or more consecutive times (a classic silence/music hallucination pattern).
+pub fn has_excessive_repetition(text: &str) -> bool {
+    let words: Vec<String> = text
+        .split_whitespace()
+        .map(|w| {
+            w.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase()
+        })
+        .filter(|w| !w.is_empty())
+        .collect();
+    if words.len() < 4 {
+        return false;
+    }
+    for n in 1..=3 {
+        if words.len() < n * 4 {
+            continue;
+        }
+        for start in 0..=(words.len() - n * 4) {
+            let pat = &words[start..start + n];
+            let mut repeats = 1usize;
+            let mut pos = start + n;
+            while pos + n <= words.len() && &words[pos..pos + n] == pat {
+                repeats += 1;
+                pos += n;
+            }
+            if repeats >= 4 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Strips Whisper silence hallucinations, bracketed non-speech markers,
+/// and infinite phrase-repetition loops.
 pub fn clean_whisper_output(raw: &str) -> String {
-    raw.lines()
+    let joined = raw
+        .lines()
         .map(str::trim)
         .filter(|l| {
-            !l.is_empty()
-                && !l.starts_with('[')
-                && !(l.starts_with('(') && l.ends_with(')'))
-                && !l.eq_ignore_ascii_case("thank you.")
-                && !l.eq_ignore_ascii_case("thanks for watching.")
+            if l.is_empty()
+                || l.starts_with('[')
+                || (l.starts_with('(') && l.ends_with(')'))
+                || (l.starts_with('♪') || l.ends_with('♪'))
+            {
+                return false;
+            }
+            let norm = l
+                .trim_matches(|c: char| {
+                    matches!(c, '.' | ',' | '!' | '?' | ';' | ':' | '"' | ''' | '…' | '-')
+                })
+                .trim()
+                .to_lowercase();
+            if norm.is_empty() {
+                return false;
+            }
+            !WHISPER_HALLUCINATIONS
+                .iter()
+                .any(|h| norm == *h || norm.starts_with("subtitles by") || norm.starts_with("translated by"))
         })
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" ");
+
+    if has_excessive_repetition(&joined) {
+        String::new()
+    } else {
+        joined
+    }
 }
 
 /// Normalizes text for cache and stability comparisons (collapses whitespace,
@@ -1045,6 +1237,7 @@ fn run_wasapi_loopback_worker(
     capture_mode: &str,
     provider_id: crate::translate_provider::TranslateProviderId,
     target_pid: Option<u32>,
+    snapshot_interval_ms: u64,
 ) -> Result<(), String> {
     use std::collections::VecDeque;
     use std::time::Instant;
@@ -1320,10 +1513,12 @@ fn run_wasapi_loopback_worker(
     // stream live on screen as they are spoken — never waiting for sentence end.
     let mut rolling_pcm: VecDeque<u8> = VecDeque::with_capacity(MAX_ROLLING_BYTES + 16_384);
     let mut packet_buf: VecDeque<u8> = VecDeque::with_capacity(8_192);
+    let mut vad = AdaptiveVadGate::new();
     let mut in_speech = false;
     let mut last_voice_at: Option<Instant> = None;
     let mut last_snapshot_at = Instant::now();
     let mut dirty_since_snapshot = false;
+    let step_ms = snapshot_interval_ms.max(STREAM_STEP_MS);
 
     while RUNNING.load(Ordering::SeqCst) {
         let _ = h_event.wait_for_event(30);
@@ -1342,7 +1537,7 @@ fn run_wasapi_loopback_worker(
                         break;
                     }
                     let pkt_slice: Vec<u8> = packet_buf.drain(..).collect();
-                    let voiced = has_audible_speech(&pkt_slice);
+                    let voiced = vad.is_voiced(&pkt_slice);
                     let now = Instant::now();
                     if voiced {
                         in_speech = true;
@@ -1374,7 +1569,7 @@ fn run_wasapi_loopback_worker(
                 .unwrap_or(0);
             let step_ready = dirty_since_snapshot
                 && rolling_pcm.len() >= MIN_STREAM_BYTES
-                && now.duration_since(last_snapshot_at).as_millis() as u64 >= STREAM_STEP_MS;
+                && now.duration_since(last_snapshot_at).as_millis() as u64 >= step_ms;
             let finalize_ready = silence_ms >= PHRASE_RESET_SILENCE_MS;
 
             if step_ready || finalize_ready {
@@ -1391,6 +1586,7 @@ fn run_wasapi_loopback_worker(
                 }
                 if finalize_ready {
                     rolling_pcm.clear();
+                    vad.reset();
                     in_speech = false;
                     last_voice_at = None;
                     dirty_since_snapshot = false;
@@ -1420,6 +1616,7 @@ pub fn get_translate_status(app: AppHandle) -> TranslateEngineStatus {
 pub async fn download_translate_engine(
     window: tauri::Window,
     app: AppHandle,
+    whisper_model: Option<String>,
 ) -> Result<TranslateEngineStatus, String> {
     if !crate::ipc::is_privileged_window(window.label()) {
         return Err("Unauthorized window".to_string());
@@ -1431,6 +1628,13 @@ pub async fn download_translate_engine(
         return Ok(build_status(&app));
     }
 
+    let selected_model_name = whisper_model.unwrap_or_else(|| crate::settings::load(&app).whisper_model);
+    let spec = whisper_model_spec(&selected_model_name);
+    {
+        let mut prefs = ENGINE_STATE.lock().unwrap_or_else(|e| e.into_inner());
+        prefs.whisper_model = Some(spec.filename.to_string());
+    }
+
     let app_clone = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         let dir = engine_dir(&app_clone);
@@ -1438,51 +1642,55 @@ pub async fn download_translate_engine(
 
         let client = reqwest::blocking::Client::builder()
             .connect_timeout(Duration::from_secs(15))
-            .timeout(Duration::from_secs(300))
+            .timeout(Duration::from_secs(600))
             .user_agent("Nexora/0.2")
             .build()
             .map_err(|e| format!("Failed to initialize HTTP client: {e}"))?;
 
         cleanup_partial_downloads(&dir);
 
-        let zip_part = dir.join("whisper-bin-x64.zip.part");
-        let zip_path = dir.join("whisper-bin-x64.zip");
+        if find_whisper_binary(&dir).is_none() {
+            let zip_part = dir.join("whisper-bin-x64.zip.part");
+            let zip_path = dir.join("whisper-bin-x64.zip");
+            download_file_streaming(
+                &client,
+                WHISPER_ZIP_URL,
+                &zip_part,
+                5,
+                35,
+                "Downloading Whisper runtime...",
+                &app_clone,
+            )?;
+            verify_file_sha256(&zip_part, EXPECTED_WHISPER_ZIP_SHA256)?;
+            fs::rename(&zip_part, &zip_path)
+                .map_err(|e| format!("Failed finalizing Whisper archive: {e}"))?;
+
+            let _ = app_clone.emit(
+                "translate-download-progress",
+                DownloadProgressPayload {
+                    percent: 40,
+                    stage: "Extracting Whisper runtime...".to_string(),
+                },
+            );
+
+            extract_zip_native(&zip_path, &dir)?;
+            let _ = fs::remove_file(&zip_path);
+        }
+
+        let model_part = dir.join(format!("{}.part", spec.filename));
+        let model_file = model_path(&dir, spec.filename);
+        let url = whisper_model_url(spec);
+        let stage_msg = format!("Downloading {} (~{} MB)...", spec.filename, spec.size_mb);
         download_file_streaming(
             &client,
-            WHISPER_ZIP_URL,
-            &zip_part,
-            5,
-            35,
-            "Downloading Whisper runtime...",
-            &app_clone,
-        )?;
-        verify_file_sha256(&zip_part, EXPECTED_WHISPER_ZIP_SHA256)?;
-        fs::rename(&zip_part, &zip_path)
-            .map_err(|e| format!("Failed finalizing Whisper archive: {e}"))?;
-
-        let _ = app_clone.emit(
-            "translate-download-progress",
-            DownloadProgressPayload {
-                percent: 40,
-                stage: "Extracting Whisper runtime...".to_string(),
-            },
-        );
-
-        extract_zip_native(&zip_path, &dir)?;
-        let _ = fs::remove_file(&zip_path);
-
-        let model_part = dir.join(format!("{MODEL_FILENAME}.part"));
-        let model_file = model_path(&dir);
-        download_file_streaming(
-            &client,
-            MODEL_URL,
+            &url,
             &model_part,
             45,
             98,
-            "Downloading ggml-tiny speech model (~75 MB)...",
+            &stage_msg,
             &app_clone,
         )?;
-        verify_file_sha256(&model_part, EXPECTED_MODEL_SHA256)?;
+        verify_file_sha256(&model_part, spec.sha256)?;
         fs::rename(&model_part, &model_file)
             .map_err(|e| format!("Failed finalizing speech model: {e}"))?;
 
@@ -1613,8 +1821,14 @@ pub async fn start_live_translate(
     }
 
     let dir = engine_dir(&app);
-    let model = model_path(&dir);
+    let model_spec = whisper_model_spec(&loaded_settings.whisper_model);
+    let model = model_path(&dir, model_spec.filename);
     let whisper_bin = find_whisper_binary(&dir);
+    let effective_source_lang = if model_spec.english_only {
+        "en".to_string()
+    } else {
+        source_lang.clone()
+    };
 
     let listening_banner = if resolved_mode == "app" {
         let label = target_app_name.as_deref().unwrap_or("App");
@@ -1652,11 +1866,12 @@ pub async fn start_live_translate(
                     &bin,
                     &model,
                     &wav_path,
-                    &source_lang,
+                    &effective_source_lang,
                     &target_lang,
                     &resolved_mode,
                     resolved_provider_id,
                     target_pid,
+                    model_spec.snapshot_interval_ms,
                 ) {
                     crate::diagnostics::log("translator", &format!("loopback failed: {err}"));
                     RUNNING.store(false, Ordering::SeqCst);
@@ -1686,11 +1901,12 @@ pub async fn start_live_translate(
                     &model,
                     &wav_path,
                     &app_worker,
-                    &source_lang,
+                    &effective_source_lang,
                     &target_lang,
                     &resolved_mode,
                     resolved_provider_id,
                     target_pid,
+                    model_spec.snapshot_interval_ms,
                 );
                 while RUNNING.load(Ordering::SeqCst) {
                     std::thread::sleep(Duration::from_secs(2));
@@ -2056,5 +2272,59 @@ mod tests {
         assert_eq!(cache.get("hello, world", TranslateProviderId::Gemini, "fa"), None);
         assert_eq!(cache.get("second", TranslateProviderId::Gemini, "fa"), Some("دوم".to_string()));
         assert_eq!(cache.get("third", TranslateProviderId::Gemini, "fa"), Some("سوم".to_string()));
+    }
+
+    #[test]
+    fn adaptive_vad_raises_noise_floor_and_detects_speech_peaks() {
+        let mut vad = AdaptiveVadGate::new();
+        let make_pcm = |amp: i16| -> Vec<u8> {
+            (0..800)
+                .flat_map(|i| {
+                    let v = if i % 2 == 0 { amp } else { -amp };
+                    v.to_le_bytes()
+                })
+                .collect()
+        };
+        // Feed low steady music/hum: should stay unvoiced and adapt noise floor.
+        let hum = make_pcm(100);
+        for _ in 0..10 {
+            assert!(!vad.is_voiced(&hum));
+        }
+        // Clear speech peak above adaptive threshold triggers voiced.
+        let speech = make_pcm(1400);
+        assert!(vad.is_voiced(&speech));
+        // Drops back to unvoiced on silence.
+        assert!(!vad.is_voiced(&vec![0u8; 1600]));
+    }
+
+    #[test]
+    fn clean_whisper_output_filters_multilingual_hallucinations_and_repetitions() {
+        assert_eq!(clean_whisper_output("Thanks for watching!"), "");
+        assert_eq!(clean_whisper_output("ممنون."), "");
+        assert_eq!(clean_whisper_output("♪ music ♪"), "");
+        assert_eq!(
+            clean_whisper_output("you you you you you"),
+            ""
+        );
+        assert_eq!(
+            clean_whisper_output("the end, the end, the end, the end"),
+            ""
+        );
+        assert_eq!(
+            clean_whisper_output("Hello team, let's push mid."),
+            "Hello team, let's push mid."
+        );
+    }
+
+    #[test]
+    fn whisper_model_catalog_has_valid_sha256_and_adaptive_intervals() {
+        for spec in WHISPER_MODELS {
+            assert_eq!(spec.sha256.len(), 64);
+            assert!(spec.sha256.bytes().all(|b| b.is_ascii_hexdigit()));
+            assert!(spec.snapshot_interval_ms >= 250);
+        }
+        let turbo = whisper_model_spec("ggml-large-v3-turbo-q5_0.bin");
+        assert!(turbo.snapshot_interval_ms > whisper_model_spec("ggml-tiny.bin").snapshot_interval_ms);
+        assert_eq!(whisper_model_spec("unknown.bin").filename, "ggml-tiny.bin");
     }
 }
