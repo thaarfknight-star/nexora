@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.11] - 2026-11-22
+
+### What's New
+- **100% Offline Local AI Translator Engine**: Download `llama-server.exe` (`llama.cpp` `b12627`) + `Qwen2.5-0.5B-Instruct` (`Q4_K_M`, ~468 MB) right inside **Settings → Engines** for fast, 100% offline Persian & multilingual live subtitle translation with zero internet and zero rate limits.
+- **Engine Settings Gating**: Configuration options for every engine (Live Translate & Offline Translator) stay completely hidden until that engine finishes downloading and installing.
+
+### Bug Fixes
+- Fixed Live Translate displaying "Installed" and exposing controls while a model download was still in progress.
+- Ensured the detached PowerShell updater cleanly stops `llama-server` alongside `whisper-server` before applying updates.
+
 ## [0.2.10] - 2026-11-22
 
 ### What's New

@@ -185,7 +185,7 @@ fn spawn_detached_windows_installer(installer_path: &Path, is_msi: bool) -> Resu
     // timeout.exe stdin blocking or Ctrl+C hangs), kills any lingering helper,
     // runs the passive installer, relaunches Nexora, and removes the temp file.
     let ps_script = format!(
-        "$ErrorActionPreference = 'SilentlyContinue';          Wait-Process -Id {pid} -Timeout 8;          Get-Process -Name 'whisper-server','whisper-cli','nexora' | Stop-Process -Force;          Start-Sleep -Milliseconds 600;          {run_installer};          Start-Sleep -Milliseconds 800;          {relaunch};          Remove-Item -LiteralPath '{installer_ps}' -Force"
+        "$ErrorActionPreference = 'SilentlyContinue';          Wait-Process -Id {pid} -Timeout 8;          Get-Process -Name 'whisper-server','whisper-cli','llama-server','nexora' | Stop-Process -Force;          Start-Sleep -Milliseconds 600;          {run_installer};          Start-Sleep -Milliseconds 800;          {relaunch};          Remove-Item -LiteralPath '{installer_ps}' -Force"
     );
 
     // CREATE_NO_WINDOW (0x0800_0000) | DETACHED_PROCESS (0x0000_0008) |

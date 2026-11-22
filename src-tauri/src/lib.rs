@@ -185,6 +185,8 @@ pub fn run() {
             translator::list_audio_sources,
             translator::download_translate_engine,
             translator::remove_translate_engine,
+            translator::download_offline_translator,
+            translator::remove_offline_translator,
             translator::start_live_translate,
             translator::stop_live_translate,
             translator::test_subtitle_overlay,
