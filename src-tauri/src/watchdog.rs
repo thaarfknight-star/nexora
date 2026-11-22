@@ -120,6 +120,20 @@ pub fn stop_watchdog() {
 /// main app). Waits for the parent process to exit, restores the taskbar,
 /// then returns the process exit code. Returns `0` immediately if the
 /// parent is already gone.
+/// Acquires a per-user Windows Named Mutex so only one main Nexora instance
+/// runs at a time. Returns `false` if another instance is already running
+/// (and brings its existing window to the foreground when possible).
+pub fn acquire_single_instance_guard() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        win::acquire_single_instance_mutex()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        true
+    }
+}
+
 pub fn run_watchdog_process(parent_pid: u32) -> i32 {
     #[cfg(windows)]
     {
@@ -247,6 +261,17 @@ mod win {
             dw_process_id: DWORD,
         ) -> HANDLE;
         fn WaitForSingleObject(h_handle: HANDLE, dw_milliseconds: DWORD) -> DWORD;
+        fn CreateMutexW(
+            lp_mutex_attributes: *const std::ffi::c_void,
+            b_initial_owner: BOOL,
+            lp_name: LPCWSTR,
+        ) -> HANDLE;
+        fn GetLastError() -> DWORD;
+    }
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn SetForegroundWindow(h_wnd: HWND) -> BOOL;
     }
 
     #[repr(C)]
@@ -385,6 +410,32 @@ mod win {
                 // permanently "started" with no child.
                 WATCHDOG_STARTED.store(false, Ordering::SeqCst);
             }
+        }
+    }
+
+    pub fn acquire_single_instance_mutex() -> bool {
+        const ERROR_ALREADY_EXISTS: DWORD = 183;
+        static MUTEX_HANDLE: std::sync::atomic::AtomicIsize =
+            std::sync::atomic::AtomicIsize::new(0);
+        let name = wide("Local\\NexoraSingleInstanceMutex");
+        unsafe {
+            let handle = CreateMutexW(std::ptr::null(), 0, name.as_ptr());
+            if handle == 0 {
+                return true;
+            }
+            if GetLastError() == ERROR_ALREADY_EXISTS {
+                let title = wide("Nexora");
+                let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
+                if hwnd != 0 {
+                    ShowWindow(hwnd, SW_SHOW);
+                    SetForegroundWindow(hwnd);
+                }
+                CloseHandle(handle);
+                return false;
+            }
+            // Keep mutex handle open for the lifetime of the main process.
+            MUTEX_HANDLE.store(handle, std::sync::atomic::Ordering::SeqCst);
+            true
         }
     }
 
