@@ -1721,9 +1721,9 @@ mod tests {
             let mut zw = zip::ZipWriter::new(f);
             let opts = zip::write::SimpleFileOptions::default();
             zw.start_file("a.txt", opts).expect("start a");
-            zw.write_all(&vec![b'x'; 200]).expect("write a");
+            zw.write_all(&[b'x'; 200]).expect("write a");
             zw.start_file("b.txt", opts).expect("start b");
-            zw.write_all(&vec![b'y'; 200]).expect("write b");
+            zw.write_all(&[b'y'; 200]).expect("write b");
             zw.finish().expect("finish");
         }
         assert!(extract_zip_with_limits(&zip_path, &out_dir, 500, 1).is_err());
