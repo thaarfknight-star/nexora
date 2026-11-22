@@ -25,9 +25,15 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 const MODEL_FILENAME: &str = "ggml-tiny.bin";
+// TODO(security): pin HuggingFace commit hash instead of `resolve/main`.
 const MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin";
 const WHISPER_ZIP_URL: &str =
     "https://github.com/ggml-org/whisper.cpp/releases/download/b5907/whisper-bin-x64.zip";
+// TODO(security): fill real SHA-256 hex digests for whisper-bin-x64.zip (b5907) and ggml-tiny.bin.
+const EXPECTED_WHISPER_ZIP_SHA256: &str = "TODO_FILL_WHISPER_ZIP_SHA256";
+const EXPECTED_MODEL_SHA256: &str = "TODO_FILL_GGML_TINY_SHA256";
+const MAX_EXTRACT_BYTES: u64 = 150 * 1024 * 1024;
+const MAX_EXTRACT_FILES: usize = 256;
 
 const SUBTITLE_WIDTH: f64 = 820.0;
 const SUBTITLE_HEIGHT: f64 = 128.0;
@@ -585,13 +591,84 @@ fn download_file_streaming(
     )
 }
 
-/// Extracts a ZIP archive natively in Rust (no PowerShell process spawning).
-fn extract_zip_native(zip_path: &Path, dest_dir: &Path) -> Result<(), String> {
+/// Computes lowercase hex SHA-256 of a file on disk.
+pub fn file_sha256_hex(path: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut file = File::open(path).map_err(|e| format!("Failed to open file for SHA-256: {e}"))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("Failed reading file for SHA-256: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(64);
+    for b in digest {
+        hex.push_str(&format!("{b:02x}"));
+    }
+    Ok(hex)
+}
+
+/// Fail-closed SHA-256 verifier: deletes `path` on mismatch or unconfigured TODO digest.
+pub fn verify_file_sha256(path: &Path, expected_hex: &str) -> Result<(), String> {
+    let expected = expected_hex.trim().to_ascii_lowercase();
+    if expected.len() != 64 || !expected.bytes().all(|b| b.is_ascii_hexdigit()) {
+        let _ = fs::remove_file(path);
+        return Err(format!(
+            "SHA-256 digest is not configured ({expected_hex}); refusing unverified file"
+        ));
+    }
+    let actual = file_sha256_hex(path)?;
+    if actual != expected {
+        let _ = fs::remove_file(path);
+        return Err(format!(
+            "SHA-256 mismatch: expected {expected}, got {actual}"
+        ));
+    }
+    Ok(())
+}
+
+/// Removes any leftover `.part` temporary download files inside `dir`.
+pub fn cleanup_partial_downloads(dir: &Path) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.extension().and_then(|e| e.to_str()) == Some("part") {
+                let _ = fs::remove_file(p);
+            }
+        }
+    }
+}
+
+/// Extracts a ZIP archive natively in Rust with zip-slip (`enclosed_name`) and
+/// ZIP-bomb limits (`MAX_EXTRACT_BYTES` and `MAX_EXTRACT_FILES`).
+pub fn extract_zip_native(zip_path: &Path, dest_dir: &Path) -> Result<(), String> {
+    extract_zip_with_limits(zip_path, dest_dir, MAX_EXTRACT_BYTES, MAX_EXTRACT_FILES)
+}
+
+pub fn extract_zip_with_limits(
+    zip_path: &Path,
+    dest_dir: &Path,
+    max_bytes: u64,
+    max_files: usize,
+) -> Result<(), String> {
     let file = File::open(zip_path).map_err(|e| format!("Failed to open archive: {e}"))?;
     let mut archive =
         zip::ZipArchive::new(file).map_err(|e| format!("Invalid ZIP archive: {e}"))?;
+    if archive.len() > max_files {
+        return Err(format!(
+            "ZIP archive exceeds max file count ({} > {max_files})",
+            archive.len()
+        ));
+    }
+    let mut total_written: u64 = 0;
     for i in 0..archive.len() {
-        let mut entry = archive
+        let entry = archive
             .by_index(i)
             .map_err(|e| format!("Failed reading archive entry: {e}"))?;
         let Some(rel_path) = entry.enclosed_name() else {
@@ -604,10 +681,19 @@ fn extract_zip_native(zip_path: &Path, dest_dir: &Path) -> Result<(), String> {
             if let Some(parent) = out_path.parent() {
                 fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {e}"))?;
             }
+            let remaining = max_bytes.saturating_sub(total_written);
+            let mut limited = entry.take(remaining.saturating_add(1));
             let mut out_file = File::create(&out_path)
                 .map_err(|e| format!("Failed to write extracted file: {e}"))?;
-            std::io::copy(&mut entry, &mut out_file)
+            let copied = std::io::copy(&mut limited, &mut out_file)
                 .map_err(|e| format!("Failed extracting file: {e}"))?;
+            total_written = total_written.saturating_add(copied);
+            if total_written > max_bytes {
+                let _ = fs::remove_file(&out_path);
+                return Err(format!(
+                    "ZIP extraction exceeded safety limit ({max_bytes} bytes)"
+                ));
+            }
         }
     }
     Ok(())
@@ -1188,16 +1274,22 @@ pub async fn download_translate_engine(
             .build()
             .map_err(|e| format!("Failed to initialize HTTP client: {e}"))?;
 
+        cleanup_partial_downloads(&dir);
+
+        let zip_part = dir.join("whisper-bin-x64.zip.part");
         let zip_path = dir.join("whisper-bin-x64.zip");
         download_file_streaming(
             &client,
             WHISPER_ZIP_URL,
-            &zip_path,
+            &zip_part,
             5,
             35,
             "Downloading Whisper runtime...",
             &app_clone,
         )?;
+        verify_file_sha256(&zip_part, EXPECTED_WHISPER_ZIP_SHA256)?;
+        fs::rename(&zip_part, &zip_path)
+            .map_err(|e| format!("Failed finalizing Whisper archive: {e}"))?;
 
         let _ = app_clone.emit(
             "translate-download-progress",
@@ -1210,16 +1302,20 @@ pub async fn download_translate_engine(
         extract_zip_native(&zip_path, &dir)?;
         let _ = fs::remove_file(&zip_path);
 
+        let model_part = dir.join(format!("{MODEL_FILENAME}.part"));
         let model_file = model_path(&dir);
         download_file_streaming(
             &client,
             MODEL_URL,
-            &model_file,
+            &model_part,
             45,
             98,
             "Downloading ggml-tiny speech model (~75 MB)...",
             &app_clone,
         )?;
+        verify_file_sha256(&model_part, EXPECTED_MODEL_SHA256)?;
+        fs::rename(&model_part, &model_file)
+            .map_err(|e| format!("Failed finalizing speech model: {e}"))?;
 
         let _ = app_clone.emit(
             "translate-download-progress",
@@ -1568,5 +1664,43 @@ mod tests {
             parse_mymemory_response(r#"{"responseData":{"translatedText":"سلام دنیا"}}"#),
             Some("سلام دنیا".to_string())
         );
+    }
+
+    #[test]
+    fn sha256_verification_accepts_valid_and_deletes_invalid() {
+        let p = std::env::temp_dir().join("nexora_sha256_test.bin");
+        fs::write(&p, b"abc").expect("write");
+        // Known SHA-256 of "abc"
+        let ok_hash = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert!(verify_file_sha256(&p, ok_hash).is_ok());
+        assert!(p.exists());
+        assert!(verify_file_sha256(&p, "TODO_FILL_HASH").is_err());
+        assert!(!p.exists());
+        fs::write(&p, b"abc").expect("rewrite");
+        assert!(verify_file_sha256(&p, &"0".repeat(64)).is_err());
+        assert!(!p.exists());
+    }
+
+    #[test]
+    fn zip_extraction_enforces_size_and_file_limits() {
+        let zip_path = std::env::temp_dir().join("nexora_zip_limit_test.zip");
+        let out_dir = std::env::temp_dir().join("nexora_zip_limit_out");
+        let _ = fs::remove_dir_all(&out_dir);
+        fs::create_dir_all(&out_dir).expect("mkdir");
+        {
+            let f = File::create(&zip_path).expect("create zip");
+            let mut zw = zip::ZipWriter::new(f);
+            let opts = zip::write::SimpleFileOptions::default();
+            zw.start_file("a.txt", opts).expect("start a");
+            zw.write_all(&vec![b'x'; 200]).expect("write a");
+            zw.start_file("b.txt", opts).expect("start b");
+            zw.write_all(&vec![b'y'; 200]).expect("write b");
+            zw.finish().expect("finish");
+        }
+        assert!(extract_zip_with_limits(&zip_path, &out_dir, 500, 1).is_err());
+        assert!(extract_zip_with_limits(&zip_path, &out_dir, 250, 10).is_err());
+        assert!(extract_zip_with_limits(&zip_path, &out_dir, 1024, 10).is_ok());
+        let _ = fs::remove_file(&zip_path);
+        let _ = fs::remove_dir_all(&out_dir);
     }
 }
