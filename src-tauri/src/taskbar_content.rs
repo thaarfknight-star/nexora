@@ -353,33 +353,36 @@ mod win {
     /// properties. `lparam` carries a `*mut Vec<RawWindow>`; enumeration
     /// is synchronous, so the pointer stays valid.
     unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        let out = unsafe { &mut *(lparam.0 as *mut Vec<RawWindow>) };
-        let visible = is_window_visible(hwnd);
-        let mut title_buf = [0u16; 512];
-        let title_len = unsafe { GetWindowTextW(hwnd, &mut title_buf) };
-        let title = buf_to_string(&title_buf, title_len.max(0) as usize);
-        let exstyle = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
-        let props = WindowProps {
-            visible,
-            has_title: !title.trim().is_empty(),
-            is_tool_window: exstyle & 0x80 != 0, // WS_EX_TOOLWINDOW
-            is_app_window: exstyle & 0x40000 != 0, // WS_EX_APPWINDOW
-            has_owner: unsafe { GetWindow(hwnd, GW_OWNER) }
-                .map(|h| !h.0.is_null())
-                .unwrap_or(false),
-            cloaked: is_cloaked(hwnd),
-            is_nexora_island: hwnd.0 as isize == crate::taskbar::island_window(),
-        };
-        let exe_path = process_exe_path(hwnd);
-        out.push(RawWindow {
-            hwnd,
-            title,
-            minimized: unsafe { IsIconic(hwnd) }.as_bool(),
-            active: unsafe { GetForegroundWindow() } == hwnd,
-            exe_path,
-            props,
-        });
-        BOOL(1)
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let out = unsafe { &mut *(lparam.0 as *mut Vec<RawWindow>) };
+            let visible = is_window_visible(hwnd);
+            let mut title_buf = [0u16; 512];
+            let title_len = unsafe { GetWindowTextW(hwnd, &mut title_buf) };
+            let title = buf_to_string(&title_buf, title_len.max(0) as usize);
+            let exstyle = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
+            let props = WindowProps {
+                visible,
+                has_title: !title.trim().is_empty(),
+                is_tool_window: exstyle & 0x80 != 0, // WS_EX_TOOLWINDOW
+                is_app_window: exstyle & 0x40000 != 0, // WS_EX_APPWINDOW
+                has_owner: unsafe { GetWindow(hwnd, GW_OWNER) }
+                    .map(|h| !h.0.is_null())
+                    .unwrap_or(false),
+                cloaked: is_cloaked(hwnd),
+                is_nexora_island: hwnd.0 as isize == crate::taskbar::island_window(),
+            };
+            let exe_path = process_exe_path(hwnd);
+            out.push(RawWindow {
+                hwnd,
+                title,
+                minimized: unsafe { IsIconic(hwnd) }.as_bool(),
+                active: unsafe { GetForegroundWindow() } == hwnd,
+                exe_path,
+                props,
+            });
+            BOOL(1)
+        }))
+        .unwrap_or(BOOL(0))
     }
 
     /// Resolves the full executable path for any top-level window across

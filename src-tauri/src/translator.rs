@@ -728,29 +728,32 @@ fn list_windows_audio_targets() -> Vec<AudioAppTarget> {
     };
 
     unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
-            return BOOL(1);
-        }
-        let mut buf = [0u16; 256];
-        let len = unsafe { GetWindowTextW(hwnd, &mut buf) };
-        if len <= 0 {
-            return BOOL(1);
-        }
-        let title = String::from_utf16_lossy(&buf[..len as usize])
-            .trim()
-            .to_string();
-        if title.is_empty() || title == "Program Manager" {
-            return BOOL(1);
-        }
-        let mut pid: u32 = 0;
-        unsafe {
-            GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        }
-        if pid != 0 {
-            let list = unsafe { &mut *(lparam.0 as *mut Vec<(u32, String)>) };
-            list.push((pid, title));
-        }
-        BOOL(1)
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+                return BOOL(1);
+            }
+            let mut buf = [0u16; 256];
+            let len = unsafe { GetWindowTextW(hwnd, &mut buf) };
+            if len <= 0 {
+                return BOOL(1);
+            }
+            let title = String::from_utf16_lossy(&buf[..len as usize])
+                .trim()
+                .to_string();
+            if title.is_empty() || title == "Program Manager" {
+                return BOOL(1);
+            }
+            let mut pid: u32 = 0;
+            unsafe {
+                GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            }
+            if pid != 0 {
+                let list = unsafe { &mut *(lparam.0 as *mut Vec<(u32, String)>) };
+                list.push((pid, title));
+            }
+            BOOL(1)
+        }))
+        .unwrap_or(BOOL(0))
     }
 
     let mut raw_windows: Vec<(u32, String)> = Vec::new();
