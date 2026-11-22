@@ -29,11 +29,6 @@ const MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/ma
 const WHISPER_ZIP_URL: &str =
     "https://github.com/ggml-org/whisper.cpp/releases/download/b5907/whisper-bin-x64.zip";
 
-const OFFLINE_MODEL_FILENAME: &str = "qwen2.5-0.5b-instruct-q4_k_m.gguf";
-const OFFLINE_MODEL_URL: &str =
-    "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf";
-const LLAMA_ZIP_URL: &str =
-    "https://github.com/ggml-org/llama.cpp/releases/download/b12627/llama-b12627-bin-win-cpu-x64.zip";
 
 const SUBTITLE_WIDTH: f64 = 820.0;
 const SUBTITLE_HEIGHT: f64 = 128.0;
@@ -58,7 +53,6 @@ const ROLLING_TRIM_BYTES: usize = (CAPTURE_SAMPLE_RATE * 2 * 1800) / 1000;
 const SPEECH_RMS_THRESHOLD: f32 = 120.0;
 
 static DOWNLOADING: AtomicBool = AtomicBool::new(false);
-static OFFLINE_DOWNLOADING: AtomicBool = AtomicBool::new(false);
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static TRANSLATE_HTTP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
 
@@ -66,7 +60,6 @@ static ENGINE_STATE: Mutex<EnginePrefs> = Mutex::new(EnginePrefs {
     source_lang: None,
     target_lang: None,
     capture_mode: None,
-    translate_mode: None,
     target_pid: None,
     target_app_name: None,
     last_error: None,
@@ -76,7 +69,6 @@ struct EnginePrefs {
     source_lang: Option<String>,
     target_lang: Option<String>,
     capture_mode: Option<String>,
-    translate_mode: Option<String>,
     target_pid: Option<u32>,
     target_app_name: Option<String>,
     last_error: Option<String>,
@@ -86,10 +78,6 @@ struct EnginePrefs {
 pub struct TranslateEngineStatus {
     pub installed: bool,
     pub downloading: bool,
-    pub offline_installed: bool,
-    pub offline_downloading: bool,
-    pub offline_size_mb: u64,
-    pub translate_mode: String,
     pub running: bool,
     pub model_size_mb: u64,
     pub source_lang: String,
@@ -182,27 +170,6 @@ fn find_whisper_server(dir: &Path) -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.exists())
 }
 
-fn offline_dir(app: &AppHandle) -> PathBuf {
-    engine_dir(app).join("offline-translator")
-}
-
-fn offline_model_path(dir: &Path) -> PathBuf {
-    dir.join(OFFLINE_MODEL_FILENAME)
-}
-
-fn find_llama_server(dir: &Path) -> Option<PathBuf> {
-    let candidates = [
-        dir.join("llama-server.exe"),
-        dir.join("Release").join("llama-server.exe"),
-        dir.join("bin").join("llama-server.exe"),
-    ];
-    candidates.into_iter().find(|p| p.exists())
-}
-
-fn is_offline_installed_in(dir: &Path) -> bool {
-    offline_model_path(dir).exists() && find_llama_server(dir).is_some()
-}
-
 fn is_installed_in(dir: &Path) -> bool {
     model_path(dir).exists() && find_whisper_binary(dir).is_some()
 }
@@ -223,20 +190,10 @@ fn dir_size_mb(dir: &Path) -> u64 {
 
 fn build_status(app: &AppHandle) -> TranslateEngineStatus {
     let dir = engine_dir(app);
-    let off_dir = offline_dir(app);
-    let off_installed = is_offline_installed_in(&off_dir);
     let prefs = ENGINE_STATE.lock().unwrap_or_else(|e| e.into_inner());
-    let default_tr_mode = if off_installed { "offline" } else { "online" };
     TranslateEngineStatus {
         installed: is_installed_in(&dir),
         downloading: DOWNLOADING.load(Ordering::SeqCst),
-        offline_installed: off_installed,
-        offline_downloading: OFFLINE_DOWNLOADING.load(Ordering::SeqCst),
-        offline_size_mb: dir_size_mb(&off_dir),
-        translate_mode: prefs
-            .translate_mode
-            .clone()
-            .unwrap_or_else(|| default_tr_mode.to_string()),
         running: RUNNING.load(Ordering::SeqCst),
         model_size_mb: dir_size_mb(&dir),
         source_lang: prefs
@@ -543,147 +500,6 @@ fn translate_text(text: &str, source_lang: &str, target_lang: &str) -> String {
     }
 
     clean.to_string()
-}
-
-/// Maps a Nexora language code to a clear name for the offline LLM prompt.
-fn target_lang_display_name(code: &str) -> &str {
-    match code {
-        "fa" => "Persian (Farsi)",
-        "en" => "English",
-        "ar" => "Arabic",
-        "tr" => "Turkish",
-        "de" => "German",
-        "fr" => "French",
-        "ru" => "Russian",
-        "ja" => "Japanese",
-        _ => "Persian (Farsi)",
-    }
-}
-
-/// Parses OpenAI-compatible `/v1/chat/completions` JSON from `llama-server.exe`.
-pub fn parse_llama_chat_response(raw: &str) -> Option<String> {
-    let val: serde_json::Value = serde_json::from_str(raw).ok()?;
-    let content = val
-        .get("choices")?
-        .get(0)?
-        .get("message")?
-        .get("content")?
-        .as_str()?;
-    let cleaned = content
-        .lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .unwrap_or("")
-        .trim_matches(['"', '\'', '`'])
-        .trim()
-        .to_string();
-    if cleaned.is_empty() {
-        None
-    } else {
-        Some(cleaned)
-    }
-}
-
-#[cfg(target_os = "windows")]
-struct ResidentOfflineTranslator {
-    child: std::process::Child,
-    endpoint: String,
-}
-
-#[cfg(target_os = "windows")]
-impl ResidentOfflineTranslator {
-    fn start(server_bin: &Path, model: &Path, threads: usize) -> Option<Self> {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
-        let port = listener.local_addr().ok()?.port();
-        drop(listener);
-
-        let args = [
-            "-m".to_string(),
-            model.to_string_lossy().to_string(),
-            "--host".to_string(),
-            "127.0.0.1".to_string(),
-            "--port".to_string(),
-            port.to_string(),
-            "-c".to_string(),
-            "512".to_string(),
-            "-t".to_string(),
-            threads.to_string(),
-            "-np".to_string(),
-            "1".to_string(),
-            "--no-webui".to_string(),
-        ];
-
-        let mut child = hidden_command(server_bin)
-            .args(&args)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .ok()?;
-
-        let health_url = format!("http://127.0.0.1:{port}/health");
-        for _ in 0..80 {
-            if !RUNNING.load(Ordering::SeqCst) {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-            if let Ok(resp) = shared_http_client().get(&health_url).send() {
-                if resp.status().is_success() {
-                    return Some(Self {
-                        child,
-                        endpoint: format!("http://127.0.0.1:{port}/v1/chat/completions"),
-                    });
-                }
-            }
-            std::thread::sleep(Duration::from_millis(120));
-        }
-
-        let _ = child.kill();
-        let _ = child.wait();
-        None
-    }
-
-    fn translate(&self, text: &str, target_lang: &str) -> Option<String> {
-        let lang_name = target_lang_display_name(target_lang);
-        let payload = serde_json::json!({
-            "model": "qwen2.5",
-            "temperature": 0.0,
-            "max_tokens": 96,
-            "stream": false,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": format!(
-                        "You are a fast real-time subtitle translator. Translate the user text into natural {lang_name}. Output ONLY the translation with no explanation or quotes."
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": text
-                }
-            ]
-        });
-        let resp = shared_http_client()
-            .post(&self.endpoint)
-            .header("Content-Type", "application/json")
-            .body(payload.to_string())
-            .send()
-            .ok()?;
-        if !resp.status().is_success() {
-            return None;
-        }
-        let body = resp.text().ok()?;
-        parse_llama_chat_response(&body)
-    }
-}
-
-#[cfg(target_os = "windows")]
-impl Drop for ResidentOfflineTranslator {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
 }
 
 /// Streams an HTTP file to disk natively via `reqwest`, emitting smooth progress percentages.
@@ -1046,14 +862,12 @@ fn transcribe_cli_fallback(
 fn run_wasapi_loopback_worker(
     app: &AppHandle,
     dir: &Path,
-    off_dir: &Path,
     cli_bin: &Path,
     model: &Path,
     wav_path: &Path,
     source_lang: &str,
     target_lang: &str,
     capture_mode: &str,
-    translate_mode: &str,
     target_pid: Option<u32>,
 ) -> Result<(), String> {
     use std::collections::VecDeque;
@@ -1128,20 +942,7 @@ fn run_wasapi_loopback_worker(
     let app_translator = app.clone();
     let src_for_tr = source_lang.to_string();
     let tgt_for_tr = target_lang.to_string();
-    let use_offline = translate_mode == "offline" && is_offline_installed_in(off_dir);
-    let llama_bin_opt = if use_offline {
-        find_llama_server(off_dir)
-    } else {
-        None
-    };
-    let offline_model_owned = offline_model_path(off_dir);
     let translator_handle = std::thread::spawn(move || {
-        let threads = std::thread::available_parallelism()
-            .map(|n| n.get().clamp(2, 6))
-            .unwrap_or(4);
-        let offline_srv = llama_bin_opt
-            .as_deref()
-            .and_then(|bin| ResidentOfflineTranslator::start(bin, &offline_model_owned, threads));
 
         let mut cache: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let mut last_emitted = String::new();
@@ -1168,20 +969,8 @@ fn run_wasapi_loopback_worker(
             }
             let translated = if let Some(cached) = cache.get(&text) {
                 cached.clone()
-            } else if let Some(ref srv) = offline_srv {
-                // 100% local offline translation — zero internet, zero rate-limit sleep!
-                let res = srv
-                    .translate(&text, &tgt_for_tr)
-                    .unwrap_or_else(|| text.clone());
-                if !res.eq_ignore_ascii_case(&text) {
-                    if cache.len() >= 256 {
-                        cache.clear();
-                    }
-                    cache.insert(text.clone(), res.clone());
-                }
-                res
             } else {
-                // Online fallback: keep remote calls <= 2/sec so providers never HTTP 429.
+                // Keep remote calls <= 2/sec so providers never HTTP 429.
                 let since = last_remote_call.elapsed();
                 if since < Duration::from_millis(500) {
                     std::thread::sleep(Duration::from_millis(500) - since);
@@ -1474,114 +1263,11 @@ pub fn remove_translate_engine(app: AppHandle) -> Result<TranslateEngineStatus, 
 }
 
 #[tauri::command]
-pub async fn download_offline_translator(app: AppHandle) -> Result<TranslateEngineStatus, String> {
-    if OFFLINE_DOWNLOADING
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
-        return Ok(build_status(&app));
-    }
-
-    let app_clone = app.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        let dir = offline_dir(&app_clone);
-        fs::create_dir_all(&dir).map_err(|e| format!("Failed to create offline dir: {e}"))?;
-
-        let client = reqwest::blocking::Client::builder()
-            .connect_timeout(Duration::from_secs(15))
-            .timeout(Duration::from_secs(900))
-            .user_agent("Nexora/0.2")
-            .build()
-            .map_err(|e| format!("Failed to initialize HTTP client: {e}"))?;
-
-        let zip_path = dir.join("llama-win-cpu-x64.zip");
-        download_file_streaming_event(
-            &client,
-            LLAMA_ZIP_URL,
-            &zip_path,
-            3,
-            18,
-            "Downloading local AI runtime (~24 MB)...",
-            "offline-translate-download-progress",
-            &app_clone,
-        )?;
-
-        let _ = app_clone.emit(
-            "offline-translate-download-progress",
-            DownloadProgressPayload {
-                percent: 20,
-                stage: "Extracting local AI runtime...".to_string(),
-            },
-        );
-        extract_zip_native(&zip_path, &dir)?;
-        let _ = fs::remove_file(&zip_path);
-
-        let model_file = offline_model_path(&dir);
-        download_file_streaming_event(
-            &client,
-            OFFLINE_MODEL_URL,
-            &model_file,
-            22,
-            98,
-            "Downloading offline multilingual model (~468 MB)...",
-            "offline-translate-download-progress",
-            &app_clone,
-        )?;
-
-        let _ = app_clone.emit(
-            "offline-translate-download-progress",
-            DownloadProgressPayload {
-                percent: 100,
-                stage: "Offline translator ready".to_string(),
-            },
-        );
-        Ok(())
-    })
-    .await
-    .map_err(|e| e.to_string())?;
-
-    OFFLINE_DOWNLOADING.store(false, Ordering::SeqCst);
-    {
-        let mut prefs = ENGINE_STATE.lock().unwrap_or_else(|e| e.into_inner());
-        prefs.last_error = result.as_ref().err().cloned();
-        if result.is_ok() {
-            prefs.translate_mode = Some("offline".to_string());
-        }
-    }
-    if let Err(ref err) = result {
-        crate::diagnostics::log("translator", &format!("offline download failed: {err}"));
-    }
-    result?;
-    let st = build_status(&app);
-    emit_status_changed(&app, &st);
-    Ok(st)
-}
-
-#[tauri::command]
-pub fn remove_offline_translator(app: AppHandle) -> Result<TranslateEngineStatus, String> {
-    RUNNING.store(false, Ordering::SeqCst);
-    let dir = offline_dir(&app);
-    if dir.exists() {
-        fs::remove_dir_all(&dir)
-            .map_err(|e| format!("Failed to remove offline translator files: {e}"))?;
-    }
-    {
-        let mut prefs = ENGINE_STATE.lock().unwrap_or_else(|e| e.into_inner());
-        prefs.translate_mode = Some("online".to_string());
-        prefs.last_error = None;
-    }
-    let st = build_status(&app);
-    emit_status_changed(&app, &st);
-    Ok(st)
-}
-
-#[tauri::command]
 pub async fn start_live_translate(
     app: AppHandle,
     source_lang: String,
     target_lang: String,
     capture_mode: Option<String>,
-    translate_mode: Option<String>,
     target_pid: Option<u32>,
     target_app_name: Option<String>,
 ) -> Result<TranslateEngineStatus, String> {
@@ -1605,21 +1291,11 @@ pub async fn start_live_translate(
         return Err(err_msg);
     }
 
-    let off_dir = offline_dir(&app);
-    let off_ready = is_offline_installed_in(&off_dir);
-    let resolved_tr_mode = match translate_mode.as_deref() {
-        Some("online") => "online".to_string(),
-        Some("offline") if off_ready => "offline".to_string(),
-        _ if off_ready => "offline".to_string(),
-        _ => "online".to_string(),
-    };
-
     {
         let mut prefs = ENGINE_STATE.lock().unwrap_or_else(|e| e.into_inner());
         prefs.source_lang = Some(source_lang.clone());
         prefs.target_lang = Some(target_lang.clone());
         prefs.capture_mode = Some(resolved_mode.clone());
-        prefs.translate_mode = Some(resolved_tr_mode.clone());
         prefs.target_pid = target_pid;
         prefs.target_app_name = target_app_name.clone();
         prefs.last_error = None;
@@ -1673,14 +1349,12 @@ pub async fn start_live_translate(
                 if let Err(err) = run_wasapi_loopback_worker(
                     &app_worker,
                     &dir,
-                    &off_dir,
                     &bin,
                     &model,
                     &wav_path,
                     &source_lang,
                     &target_lang,
                     &resolved_mode,
-                    &resolved_tr_mode,
                     target_pid,
                 ) {
                     crate::diagnostics::log("translator", &format!("loopback failed: {err}"));
@@ -1706,7 +1380,6 @@ pub async fn start_live_translate(
             {
                 let _ = (
                     &dir,
-                    &off_dir,
                     &bin,
                     &model,
                     &wav_path,
@@ -1714,7 +1387,6 @@ pub async fn start_live_translate(
                     &source_lang,
                     &target_lang,
                     &resolved_mode,
-                    &resolved_tr_mode,
                     target_pid,
                 );
                 while RUNNING.load(Ordering::SeqCst) {
@@ -1880,10 +1552,6 @@ mod tests {
         );
         assert_eq!(
             parse_mymemory_response(r#"{"responseData":{"translatedText":"سلام دنیا"}}"#),
-            Some("سلام دنیا".to_string())
-        );
-        assert_eq!(
-            parse_llama_chat_response(r#"{"choices":[{"message":{"content":"\"سلام دنیا\""}}]}"#),
             Some("سلام دنیا".to_string())
         );
     }
