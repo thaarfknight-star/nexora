@@ -25,13 +25,13 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 const MODEL_FILENAME: &str = "ggml-tiny.bin";
-// TODO(security): pin HuggingFace commit hash instead of `resolve/main`.
-const MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin";
+const MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.bin";
 const WHISPER_ZIP_URL: &str =
     "https://github.com/ggml-org/whisper.cpp/releases/download/b5907/whisper-bin-x64.zip";
-// TODO(security): fill real SHA-256 hex digests for whisper-bin-x64.zip (b5907) and ggml-tiny.bin.
-const EXPECTED_WHISPER_ZIP_SHA256: &str = "TODO_FILL_WHISPER_ZIP_SHA256";
-const EXPECTED_MODEL_SHA256: &str = "TODO_FILL_GGML_TINY_SHA256";
+const EXPECTED_WHISPER_ZIP_SHA256: &str =
+    "ecca07b277d943e9b9f4712856a144b857271a6b333104e511e1988e80db582b";
+const EXPECTED_MODEL_SHA256: &str =
+    "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21";
 const MAX_EXTRACT_BYTES: u64 = 150 * 1024 * 1024;
 const MAX_EXTRACT_FILES: usize = 256;
 

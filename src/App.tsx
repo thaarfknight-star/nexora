@@ -2879,6 +2879,32 @@ function SettingsView() {
     invoke<UpdateInfo>("check_updates")
       .then(setUpdateInfo)
       .catch(() => {});
+
+    // Keep Settings theme & state live-synced whenever the Dynamic Island changes theme.
+    let unlistenSettings: (() => void) | undefined;
+    listen<NexoraSettings>("settings-changed", (event) => {
+      setSettings(event.payload);
+      applyTheme(themeOrDefault(event.payload.theme));
+    })
+      .then((fn) => {
+        unlistenSettings = fn;
+      })
+      .catch(() => {});
+
+    const syncThemeFromStorage = () => {
+      const latest = readSavedTheme();
+      if (latest) {
+        applyTheme(themeOrDefault(latest));
+      }
+    };
+    window.addEventListener("storage", syncThemeFromStorage);
+    window.addEventListener("focus", syncThemeFromStorage);
+
+    return () => {
+      unlistenSettings?.();
+      window.removeEventListener("storage", syncThemeFromStorage);
+      window.removeEventListener("focus", syncThemeFromStorage);
+    };
     // Runs once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

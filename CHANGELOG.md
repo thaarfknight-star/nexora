@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.16] - 2026-11-22
+
+### What'''s New
+- **Theme-Specific Dynamic Island Animations**: Added 7 distinct entrance and hover animations tailored to each theme (`liquid-glass`, `neon-glass`, `aurora`, `sunset`, `midnight`, `forest`, `obsidian`), respecting `prefers-reduced-motion`.
+- **Live Bidirectional Theme Sync**: The Settings window now syncs its active theme immediately when switching themes from the Dynamic Island.
+- **Verified Live Translate SHA-256 Digests**: Configured the real verified SHA-256 hashes for `whisper-bin-x64.zip` (`b5907`) and `ggml-tiny.bin` and pinned `MODEL_URL` to commit `5359861c739e955e79d9a303bcbc70fb988958b1`.
+
+### Bug Fixes
+- Fixed Live Translate engine download failing with `SHA-256 digest is not configured`.
+- Fixed the Settings window remaining on the previous theme when switching themes in the Dynamic Island.
+
 ## [0.2.15] - 2026-11-22
 
 ### What'''s New
