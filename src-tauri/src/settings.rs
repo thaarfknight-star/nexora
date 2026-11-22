@@ -299,7 +299,7 @@ mod tests {
                 poll_interval_secs: 3,
                 stats_speed_unit: "auto".into(),
                 stats_percent_style: "with".into(),
-            online_translation: false,
+                online_translation: false,
                 language: "en".into(),
                 island_hotkey: "Alt+Space".into(),
             }
