@@ -3780,9 +3780,7 @@ function SettingsView() {
                   onClick={handleDownloadLocalModel}
                   disabled={translateStatus?.downloading || downloadProgress !== null}
                 >
-                  {downloadProgress
-                    ? `${t(language, "downloadingEngineBtn")} ${downloadProgress.percent}%`
-                    : t(language, "downloadLocalModelBtn")}
+                  {t(language, "downloadLocalModelBtn")}
                 </button>
               ) : (
                 <>
