@@ -199,11 +199,20 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while running Nexora Tauri application")
-        .run(|_app_handle, event| {
+        .run(|app_handle, event| {
             if matches!(
                 event,
                 tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
             ) {
+                // Restore taskbar first (if ever hidden) before tearing down helpers.
+                if taskbar::hidden_by_nexora() {
+                    taskbar::restore();
+                }
+                translator::shutdown_engine();
+                {
+                    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+                    let _ = app_handle.global_shortcut().unregister_all();
+                }
                 // A clean exit leaves this line: when the next
                 // install's log just stops, the process died
                 // instead of exiting.
