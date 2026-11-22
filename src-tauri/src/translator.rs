@@ -29,7 +29,6 @@ const MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/ma
 const WHISPER_ZIP_URL: &str =
     "https://github.com/ggml-org/whisper.cpp/releases/download/b5907/whisper-bin-x64.zip";
 
-
 const SUBTITLE_WIDTH: f64 = 820.0;
 const SUBTITLE_HEIGHT: f64 = 128.0;
 const SUBTITLE_BOTTOM_MARGIN: f64 = 72.0;
@@ -943,7 +942,6 @@ fn run_wasapi_loopback_worker(
     let src_for_tr = source_lang.to_string();
     let tgt_for_tr = target_lang.to_string();
     let translator_handle = std::thread::spawn(move || {
-
         let mut cache: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let mut last_emitted = String::new();
         let mut last_remote_call = Instant::now()
