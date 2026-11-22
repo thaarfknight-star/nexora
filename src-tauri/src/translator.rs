@@ -56,6 +56,13 @@ const MAX_ROLLING_BYTES: usize = (CAPTURE_SAMPLE_RATE * 2 * 4200) / 1000;
 #[cfg(target_os = "windows")]
 const ROLLING_TRIM_BYTES: usize = (CAPTURE_SAMPLE_RATE * 2 * 1800) / 1000;
 const SPEECH_RMS_THRESHOLD: f32 = 120.0;
+/// Consecutive identical Whisper snapshots required before translating an unfinalized phrase.
+pub const STABLE_SNAPSHOT_COUNT: usize = 2;
+/// Maximum entries kept in the normalized translation cache.
+pub const TRANSLATION_CACHE_MAX_ENTRIES: usize = 256;
+/// Minimum spacing between remote translation calls to stay well below rate limits.
+#[cfg(target_os = "windows")]
+const TRANSLATION_MIN_INTERVAL_MS: u64 = 400;
 
 static DOWNLOADING: AtomicBool = AtomicBool::new(false);
 static RUNNING: AtomicBool = AtomicBool::new(false);
@@ -67,6 +74,8 @@ static ENGINE_STATE: Mutex<EnginePrefs> = Mutex::new(EnginePrefs {
     target_lang: None,
     capture_mode: None,
     online_translation: false,
+    translate_provider: None,
+    whisper_model: None,
     target_pid: None,
     target_app_name: None,
     last_error: None,
@@ -77,6 +86,8 @@ struct EnginePrefs {
     target_lang: Option<String>,
     capture_mode: Option<String>,
     online_translation: bool,
+    translate_provider: Option<String>,
+    whisper_model: Option<String>,
     target_pid: Option<u32>,
     target_app_name: Option<String>,
     last_error: Option<String>,
@@ -92,6 +103,8 @@ pub struct TranslateEngineStatus {
     pub target_lang: String,
     pub capture_mode: String,
     pub online_translation: bool,
+    pub translate_provider: String,
+    pub whisper_model: String,
     pub target_pid: Option<u32>,
     pub target_app_name: Option<String>,
     pub model_path: String,
@@ -111,6 +124,8 @@ pub struct SubtitlePayload {
     pub translated: String,
     pub target_lang: String,
     pub active: bool,
+    /// `"ok"`, `"pending"`, `"failed"`, or `"offline"`.
+    pub translation_status: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -199,7 +214,16 @@ fn dir_size_mb(dir: &Path) -> u64 {
 
 fn build_status(app: &AppHandle) -> TranslateEngineStatus {
     let dir = engine_dir(app);
+    let cfg = crate::settings::load(app);
     let prefs = ENGINE_STATE.lock().unwrap_or_else(|e| e.into_inner());
+    let provider = prefs
+        .translate_provider
+        .clone()
+        .unwrap_or_else(|| cfg.translate_provider.clone());
+    let model = prefs
+        .whisper_model
+        .clone()
+        .unwrap_or_else(|| cfg.whisper_model.clone());
     TranslateEngineStatus {
         installed: is_installed_in(&dir),
         downloading: DOWNLOADING.load(Ordering::SeqCst),
@@ -208,16 +232,18 @@ fn build_status(app: &AppHandle) -> TranslateEngineStatus {
         source_lang: prefs
             .source_lang
             .clone()
-            .unwrap_or_else(|| "auto".to_string()),
+            .unwrap_or_else(|| cfg.translate_source_lang.clone()),
         target_lang: prefs
             .target_lang
             .clone()
-            .unwrap_or_else(|| "fa".to_string()),
+            .unwrap_or_else(|| cfg.translate_target_lang.clone()),
         capture_mode: prefs
             .capture_mode
             .clone()
             .unwrap_or_else(|| "system".to_string()),
-        online_translation: prefs.online_translation,
+        online_translation: prefs.online_translation || provider != "none",
+        translate_provider: provider,
+        whisper_model: model,
         target_pid: prefs.target_pid,
         target_app_name: prefs.target_app_name.clone(),
         model_path: dir.to_string_lossy().to_string(),
@@ -372,6 +398,132 @@ pub fn clean_whisper_output(raw: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Normalizes text for cache and stability comparisons (collapses whitespace,
+/// trims outer punctuation, and lowercases).
+pub fn normalize_cache_text(input: &str) -> String {
+    input
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_matches(|c: char| matches!(c, '.' | ',' | '!' | '?' | ';' | ':' | '"' | '\''))
+        .to_ascii_lowercase()
+}
+
+/// Decides when a streaming partial transcript is stable enough to translate.
+/// Live `original` subtitles are always shown immediately, while remote
+/// translation only fires when a sentence is finalized OR remains identical
+/// across `STABLE_SNAPSHOT_COUNT` consecutive snapshots.
+#[derive(Debug, Default)]
+pub struct SubtitleStabilityTracker {
+    last_seen_norm: String,
+    consecutive_hits: usize,
+    last_translated_norm: String,
+}
+
+impl SubtitleStabilityTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn observe(&mut self, text: &str, finalized: bool) -> bool {
+        let norm = normalize_cache_text(text);
+        if norm.is_empty() {
+            return false;
+        }
+        if norm == self.last_translated_norm {
+            if finalized {
+                self.reset_phrase();
+            }
+            return false;
+        }
+        if finalized {
+            self.last_translated_norm = norm;
+            self.last_seen_norm.clear();
+            self.consecutive_hits = 0;
+            return true;
+        }
+        if norm == self.last_seen_norm {
+            self.consecutive_hits += 1;
+        } else {
+            self.last_seen_norm = norm.clone();
+            self.consecutive_hits = 1;
+        }
+        if self.consecutive_hits >= STABLE_SNAPSHOT_COUNT {
+            self.last_translated_norm = norm;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn reset_phrase(&mut self) {
+        self.last_seen_norm.clear();
+        self.consecutive_hits = 0;
+    }
+}
+
+/// Bounded FIFO translation cache keyed by `(normalized_text, provider, target_lang)`.
+pub struct TranslationCache {
+    max_entries: usize,
+    map: std::collections::HashMap<(String, crate::translate_provider::TranslateProviderId, String), String>,
+    order: std::collections::VecDeque<(String, crate::translate_provider::TranslateProviderId, String)>,
+}
+
+impl TranslationCache {
+    pub fn new(max_entries: usize) -> Self {
+        Self {
+            max_entries: max_entries.max(1),
+            map: std::collections::HashMap::new(),
+            order: std::collections::VecDeque::new(),
+        }
+    }
+
+    pub fn get(
+        &self,
+        text: &str,
+        provider: crate::translate_provider::TranslateProviderId,
+        target_lang: &str,
+    ) -> Option<String> {
+        let key = (
+            normalize_cache_text(text),
+            provider,
+            target_lang.to_ascii_lowercase(),
+        );
+        self.map.get(&key).cloned()
+    }
+
+    pub fn insert(
+        &mut self,
+        text: &str,
+        provider: crate::translate_provider::TranslateProviderId,
+        target_lang: &str,
+        translated: String,
+    ) {
+        let norm = normalize_cache_text(text);
+        if norm.is_empty() {
+            return;
+        }
+        let key = (norm, provider, target_lang.to_ascii_lowercase());
+        if !self.map.contains_key(&key) {
+            if self.order.len() >= self.max_entries {
+                if let Some(oldest) = self.order.pop_front() {
+                    self.map.remove(&oldest);
+                }
+            }
+            self.order.push_back(key.clone());
+        }
+        self.map.insert(key, translated);
+    }
+
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
 }
 
 /// Translates `text` using the configured official provider (`GoogleCloud`,
@@ -891,7 +1043,7 @@ fn run_wasapi_loopback_worker(
     source_lang: &str,
     target_lang: &str,
     capture_mode: &str,
-    online_translation: bool,
+    provider_id: crate::translate_provider::TranslateProviderId,
     target_pid: Option<u32>,
 ) -> Result<(), String> {
     use std::collections::VecDeque;
@@ -948,33 +1100,36 @@ fn run_wasapi_loopback_worker(
         .start_stream()
         .map_err(|e| format!("Failed to start WASAPI loopback stream: {e}"))?;
 
-    // True word-by-word incremental streaming pipeline using Latest-Only slots
-    // (zero FIFO backlog — always transcribes and translates the newest words):
-    // Thread 1 (this): Rolling WASAPI speech buffer, snapshotting every 250 ms
-    // Thread 2: Warm resident whisper-server.exe (-ac 256, ~35-60 ms inference)
-    // Thread 3: Dedicated pooled keep-alive translator updating live in place
+    // Three-stage latest-wins streaming pipeline:
+    // 1. Producer: captures WASAPI loopback PCM, tags each snapshot with `finalized: bool`.
+    // 2. Whisper worker: transcribes audio, emits `original` immediately, and forwards
+    //    only stabilized or finalized phrases to the translator with a monotonic generation ID.
+    // 3. Translator worker: checks cache, enforces latest-wins generation cancellation,
+    //    passes 2-3 prior sentences as LLM context, and emits explicit `translation_status`.
     let audio_slot = std::sync::Arc::new((
-        Mutex::new((None::<Vec<u8>>, false)),
+        Mutex::new((None::<(Vec<u8>, bool)>, false)),
         std::sync::Condvar::new(),
     ));
     let text_slot = std::sync::Arc::new((
-        Mutex::new((None::<String>, false)),
+        Mutex::new((None::<(String, bool, u64)>, false)),
         std::sync::Condvar::new(),
     ));
+    let latest_gen = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
 
     let text_slot_rx = std::sync::Arc::clone(&text_slot);
+    let latest_gen_tr = std::sync::Arc::clone(&latest_gen);
     let app_translator = app.clone();
     let src_for_tr = source_lang.to_string();
     let tgt_for_tr = target_lang.to_string();
     let translator_handle = std::thread::spawn(move || {
-        let mut cache: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-        let mut last_emitted = String::new();
+        let mut cache = TranslationCache::new(TRANSLATION_CACHE_MAX_ENTRIES);
+        let mut rolling_context: VecDeque<String> = VecDeque::new();
         let mut last_remote_call = Instant::now()
             .checked_sub(Duration::from_secs(2))
             .unwrap_or_else(Instant::now);
         let (lock, cvar) = &*text_slot_rx;
         loop {
-            let text = {
+            let item = {
                 let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
                 while guard.0.is_none() && !guard.1 && RUNNING.load(Ordering::SeqCst) {
                     guard = cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
@@ -984,53 +1139,97 @@ fn run_wasapi_loopback_worker(
                 }
                 guard.0.take()
             };
-            let Some(text) = text else {
+            let Some((text, finalized, gen_id)) = item else {
                 continue;
             };
-            if text.eq_ignore_ascii_case(&last_emitted) {
+            // Latest-wins: drop stale work before making an HTTP request.
+            if gen_id < latest_gen_tr.load(Ordering::SeqCst) {
                 continue;
             }
-            let translated = if !online_translation {
-                // Privacy-first: local Whisper transcription only; zero external HTTP calls.
-                text.clone()
-            } else if let Some(cached) = cache.get(&text) {
-                cached.clone()
-            } else {
-                // Keep remote calls <= 2/sec so providers never HTTP 429.
-                let since = last_remote_call.elapsed();
-                if since < Duration::from_millis(500) {
-                    std::thread::sleep(Duration::from_millis(500) - since);
-                }
-                if !RUNNING.load(Ordering::SeqCst) {
-                    break;
-                }
-                last_remote_call = Instant::now();
-                let res = translate_with_provider(crate::translate_provider::TranslateProviderId::None, None, &text, &src_for_tr, &tgt_for_tr, &[]).unwrap_or_else(|_| text.clone());
-                if !res.eq_ignore_ascii_case(&text) {
-                    if cache.len() >= 256 {
-                        cache.clear();
+            if provider_id == crate::translate_provider::TranslateProviderId::None {
+                continue;
+            }
+
+            let outcome: Result<String, crate::translate_provider::TranslateError> =
+                if let Some(cached) = cache.get(&text, provider_id, &tgt_for_tr) {
+                    Ok(cached)
+                } else {
+                    let since = last_remote_call.elapsed();
+                    if since < Duration::from_millis(TRANSLATION_MIN_INTERVAL_MS) {
+                        std::thread::sleep(Duration::from_millis(TRANSLATION_MIN_INTERVAL_MS) - since);
                     }
-                    cache.insert(text.clone(), res.clone());
+                    if !RUNNING.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    if gen_id < latest_gen_tr.load(Ordering::SeqCst) {
+                        continue;
+                    }
+                    last_remote_call = Instant::now();
+                    let api_key = if provider_id.requires_api_key() {
+                        crate::translate_secrets::get_api_key(provider_id)
+                    } else {
+                        None
+                    };
+                    let ctx_vec: Vec<String> = rolling_context.iter().cloned().collect();
+                    let res = translate_with_provider(
+                        provider_id,
+                        api_key.as_deref(),
+                        &text,
+                        &src_for_tr,
+                        &tgt_for_tr,
+                        &ctx_vec,
+                    );
+                    if let Ok(ref translated) = res {
+                        cache.insert(&text, provider_id, &tgt_for_tr, translated.clone());
+                    }
+                    res
+                };
+
+            // Latest-wins: if a newer subtitle superseded this one while in flight, drop it.
+            if !RUNNING.load(Ordering::SeqCst) || gen_id < latest_gen_tr.load(Ordering::SeqCst) {
+                continue;
+            }
+
+            match outcome {
+                Ok(translated) => {
+                    if finalized {
+                        if rolling_context.len() >= crate::translate_provider::MAX_LLM_CONTEXT_SENTENCES {
+                            rolling_context.pop_front();
+                        }
+                        rolling_context.push_back(text.clone());
+                    }
+                    emit_subtitle(
+                        &app_translator,
+                        &SubtitlePayload {
+                            original: text,
+                            translated,
+                            target_lang: tgt_for_tr.clone(),
+                            active: true,
+                            translation_status: "ok".to_string(),
+                        },
+                    );
                 }
-                res
-            };
-            last_emitted = text.clone();
-            if RUNNING.load(Ordering::SeqCst) {
-                emit_subtitle(
-                    &app_translator,
-                    &SubtitlePayload {
-                        original: text,
-                        translated,
-                        target_lang: tgt_for_tr.clone(),
-                        active: true,
-                    },
-                );
+                Err(err) => {
+                    emit_subtitle(
+                        &app_translator,
+                        &SubtitlePayload {
+                            original: text,
+                            translated: String::new(),
+                            target_lang: tgt_for_tr.clone(),
+                            active: true,
+                            translation_status: err.to_subtitle_status().to_string(),
+                        },
+                    );
+                }
             }
         }
     });
 
     let audio_slot_rx = std::sync::Arc::clone(&audio_slot);
     let text_slot_tx = std::sync::Arc::clone(&text_slot);
+    let latest_gen_whisper = std::sync::Arc::clone(&latest_gen);
+    let app_whisper = app.clone();
+    let tgt_for_whisper = target_lang.to_string();
     let server_bin_opt = find_whisper_server(dir);
     let cli_bin_owned = cli_bin.to_path_buf();
     let model_owned = model.to_path_buf();
@@ -1044,10 +1243,11 @@ fn run_wasapi_loopback_worker(
         let server = server_bin_opt
             .as_deref()
             .and_then(|sb| ResidentWhisperServer::start(sb, &model_owned, &src_owned, threads));
+        let mut stability = SubtitleStabilityTracker::new();
 
         let (lock, cvar) = &*audio_slot_rx;
         loop {
-            let pcm_bytes = {
+            let item = {
                 let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
                 while guard.0.is_none() && !guard.1 && RUNNING.load(Ordering::SeqCst) {
                     guard = cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
@@ -1057,7 +1257,7 @@ fn run_wasapi_loopback_worker(
                 }
                 guard.0.take()
             };
-            let Some(pcm_bytes) = pcm_bytes else {
+            let Some((pcm_bytes, finalized)) = item else {
                 continue;
             };
             let text_opt = server
@@ -1076,10 +1276,37 @@ fn run_wasapi_loopback_worker(
 
             if let Some(text) = text_opt {
                 if !text.is_empty() && RUNNING.load(Ordering::SeqCst) {
-                    let (tlock, tcvar) = &*text_slot_tx;
-                    let mut tg = tlock.lock().unwrap_or_else(|e| e.into_inner());
-                    tg.0 = Some(text);
-                    tcvar.notify_one();
+                    let gen_id = latest_gen_whisper.fetch_add(1, Ordering::SeqCst) + 1;
+                    // Always display partial `original` immediately.
+                    if provider_id == crate::translate_provider::TranslateProviderId::None {
+                        emit_subtitle(
+                            &app_whisper,
+                            &SubtitlePayload {
+                                original: String::new(),
+                                translated: text,
+                                target_lang: tgt_for_whisper.clone(),
+                                active: true,
+                                translation_status: "ok".to_string(),
+                            },
+                        );
+                    } else {
+                        emit_subtitle(
+                            &app_whisper,
+                            &SubtitlePayload {
+                                original: text.clone(),
+                                translated: String::new(),
+                                target_lang: tgt_for_whisper.clone(),
+                                active: true,
+                                translation_status: "pending".to_string(),
+                            },
+                        );
+                        if stability.observe(&text, finalized) {
+                            let (tlock, tcvar) = &*text_slot_tx;
+                            let mut tg = tlock.lock().unwrap_or_else(|e| e.into_inner());
+                            tg.0 = Some((text, finalized, gen_id));
+                            tcvar.notify_one();
+                        }
+                    }
                 }
             }
         }
@@ -1156,7 +1383,7 @@ fn run_wasapi_loopback_worker(
                     if has_audible_speech(&snapshot) {
                         let (alock, acvar) = &*audio_slot;
                         let mut ag = alock.lock().unwrap_or_else(|e| e.into_inner());
-                        ag.0 = Some(snapshot);
+                        ag.0 = Some((snapshot, finalize_ready));
                         acvar.notify_one();
                         last_snapshot_at = now;
                         dirty_since_snapshot = false;
@@ -1319,14 +1546,28 @@ pub async fn start_live_translate(
     target_lang: String,
     capture_mode: Option<String>,
     online_translation: Option<bool>,
+    translate_provider: Option<String>,
     target_pid: Option<u32>,
     target_app_name: Option<String>,
 ) -> Result<TranslateEngineStatus, String> {
     if !crate::ipc::is_privileged_window(window.label()) {
         return Err("Unauthorized window".to_string());
     }
-    let allow_online =
-        online_translation.unwrap_or_else(|| crate::settings::load(&app).online_translation);
+    let loaded_settings = crate::settings::load(&app);
+    let resolved_provider_id = match translate_provider {
+        Some(ref raw) => crate::translate_provider::TranslateProviderId::parse_id(raw),
+        None => {
+            let from_settings = crate::translate_provider::TranslateProviderId::parse_id(
+                &loaded_settings.translate_provider,
+            );
+            if online_translation == Some(false) {
+                crate::translate_provider::TranslateProviderId::None
+            } else {
+                from_settings
+            }
+        }
+    };
+    let allow_online = resolved_provider_id.is_cloud();
     let resolved_mode = match capture_mode.as_deref() {
         Some("app") => "app".to_string(),
         _ => "system".to_string(),
@@ -1353,6 +1594,7 @@ pub async fn start_live_translate(
         prefs.target_lang = Some(target_lang.clone());
         prefs.capture_mode = Some(resolved_mode.clone());
         prefs.online_translation = allow_online;
+        prefs.translate_provider = Some(resolved_provider_id.as_str().to_string());
         prefs.target_pid = target_pid;
         prefs.target_app_name = target_app_name.clone();
         prefs.last_error = None;
@@ -1394,6 +1636,7 @@ pub async fn start_live_translate(
             translated: listening_banner,
             target_lang: target_lang.clone(),
             active: true,
+            translation_status: "ok".to_string(),
         },
     );
 
@@ -1412,7 +1655,7 @@ pub async fn start_live_translate(
                     &source_lang,
                     &target_lang,
                     &resolved_mode,
-                    allow_online,
+                    resolved_provider_id,
                     target_pid,
                 ) {
                     crate::diagnostics::log("translator", &format!("loopback failed: {err}"));
@@ -1428,6 +1671,7 @@ pub async fn start_live_translate(
                             translated: err,
                             target_lang: target_lang.clone(),
                             active: true,
+                            translation_status: "failed".to_string(),
                         },
                     );
                     let st = build_status(&app_worker);
@@ -1445,7 +1689,7 @@ pub async fn start_live_translate(
                     &source_lang,
                     &target_lang,
                     &resolved_mode,
-                    allow_online,
+                    resolved_provider_id,
                     target_pid,
                 );
                 while RUNNING.load(Ordering::SeqCst) {
@@ -1485,6 +1729,7 @@ pub fn stop_live_translate(app: AppHandle) -> TranslateEngineStatus {
             translated: String::new(),
             target_lang: "fa".to_string(),
             active: false,
+            translation_status: "ok".to_string(),
         },
     );
     if let Some(win) = app.get_webview_window("subtitle") {
@@ -1505,18 +1750,35 @@ pub async fn test_subtitle_overlay(
     if let Some(win) = app.get_webview_window("subtitle") {
         let _ = win.show();
     }
+    let cfg = crate::settings::load(&app);
+    let provider_id =
+        crate::translate_provider::TranslateProviderId::parse_id(&cfg.translate_provider);
     let clean = text.trim().to_string();
+    let sl = cfg.translate_source_lang;
     let tl = target_lang.clone();
-    let translated =
-        tauri::async_runtime::spawn_blocking(move || translate_with_provider(crate::translate_provider::TranslateProviderId::None, None, &clean, "auto", &tl, &[]).unwrap_or(clean))
-            .await
-            .map_err(|e| e.to_string())?;
+    let (translated, status) = tauri::async_runtime::spawn_blocking(move || {
+        if provider_id == crate::translate_provider::TranslateProviderId::None {
+            return (clean, "ok".to_string());
+        }
+        let key = if provider_id.requires_api_key() {
+            crate::translate_secrets::get_api_key(provider_id)
+        } else {
+            None
+        };
+        match translate_with_provider(provider_id, key.as_deref(), &clean, &sl, &tl, &[]) {
+            Ok(out) => (out, "ok".to_string()),
+            Err(err) => (String::new(), err.to_subtitle_status().to_string()),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
     let payload = SubtitlePayload {
         original: text,
         translated,
         target_lang,
         active: true,
+        translation_status: status,
     };
     emit_subtitle(&app, &payload);
     let app_hide = app.clone();
@@ -1530,6 +1792,7 @@ pub async fn test_subtitle_overlay(
                     translated: String::new(),
                     target_lang: "fa".to_string(),
                     active: false,
+                    translation_status: "ok".to_string(),
                 },
             );
             if let Some(win) = app_hide.get_webview_window("subtitle") {
@@ -1759,5 +2022,39 @@ mod tests {
         assert!(extract_zip_with_limits(&zip_path, &out_dir, 1024, 10).is_ok());
         let _ = fs::remove_file(&zip_path);
         let _ = fs::remove_dir_all(&out_dir);
+    }
+
+    #[test]
+    fn stability_tracker_waits_for_two_identical_snapshots_or_finalization() {
+        let mut st = SubtitleStabilityTracker::new();
+        assert!(!st.observe("Hello", false));
+        assert!(st.observe("  hello. ", false));
+        // Duplicate already-translated text does not re-trigger.
+        assert!(!st.observe("Hello!", false));
+        // New partial phrase waits again.
+        assert!(!st.observe("Hello world", false));
+        // Finalized phrase triggers immediately.
+        assert!(st.observe("Hello world", true));
+    }
+
+    #[test]
+    fn translation_cache_normalizes_keys_and_evicts_oldest() {
+        use crate::translate_provider::TranslateProviderId;
+        let mut cache = TranslationCache::new(2);
+        cache.insert("  Hello, World! ", TranslateProviderId::Gemini, "fa", "سلام دنیا".into());
+        assert_eq!(
+            cache.get("hello, world", TranslateProviderId::Gemini, "FA"),
+            Some("سلام دنیا".to_string())
+        );
+        assert_eq!(
+            cache.get("hello, world", TranslateProviderId::GoogleCloud, "fa"),
+            None
+        );
+        cache.insert("Second", TranslateProviderId::Gemini, "fa", "دوم".into());
+        cache.insert("Third", TranslateProviderId::Gemini, "fa", "سوم".into());
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.get("hello, world", TranslateProviderId::Gemini, "fa"), None);
+        assert_eq!(cache.get("second", TranslateProviderId::Gemini, "fa"), Some("دوم".to_string()));
+        assert_eq!(cache.get("third", TranslateProviderId::Gemini, "fa"), Some("سوم".to_string()));
     }
 }
