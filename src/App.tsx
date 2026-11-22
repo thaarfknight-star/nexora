@@ -456,10 +456,6 @@ interface AudioAppTarget {
 interface TranslateEngineStatus {
   installed: boolean;
   downloading: boolean;
-  offline_installed: boolean;
-  offline_downloading: boolean;
-  offline_size_mb: number;
-  translate_mode: string;
   running: boolean;
   model_size_mb: number;
   source_lang: string;
@@ -744,14 +740,10 @@ function IslandApp() {
           const savedPidRaw = window.localStorage.getItem("nexora-translate-target-pid");
           const savedPid = savedPidRaw ? Number(savedPidRaw) : st.target_pid;
           const savedAppName = window.localStorage.getItem("nexora-translate-target-app") || st.target_app_name;
-          const savedTrMode =
-            window.localStorage.getItem("nexora-translate-mode") ||
-            (st.offline_installed ? "offline" : "online");
           invoke<TranslateEngineStatus>("start_live_translate", {
             sourceLang: st.source_lang || "auto",
             targetLang: st.target_lang || "fa",
             captureMode: savedMode,
-            translateMode: st.offline_installed ? savedTrMode : "online",
             targetPid: savedMode === "app" && savedPid ? savedPid : null,
             targetAppName: savedMode === "app" ? savedAppName : null,
           })
@@ -2306,10 +2298,6 @@ function SettingsView() {
   const [islandGlowPct, setIslandGlowPct] = useState<number>(() => readIslandGlow());
   const [translateStatus, setTranslateStatus] = useState<TranslateEngineStatus | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgressPayload | null>(null);
-  const [offlineProgress, setOfflineProgress] = useState<DownloadProgressPayload | null>(null);
-  const [translateMode, setTranslateMode] = useState<"offline" | "online">(() =>
-    window.localStorage.getItem("nexora-translate-mode") === "online" ? "online" : "offline",
-  );
   const [srcLang, setSrcLang] = useState("auto");
   const [tgtLang, setTgtLang] = useState("fa");
   const [captureMode, setCaptureMode] = useState<"system" | "app">(() =>
@@ -2356,7 +2344,6 @@ function SettingsView() {
       })
       .catch(() => {});
     let unlisten: (() => void) | undefined;
-    let unlistenOffline: (() => void) | undefined;
     listen<DownloadProgressPayload>("translate-download-progress", (ev) => {
       setDownloadProgress(ev.payload);
     })
@@ -2364,16 +2351,8 @@ function SettingsView() {
         unlisten = fn;
       })
       .catch(() => {});
-    listen<DownloadProgressPayload>("offline-translate-download-progress", (ev) => {
-      setOfflineProgress(ev.payload);
-    })
-      .then((fn) => {
-        unlistenOffline = fn;
-      })
-      .catch(() => {});
     return () => {
       unlisten?.();
-      unlistenOffline?.();
     };
   }, []);
 
@@ -2398,36 +2377,6 @@ function SettingsView() {
       .catch(() => {});
   };
 
-  const handleDownloadOffline = () => {
-    setOfflineProgress({ percent: 2, stage: "Starting offline translator download..." });
-    invoke<TranslateEngineStatus>("download_offline_translator")
-      .then((st) => {
-        setTranslateStatus(st);
-        setOfflineProgress(null);
-        setTranslateMode("offline");
-        try {
-          window.localStorage.setItem("nexora-translate-mode", "offline");
-        } catch {
-          // ignore
-        }
-      })
-      .catch((err) => {
-        setOfflineProgress(null);
-        setTranslateStatus((prev) =>
-          prev ? { ...prev, offline_downloading: false, last_error: String(err) } : prev,
-        );
-      });
-  };
-
-  const handleRemoveOffline = () => {
-    invoke<TranslateEngineStatus>("remove_offline_translator")
-      .then((st) => {
-        setTranslateStatus(st);
-        setTranslateMode("online");
-      })
-      .catch(() => {});
-  };
-
   const handleToggleTranslate = () => {
     if (translateStatus?.running) {
       invoke<TranslateEngineStatus>("stop_live_translate")
@@ -2438,7 +2387,6 @@ function SettingsView() {
         sourceLang: srcLang,
         targetLang: tgtLang,
         captureMode,
-        translateMode: translateStatus?.offline_installed ? translateMode : "online",
         targetPid: captureMode === "app" ? targetPid : null,
         targetAppName: captureMode === "app" ? targetAppName || null : null,
       })
@@ -3651,98 +3599,6 @@ function SettingsView() {
       )}
       </div>
 
-      <div className="engine-card" style={{ marginTop: 14 }}>
-        <div className="engine-card-header">
-          <div>
-            <div className="engine-card-title">{t(language, "offlineEngineTitle")}</div>
-            <div className="settings-row-desc">{t(language, "offlineEngineDesc")}</div>
-          </div>
-          <span className="engine-version-badge">Qwen2.5</span>
-        </div>
-        <div className="settings-row">
-          <span className="settings-row-text">
-            <span>{t(language, "offlineEngineStatusLabel")}</span>
-            <span className="settings-row-desc">
-              {translateStatus?.offline_installed && !translateStatus?.offline_downloading && offlineProgress === null
-                ? `${t(language, "offlineInstalled")} (${translateStatus.offline_size_mb} MB)`
-                : t(language, "offlineNotInstalled")}
-            </span>
-          </span>
-          <div className="translate-btn-group">
-            {!(translateStatus?.offline_installed && !translateStatus?.offline_downloading && offlineProgress === null) ? (
-              <button
-                type="button"
-                className="mini-btn primary-btn"
-                disabled={translateStatus?.offline_downloading || offlineProgress !== null}
-                onClick={handleDownloadOffline}
-              >
-                {offlineProgress
-                  ? `${t(language, "downloadingEngineBtn")} ${offlineProgress.percent}%`
-                  : t(language, "downloadOfflineBtn")}
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="mini-btn"
-                onClick={handleRemoveOffline}
-              >
-                {t(language, "removeOfflineBtn")}
-              </button>
-            )}
-          </div>
-        </div>
-        {offlineProgress && (
-          <div className="translate-progress">
-            <div className="translate-progress-meta">
-              <span>{offlineProgress.stage}</span>
-              <span>{offlineProgress.percent}%</span>
-            </div>
-            <div className="translate-progress-track">
-              <div
-                className="translate-progress-fill"
-                style={{ width: `${offlineProgress.percent}%` }}
-              />
-            </div>
-          </div>
-        )}
-        {translateStatus?.offline_installed && !translateStatus?.offline_downloading && offlineProgress === null && (
-          <div className="settings-row">
-            <span className="settings-row-text">
-              <span>{t(language, "translateModeLabel")}</span>
-            </span>
-            <div className="audio-mode-pills">
-              <button
-                type="button"
-                className={`audio-mode-pill${translateMode === "offline" ? " active" : ""}`}
-                onClick={() => {
-                  setTranslateMode("offline");
-                  try {
-                    window.localStorage.setItem("nexora-translate-mode", "offline");
-                  } catch {
-                    // ignore
-                  }
-                }}
-              >
-                {t(language, "translateModeOffline")}
-              </button>
-              <button
-                type="button"
-                className={`audio-mode-pill${translateMode === "online" ? " active" : ""}`}
-                onClick={() => {
-                  setTranslateMode("online");
-                  try {
-                    window.localStorage.setItem("nexora-translate-mode", "online");
-                  } catch {
-                    // ignore
-                  }
-                }}
-              >
-                {t(language, "translateModeOnline")}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
         </>
       )}
       {section === "updates" && (

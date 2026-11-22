@@ -17,6 +17,106 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.13",
+    date: "2026-11-22",
+    title: {
+      en: "What's New Version Sync Fix & Local Engine Cleanup",
+      fa: "اصلاح پنجره تغییرات نسخه جدید و پاکسازی مدل محلی قبلی",
+    },
+    features: {
+      en: [
+        "Removed the temporary Qwen2.5 + llama-server offline translator card to prepare for Nexora's own lightweight Nexora-MT v1 engine.",
+        "Kept clean engine settings gating so un-downloaded engine controls stay hidden until installation finishes.",
+      ],
+      fa: [
+        "حذف کامل مدل موقت Qwen2.5 و llama-server برای آماده‌سازی بستر مدل اختصاصی و سبک Nexora-MT v1.",
+        "حفظ مخفی‌سازی تنظیمات موتورهای دانلودنشده تا پیش از تکمیل نصب.",
+      ],
+    },
+    fixes: {
+      en: [
+        "Fixed the What's New modal always showing v0.2.5 by properly populating all release entries from v0.2.6 through v0.2.13 at the top of RELEASE_NOTES.",
+      ],
+      fa: [
+        "رفع کامل مشکل ثابت ماندن پنجره تغییرات روی نسخه 0.2.5 با به‌روزرسانی صحیح لیست یادداشت‌های انتشار تا نسخه 0.2.13.",
+      ],
+    },
+  },
+  {
+    version: "0.2.12",
+    date: "2026-11-22",
+    title: {
+      en: "Official Tauri v2 Signed Update Engine",
+      fa: "بازنویسی موتور آپدیت با پلاگین رسمی Tauri v2 (معماری ReChat)",
+    },
+    features: {
+      en: [
+        "Adopted the official signed Tauri v2 @tauri-apps/plugin-updater flow with minisign verification and NSIS currentUser passive install.",
+        "Added an automatic startup update check toggle and confirmation dialog with release notes.",
+      ],
+      fa: [
+        "بازنویسی کامل موتور آپدیت با پلاگین رسمی امضاشده Tauri v2 و نصب passive بدون نیاز به ادمین (currentUser).",
+        "افزودن تیک بررسی خودکار آپدیت هنگام اجرا و پنجره تایید همراه با متن تغییرات.",
+      ],
+    },
+    fixes: {
+      en: [
+        "Fixed in-app updates failing to apply in v0.2.10 and ensured Live Translate shuts down cleanly before updating.",
+      ],
+      fa: [
+        "رفع خطای نصب نشدن آپدیت در نسخه 0.2.10 و بستن تمیز موتور زیرنویس پیش از شروع نصب.",
+      ],
+    },
+  },
+  {
+    version: "0.2.10",
+    date: "2026-11-22",
+    title: {
+      en: "Multi-Provider Rate-Safe Live Translation",
+      fa: "ترجمه زنده پایدار با ۳ سرویس‌دهنده پشتیبان",
+    },
+    features: {
+      en: [
+        "Added a 3-provider translation fallback chain (Google gtx → Google clients5 → MyMemory) with browser User-Agent and rate-limit pacing.",
+      ],
+      fa: [
+        "افزودن زنجیره ۳ سرویس‌دهنده ترجمه پشتیبان خودکار برای جلوگیری از قطع شدن ترجمه.",
+      ],
+    },
+    fixes: {
+      en: [
+        "Fixed Live Subtitles showing untranslated dialogue when rapid polling triggered HTTP 429 rate limits.",
+      ],
+      fa: [
+        "رفع نمایش متن اصلی بدون ترجمه ناشی از محدودیت درخواست (HTTP 429).",
+      ],
+    },
+  },
+  {
+    version: "0.2.9",
+    date: "2026-11-21",
+    title: {
+      en: "Real-Time Word-by-Word Streaming Subtitles",
+      fa: "ترجمه و نمایش زنده کلمه‌به‌کلمه زیرنویس",
+    },
+    features: {
+      en: [
+        "Switched Live Translate to rolling-window word-by-word streaming (250 ms snapshots, Latest-Only slots, and Whisper --audio-ctx 256).",
+      ],
+      fa: [
+        "تغییر موتور زیرنویس به استریم کلمه‌به‌کلمه زنده با اسنپ‌شات ۲۵۰ میلی‌ثانیه‌ای و حذف صف تاخیر.",
+      ],
+    },
+    fixes: {
+      en: [
+        "Eliminated waiting for the end of each sentence before displaying live subtitles.",
+      ],
+      fa: [
+        "حذف انتظار تا پایان جمله پیش از نمایش زیرنویس زنده.",
+      ],
+    },
+  },
+  {
     version: "0.2.5",
     date: "2026-11-21",
     title: {

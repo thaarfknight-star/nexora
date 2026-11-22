@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.13] - 2026-11-22
+
+### What's New
+- **Local Engine Cleanup**: Removed the temporary `Qwen2.5` + `llama-server` offline translator card and backend hooks to keep Nexora lean while preparing for the custom `Nexora-MT v1` native engine.
+
+### Bug Fixes
+- **Fixed What's New Modal Stuck on `v0.2.5`**: Updated `RELEASE_NOTES` (`readonly ReleaseEntry[]`) so the post-update What's New modal always reflects the active installed version (`v0.2.13` and prior releases).
+
 ## [0.2.12] - 2026-11-22
 
 ### What's New
