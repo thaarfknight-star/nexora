@@ -162,61 +162,47 @@ fn spawn_detached_windows_installer(installer_path: &Path, is_msi: bool) -> Resu
     let current_exe = std::env::current_exe()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
-    let installer_str = installer_path.to_string_lossy().to_string();
-    let script_path = std::env::temp_dir().join(format!("nexora-apply-update-{pid}.cmd"));
+    let installer_ps = installer_path.to_string_lossy().replace('\'', "''");
+    let exe_ps = current_exe.replace('\'', "''");
 
-    let run_cmd = if is_msi {
-        format!("msiexec /i \"{installer_str}\" /passive /norestart")
+    let run_installer = if is_msi {
+        format!(
+            "Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/i', '{installer_ps}', '/passive', '/norestart') -Wait"
+        )
     } else {
-        format!("\"{installer_str}\" /P")
+        format!("Start-Process -FilePath '{installer_ps}' -ArgumentList '/P' -Wait")
     };
 
-    let relaunch_block = if current_exe.is_empty() {
+    let relaunch = if exe_ps.is_empty() {
         String::new()
     } else {
         format!(
-            "tasklist /FI \"IMAGENAME eq nexora.exe\" 2>NUL | find /I \"nexora.exe\" >NUL\r\n\
-             if errorlevel 1 (\r\n\
-               if exist \"{current_exe}\" start \"\" \"{current_exe}\"\r\n\
-             )\r\n"
+            "if (-not (Get-Process -Name 'nexora' -ErrorAction SilentlyContinue)) {{              if (Test-Path -LiteralPath '{exe_ps}') {{ Start-Process -FilePath '{exe_ps}' }}              }}"
         )
     };
 
-    // Wait for Nexora (and any Whisper helper) to completely exit and release
-    // file locks BEFORE starting the installer, preventing "Failed to kill Nexora".
-    let script = format!(
-        "@echo off\r\n\
-         setlocal\r\n\
-         for /L %%i in (1,1,12) do (\r\n\
-           tasklist /FI \"PID eq {pid}\" 2>NUL | find \"{pid}\" >NUL\r\n\
-           if errorlevel 1 goto :exited\r\n\
-           timeout /t 1 /nobreak >NUL\r\n\
-         )\r\n\
-         :exited\r\n\
-         taskkill /F /IM whisper-server.exe /T >NUL 2>&1\r\n\
-         taskkill /F /IM whisper-cli.exe /T >NUL 2>&1\r\n\
-         taskkill /F /IM nexora.exe /T >NUL 2>&1\r\n\
-         timeout /t 1 /nobreak >NUL\r\n\
-         {run_cmd}\r\n\
-         timeout /t 2 /nobreak >NUL\r\n\
-         {relaunch_block}\r\n\
-         del /F /Q \"{installer_str}\" >NUL 2>&1\r\n\
-         del /F /Q \"%~f0\" >NUL 2>&1\r\n"
+    // Pure non-interactive PowerShell: uses kernel Wait-Process (no cmd.exe /
+    // timeout.exe stdin blocking or Ctrl+C hangs), kills any lingering helper,
+    // runs the passive installer, relaunches Nexora, and removes the temp file.
+    let ps_script = format!(
+        "$ErrorActionPreference = 'SilentlyContinue';          Wait-Process -Id {pid} -Timeout 8;          Get-Process -Name 'whisper-server','whisper-cli','nexora' | Stop-Process -Force;          Start-Sleep -Milliseconds 600;          {run_installer};          Start-Sleep -Milliseconds 800;          {relaunch};          Remove-Item -LiteralPath '{installer_ps}' -Force"
     );
-
-    let mut f = File::create(&script_path)
-        .map_err(|e| format!("Failed to create update handoff script: {e}"))?;
-    f.write_all(script.as_bytes())
-        .map_err(|e| format!("Failed to write update handoff script: {e}"))?;
-    f.flush().map_err(|e| e.to_string())?;
-    drop(f);
 
     // CREATE_NO_WINDOW (0x0800_0000) | DETACHED_PROCESS (0x0000_0008) |
     // CREATE_NEW_PROCESS_GROUP (0x0000_0200)
     const DETACHED_HIDDEN_FLAGS: u32 = 0x0800_0000 | 0x0000_0008 | 0x0000_0200;
 
-    std::process::Command::new("cmd.exe")
-        .args(["/C", &script_path.to_string_lossy()])
+    std::process::Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            &ps_script,
+        ])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

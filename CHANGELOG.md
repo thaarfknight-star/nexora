@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.10] - 2026-11-22
+
+### What's New
+- **Pure Non-Interactive PowerShell Update Handoff**: Replaced `cmd.exe` + `timeout.exe` with kernel-level PowerShell `Wait-Process`, `Stop-Process`, `Start-Process -Wait`, and automatic relaunch — zero `Ctrl+C` prompts or hangs.
+- **3-Provider Live Translation Fallback Chain**: Routes translations through Google `gtx` → Google `clients5` → MyMemory with a browser `User-Agent` and smart 500 ms rate-limit pacing so live word-by-word translations never stall on HTTP 429.
+
+### Bug Fixes
+- Fixed Live Translate displaying only untranslated original dialogue when rapid word-by-word updates triggered HTTP 429 rate-limiting on Google Translate.
+- Fixed the detached Windows updater stalling until `Ctrl+C` was pressed.
+
 ## [0.2.9] - 2026-11-21
 
 ### What's New
