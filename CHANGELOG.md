@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.14] - 2026-11-22
+
+### What'''s New
+- **Opt-In Online Translation Privacy Toggle**: Added `online_translation` (default `false`) with a first-time consent prompt so speech stays 100% local unless the user explicitly opts in.
+- **Single-Instance Guard & Click-Through Safety Net**: Added Windows Named Mutex single-instance protection, a 15 s frontend heartbeat click-through fallback, and `ScaleFactorChanged` re-anchoring.
+- **Least-Privilege Subtitle Capability**: Split `capabilities/subtitle.json` from `default.json` and enforced `window.label()` checks on privileged commands.
+
+### Bug Fixes
+- Hardened `launch_pinned_app` against arbitrary execution via normalized `list_pinned()` allowlist validation.
+- Enabled strict `csp` and `devCsp` in `tauri.conf.json`.
+- Added fail-closed `sha2` SHA-256 verification (with `TODO` digest constants), atomic `.part` downloads, ZIP-bomb extraction caps, and 3-attempt ephemeral port retry for `whisper-server.exe`.
+- Removed `bootstrap.py` auto-push to `main` and `git tag -f` / `push -f` from CI; wrapped Win32 `EnumWindows` callbacks in `catch_unwind`; clamped numeric settings; updated `README.md` and removed unused `offlineEngine*` i18n keys.
+
 ## [0.2.13] - 2026-11-22
 
 ### What's New

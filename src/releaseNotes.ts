@@ -17,6 +17,36 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.14",
+    date: "2026-11-22",
+    title: {
+      en: "Security & QA Hardening Release",
+      fa: "نسخه مقاوم‌سازی امنیتی و پایداری (نتایج ممیزی QA)",
+    },
+    features: {
+      en: [
+        "Added opt-in Online Translation privacy setting (off by default — local transcription only until user consents).",
+        "Added Windows single-instance Named Mutex guard, click-through heartbeat safety net, and DPI ScaleFactorChanged re-anchoring.",
+        "Separated minimal display-only capability for the subtitle window and restricted privileged commands to main/settings.",
+      ],
+      fa: [
+        "افزودن تنظیم حریم خصوصی «ترجمه آنلاین» (پیش‌فرض خاموش — فقط رونویسی محلی تا زمان رضایت کاربر).",
+        "افزودن قفل تک‌نمونه ویندوز (Named Mutex)، شبکه ایمنی Heartbeat برای Click-Through و تنظیم خودکار موقعیت هنگام تغییر DPI.",
+        "جداسازی مجوزهای پنجره زیرنویس و محدود کردن دستورات حساس به پنجره‌های main و settings.",
+      ],
+    },
+    fixes: {
+      en: [
+        "Hardened launch_pinned_app with strict allowlist validation, configured CSP/devCsp, added fail-closed SHA-256 & ZIP-bomb limits, and wrapped extern callbacks in catch_unwind.",
+        "Ensured clean shutdown restores taskbar first, stops Whisper, and unregisters global shortcuts; clamped numeric settings and removed unused i18n keys.",
+      ],
+      fa: [
+        "ایمن‌سازی launch_pinned_app با لیست سفید، فعال‌سازی CSP، افزودن تایید SHA-256 و محدودیت ضد ZIP-Bomb و محافظت catch_unwind در کالبک‌های unsafe.",
+        "خروج تمیز با بستن Whisper و آزادسازی شورتکات جهانی، محدودسازی بازه تنظیمات عددی و به‌روزرسانی مستندات.",
+      ],
+    },
+  },
+  {
     version: "0.2.13",
     date: "2026-11-22",
     title: {
