@@ -821,60 +821,71 @@ struct ResidentWhisperServer {
 #[cfg(target_os = "windows")]
 impl ResidentWhisperServer {
     fn start(server_bin: &Path, model: &Path, source_lang: &str, threads: usize) -> Option<Self> {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
-        let port = listener.local_addr().ok()?.port();
-        drop(listener);
+        // Retry up to 3 times with fresh ephemeral ports to survive TOCTOU port collisions.
+        // Note: whisper-server.exe (b5907) has no built-in auth/token flag; it binds to 127.0.0.1 only.
+        for _attempt in 0..3 {
+            let Ok(listener) = std::net::TcpListener::bind("127.0.0.1:0") else {
+                continue;
+            };
+            let Ok(addr) = listener.local_addr() else {
+                continue;
+            };
+            let port = addr.port();
+            drop(listener);
 
-        let mut args = vec![
-            "-m".to_string(),
-            model.to_string_lossy().to_string(),
-            "--host".to_string(),
-            "127.0.0.1".to_string(),
-            "--port".to_string(),
-            port.to_string(),
-            "-t".to_string(),
-            threads.to_string(),
-            "-bo".to_string(),
-            "1".to_string(),
-            "-bs".to_string(),
-            "1".to_string(),
-            "-ac".to_string(),
-            "256".to_string(),
-            "-nt".to_string(),
-            "-nf".to_string(),
-            "-sns".to_string(),
-        ];
-        if !source_lang.is_empty() {
-            args.push("-l".to_string());
-            args.push(source_lang.to_string());
-        }
-
-        let mut child = hidden_command(server_bin)
-            .args(&args)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .ok()?;
-
-        // Wait up to 4 seconds for whisper-server.exe to finish loading ggml-tiny.bin into RAM.
-        for _ in 0..40 {
-            if !RUNNING.load(Ordering::SeqCst) {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
+            let mut args = vec![
+                "-m".to_string(),
+                model.to_string_lossy().to_string(),
+                "--host".to_string(),
+                "127.0.0.1".to_string(),
+                "--port".to_string(),
+                port.to_string(),
+                "-t".to_string(),
+                threads.to_string(),
+                "-bo".to_string(),
+                "1".to_string(),
+                "-bs".to_string(),
+                "1".to_string(),
+                "-ac".to_string(),
+                "256".to_string(),
+                "-nt".to_string(),
+                "-nf".to_string(),
+                "-sns".to_string(),
+            ];
+            if !source_lang.is_empty() {
+                args.push("-l".to_string());
+                args.push(source_lang.to_string());
             }
-            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                return Some(Self {
-                    child,
-                    endpoint: format!("http://127.0.0.1:{port}/inference"),
-                });
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
 
-        let _ = child.kill();
-        let _ = child.wait();
+            let Ok(mut child) = hidden_command(server_bin)
+                .args(&args)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            else {
+                continue;
+            };
+
+            // Wait up to 4 seconds for whisper-server.exe to finish loading ggml-tiny.bin into RAM.
+            for _ in 0..40 {
+                if !RUNNING.load(Ordering::SeqCst) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                    return Some(Self {
+                        child,
+                        endpoint: format!("http://127.0.0.1:{port}/inference"),
+                    });
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+
+            let _ = child.kill();
+            let _ = child.wait();
+        }
         None
     }
 
