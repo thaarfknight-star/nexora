@@ -17,6 +17,34 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.15",
+    date: "2026-11-22",
+    title: {
+      en: "NSIS Pre-Install Hook & Deterministic Update Exit",
+      fa: "رفع ریشه‌ای خطای Failed to kill Nexora در نصاب و آپدیتر",
+    },
+    features: {
+      en: [
+        "Added a verified NSIS_HOOK_PREINSTALL hook (src-tauri/windows/hooks.nsh) that runs before Tauri's CheckIfAppIsRunning to cleanly close any lingering nexora.exe and whisper-server.exe processes.",
+        "Added a deterministic, diagnostics-logged pre-exit sequence (restore taskbar -> stop watchdog with 2 s timeout -> synchronously kill whisper-server -> exit).",
+      ],
+      fa: [
+        "افزودن هوک رسمی NSIS_HOOK_PREINSTALL (فایل hooks.nsh) پیش از مرحله CheckIfAppIsRunning برای بستن تمیز هرگونه پروسه باقیمانده nexora.exe و whisper-server.exe.",
+        "افزودن ترتیب خروج منظم و ثبت لاگ مرحله‌به‌مرحله در diagnostics.log (ابتدا بازیابی taskbar، سپس توقف watchdog با تایم‌اوت ۲ ثانیه و بستن هم‌زمان whisper-server).",
+      ],
+    },
+    fixes: {
+      en: [
+        "Fixed 'Failed to kill Nexora. Please close it first then try again' during in-app updates and manual over-the-top NSIS installs.",
+        "Ensured whisper-server.exe is killed synchronously on update exit and tray quit.",
+      ],
+      fa: [
+        "رفع ریشه‌ای خطای «Failed to kill Nexora. Please close it first then try again» هنگام آپدیت داخل برنامه یا نصب مستقیم روی نسخه در حال اجرا.",
+        "تضمین بسته شدن هم‌زمان و بدون جا ماندن whisper-server.exe هنگام آپدیت و خروج از Tray.",
+      ],
+    },
+  },
+  {
     version: "0.2.14",
     date: "2026-11-22",
     title: {

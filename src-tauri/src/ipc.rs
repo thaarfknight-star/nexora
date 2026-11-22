@@ -203,6 +203,15 @@ pub async fn check_updates(
 }
 
 #[tauri::command]
+pub fn prepare_for_update_exit(window: tauri::Window) -> Result<(), String> {
+    if !is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
+    updater::prepare_for_update_exit("js-plugin-updater");
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn download_and_install_update(
     window: tauri::Window,
     app: tauri::AppHandle,

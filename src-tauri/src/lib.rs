@@ -184,6 +184,7 @@ pub fn run() {
             ipc::open_settings,
             hotkey::set_island_hotkey,
             ipc::check_updates,
+            ipc::prepare_for_update_exit,
             ipc::download_and_install_update,
             ipc::get_notifications,
             ipc::clear_notifications,
@@ -208,6 +209,7 @@ pub fn run() {
                 if taskbar::hidden_by_nexora() {
                     taskbar::restore();
                 }
+                watchdog::stop_watchdog();
                 translator::shutdown_engine();
                 {
                     use tauri_plugin_global_shortcut::GlobalShortcutExt;

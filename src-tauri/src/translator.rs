@@ -59,6 +59,7 @@ const SPEECH_RMS_THRESHOLD: f32 = 120.0;
 
 static DOWNLOADING: AtomicBool = AtomicBool::new(false);
 static RUNNING: AtomicBool = AtomicBool::new(false);
+static WHISPER_SERVER_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static TRANSLATE_HTTP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
 
 static ENGINE_STATE: Mutex<EnginePrefs> = Mutex::new(EnginePrefs {
@@ -878,6 +879,7 @@ impl ResidentWhisperServer {
                     return None;
                 }
                 if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                    WHISPER_SERVER_PID.store(child.id(), Ordering::SeqCst);
                     return Some(Self {
                         child,
                         endpoint: format!("http://127.0.0.1:{port}/inference"),
@@ -916,6 +918,7 @@ impl ResidentWhisperServer {
 #[cfg(target_os = "windows")]
 impl Drop for ResidentWhisperServer {
     fn drop(&mut self) {
+        WHISPER_SERVER_PID.store(0, Ordering::SeqCst);
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -1540,9 +1543,19 @@ pub async fn start_live_translate(
     Ok(st)
 }
 
-/// Signals the live translation worker (and resident whisper-server) to stop.
+/// Signals the live translation worker to stop and synchronously terminates
+/// any active `whisper-server.exe` child process so no child handle blocks exit or updates.
 pub fn shutdown_engine() {
     RUNNING.store(false, Ordering::SeqCst);
+    let pid = WHISPER_SERVER_PID.swap(0, Ordering::SeqCst);
+    if pid != 0 {
+        #[cfg(target_os = "windows")]
+        {
+            let _ = hidden_command("taskkill")
+                .args(["/F", "/PID", &pid.to_string(), "/T"])
+                .status();
+        }
+    }
 }
 
 #[tauri::command]

@@ -56,7 +56,7 @@ fn toggle_main_window(app: &AppHandle) {
 /// (both tray classes, with retries); tray.rs must not redeclare the
 /// same Win32 symbols (CI denies clashing extern declarations).
 pub fn quit(app: &AppHandle) {
-    let _ = crate::watchdog::restore_taskbar();
+    crate::updater::prepare_for_update_exit("tray-quit");
     app.exit(0);
 }
 

@@ -107,10 +107,22 @@ pub fn start_watchdog() {
 /// Stop the external watchdog child (clean exit only). Callers must restore
 /// the taskbar first — see `lib.rs`. Idempotent.
 pub fn stop_watchdog() {
+    stop_watchdog_with_timeout(Duration::from_secs(2));
+}
+
+/// Stops the external watchdog child and waits up to `timeout` for it to exit
+/// so it never lingers and races with an installer or clean shutdown.
+pub fn stop_watchdog_with_timeout(timeout: Duration) {
     if let Ok(mut guard) = WATCHDOG_CHILD.lock() {
         if let Some(mut child) = guard.take() {
             let _ = child.kill();
-            let _ = child.wait();
+            let start = std::time::Instant::now();
+            while start.elapsed() < timeout {
+                match child.try_wait() {
+                    Ok(Some(_)) | Err(_) => break,
+                    Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+                }
+            }
         }
     }
     WATCHDOG_STARTED.store(false, Ordering::SeqCst);
@@ -531,5 +543,12 @@ mod tests {
         let start = std::time::Instant::now();
         assert_eq!(run_watchdog_process(u32::MAX - 1), 0);
         assert!(start.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn stop_watchdog_with_timeout_is_idempotent_without_child() {
+        stop_watchdog_with_timeout(Duration::from_millis(50));
+        stop_watchdog_with_timeout(Duration::from_millis(50));
+        assert!(!WATCHDOG_STARTED.load(Ordering::SeqCst));
     }
 }
