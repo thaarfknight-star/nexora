@@ -345,7 +345,7 @@ fn language_display_name(code: &str) -> &str {
         "de" => "German",
         "fr" => "French",
         "es" => "Spanish",
-        other => other,
+        _ => code.trim(),
     }
 }
 
