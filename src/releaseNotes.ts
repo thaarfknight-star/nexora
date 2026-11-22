@@ -17,6 +17,36 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.16",
+    date: "2026-11-22",
+    title: {
+      en: "Live Theme Sync, Theme Animations & Verified Live Translate Digests",
+      fa: "همگام‌سازی لحظه‌ای تم، انیمیشن‌های اختصاصی هر تم و فعال‌سازی مجدد دانلود موتور ترجمه",
+    },
+    features: {
+      en: [
+        "Added 7 signature theme-specific entrance and hover animations for the Dynamic Island (Liquid Glass, Neon Glass, Aurora, Sunset, Midnight, Forest, Obsidian).",
+        "Added live bidirectional theme synchronization between the Dynamic Island and the Settings window.",
+        "Pinned ggml-tiny.bin to its verified HuggingFace commit and configured real SHA-256 digests for whisper-bin-x64.zip and ggml-tiny.bin.",
+      ],
+      fa: [
+        "افزودن ۷ انیمیشن اختصاصی برای ظاهر شدن و هاور داینامیک آیلند متناسب با هر تم (Liquid Glass، Neon Glass، Aurora، Sunset، Midnight، Forest و Obsidian).",
+        "همگام‌سازی لحظه‌ای و دوطرفه تم بین داینامیک آیلند و پنجره Settings بدون نیاز به انتخاب دستی مجدد.",
+        "ثبت هش‌های واقعی SHA-256 و commit پین‌شده برای موتور Live Translate جهت دانلود امن و بدون خطا.",
+      ],
+    },
+    fixes: {
+      en: [
+        "Fixed Live Translate download refusing with unconfigured TODO SHA-256 digest.",
+        "Fixed the Settings window staying on the old theme when switching themes from the Dynamic Island.",
+      ],
+      fa: [
+        "رفع خطای SHA-256 digest is not configured هنگام دانلود موتور ترجمه زنده.",
+        "رفع مشکل هماهنگ نشدن تم پنجره Settings هنگام تغییر تم از داخل داینامیک آیلند.",
+      ],
+    },
+  },
+  {
     version: "0.2.15",
     date: "2026-11-22",
     title: {
