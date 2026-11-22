@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.12] - 2026-11-22
+
+### What's New
+- **Official Tauri v2 Update Engine (ReChat Architecture)**: Rewrote Nexora's updater around `@tauri-apps/plugin-updater` with minisign signature verification (`plugins.updater.pubkey`), NSIS `installMode: "currentUser"` passive install (no UAC), live `Started/Progress/Finished` progress bar, and automatic startup update check with confirmation dialog.
+- **Auto-Update Startup Toggle**: Added a toggle in **Settings → Updates** (`nexora-auto-update`, enabled by default) to control silent startup update checks.
+- **CI Feed Publishing Alignment**: Updated `.github/scripts/publish.py` to stamp UTC `pub_date` and also attach `update-feed.json` to each versioned tag release.
+
+### Bug Fixes
+- Fixed updates failing to apply in `v0.2.10` by replacing the custom PowerShell handoff with official `tauri-plugin-updater` `downloadAndInstall` and cleanly shutting down Live Translate / Whisper / Llama helpers before installer launch.
+
 ## [0.2.11] - 2026-11-22
 
 ### What's New
