@@ -1391,6 +1391,7 @@ pub fn remove_translate_engine(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn start_live_translate(
     window: tauri::Window,
     app: AppHandle,

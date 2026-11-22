@@ -261,6 +261,7 @@ mod tests {
             poll_interval_secs: 5,
             stats_speed_unit: "mb".into(),
             stats_percent_style: "without".into(),
+            online_translation: false,
             language: "fa".into(),
             island_hotkey: "Ctrl+Alt+N".into(),
         };
@@ -298,6 +299,7 @@ mod tests {
                 poll_interval_secs: 3,
                 stats_speed_unit: "auto".into(),
                 stats_percent_style: "with".into(),
+            online_translation: false,
                 language: "en".into(),
                 island_hotkey: "Alt+Space".into(),
             }
@@ -329,6 +331,7 @@ mod tests {
             poll_interval_secs: 3,
             stats_speed_unit: "auto".into(),
             stats_percent_style: "with".into(),
+            online_translation: false,
             language: "en".into(),
             island_hotkey: "Alt+Space".into(),
         };
@@ -353,6 +356,7 @@ mod tests {
             poll_interval_secs: 3,
             stats_speed_unit: "auto".into(),
             stats_percent_style: "with".into(),
+            online_translation: false,
             island_hotkey: "not-a-key".into(),
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
@@ -375,6 +379,7 @@ mod tests {
             poll_interval_secs: 3,
             stats_speed_unit: "auto".into(),
             stats_percent_style: "with".into(),
+            online_translation: false,
             language: "de".into(),
             island_hotkey: "Alt+Space".into(),
         };
