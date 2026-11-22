@@ -22,8 +22,9 @@ fn account_name(provider: TranslateProviderId) -> Result<&'static str, String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-static TEST_STORE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
-    std::sync::OnceLock::new();
+static TEST_STORE: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, String>>,
+> = std::sync::OnceLock::new();
 
 #[cfg(not(target_os = "windows"))]
 fn test_store() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
@@ -87,9 +88,7 @@ pub fn delete_api_key(provider: TranslateProviderId) -> Result<(), String> {
             .map_err(|_| "Failed to access Windows Credential Manager.".to_string())?;
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(_) => {
-                Err("Failed to delete API key from Windows Credential Manager.".to_string())
-            }
+            Err(_) => Err("Failed to delete API key from Windows Credential Manager.".to_string()),
         }
     }
 

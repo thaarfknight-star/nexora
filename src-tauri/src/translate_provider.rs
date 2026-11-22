@@ -655,7 +655,9 @@ mod tests {
         );
 
         assert!(matches!(
-            parse_google_cloud_v2_response(r#"{"data":{"translations":[{"translatedText":"  "}]}}"#),
+            parse_google_cloud_v2_response(
+                r#"{"data":{"translations":[{"translatedText":"  "}]}}"#
+            ),
             Err(TranslateError::EmptyResponse)
         ));
         assert!(matches!(

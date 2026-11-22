@@ -571,16 +571,19 @@ pub fn clean_whisper_output(raw: &str) -> String {
             }
             let norm = l
                 .trim_matches(|c: char| {
-                    matches!(c, '.' | ',' | '!' | '?' | ';' | ':' | '"' | '\'' | '…' | '-')
+                    matches!(
+                        c,
+                        '.' | ',' | '!' | '?' | ';' | ':' | '"' | '\'' | '…' | '-'
+                    )
                 })
                 .trim()
                 .to_lowercase();
             if norm.is_empty() {
                 return false;
             }
-            !WHISPER_HALLUCINATIONS
-                .iter()
-                .any(|h| norm == *h || norm.starts_with("subtitles by") || norm.starts_with("translated by"))
+            !WHISPER_HALLUCINATIONS.iter().any(|h| {
+                norm == *h || norm.starts_with("subtitles by") || norm.starts_with("translated by")
+            })
         })
         .collect::<Vec<_>>()
         .join(" ");
@@ -659,8 +662,19 @@ impl SubtitleStabilityTracker {
 /// Bounded FIFO translation cache keyed by `(normalized_text, provider, target_lang)`.
 pub struct TranslationCache {
     max_entries: usize,
-    map: std::collections::HashMap<(String, crate::translate_provider::TranslateProviderId, String), String>,
-    order: std::collections::VecDeque<(String, crate::translate_provider::TranslateProviderId, String)>,
+    map: std::collections::HashMap<
+        (
+            String,
+            crate::translate_provider::TranslateProviderId,
+            String,
+        ),
+        String,
+    >,
+    order: std::collections::VecDeque<(
+        String,
+        crate::translate_provider::TranslateProviderId,
+        String,
+    )>,
 }
 
 impl TranslationCache {
@@ -1349,7 +1363,9 @@ fn run_wasapi_loopback_worker(
                 } else {
                     let since = last_remote_call.elapsed();
                     if since < Duration::from_millis(TRANSLATION_MIN_INTERVAL_MS) {
-                        std::thread::sleep(Duration::from_millis(TRANSLATION_MIN_INTERVAL_MS) - since);
+                        std::thread::sleep(
+                            Duration::from_millis(TRANSLATION_MIN_INTERVAL_MS) - since,
+                        );
                     }
                     if !RUNNING.load(Ordering::SeqCst) {
                         break;
@@ -1386,7 +1402,9 @@ fn run_wasapi_loopback_worker(
             match outcome {
                 Ok(translated) => {
                     if finalized {
-                        if rolling_context.len() >= crate::translate_provider::MAX_LLM_CONTEXT_SENTENCES {
+                        if rolling_context.len()
+                            >= crate::translate_provider::MAX_LLM_CONTEXT_SENTENCES
+                        {
                             rolling_context.pop_front();
                         }
                         rolling_context.push_back(text.clone());
@@ -1628,7 +1646,8 @@ pub async fn download_translate_engine(
         return Ok(build_status(&app));
     }
 
-    let selected_model_name = whisper_model.unwrap_or_else(|| crate::settings::load(&app).whisper_model);
+    let selected_model_name =
+        whisper_model.unwrap_or_else(|| crate::settings::load(&app).whisper_model);
     let spec = whisper_model_spec(&selected_model_name);
     {
         let mut prefs = ENGINE_STATE.lock().unwrap_or_else(|e| e.into_inner());
@@ -1681,15 +1700,7 @@ pub async fn download_translate_engine(
         let model_file = model_path(&dir, spec.filename);
         let url = whisper_model_url(spec);
         let stage_msg = format!("Downloading {} (~{} MB)...", spec.filename, spec.size_mb);
-        download_file_streaming(
-            &client,
-            &url,
-            &model_part,
-            45,
-            98,
-            &stage_msg,
-            &app_clone,
-        )?;
+        download_file_streaming(&client, &url, &model_part, 45, 98, &stage_msg, &app_clone)?;
         verify_file_sha256(&model_part, spec.sha256)?;
         fs::rename(&model_part, &model_file)
             .map_err(|e| format!("Failed finalizing speech model: {e}"))?;
@@ -2019,7 +2030,6 @@ pub async fn test_subtitle_overlay(
     Ok(payload)
 }
 
-
 #[derive(Debug, Clone, Serialize)]
 pub struct ApiKeyStatus {
     pub google_cloud: bool,
@@ -2150,7 +2160,6 @@ pub async fn test_translate_provider(
     Ok(res)
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvalSampleItem {
     pub id: String,
@@ -2211,8 +2220,8 @@ pub async fn evaluate_translation_samples(
         tauri::async_runtime::spawn_blocking(move || {
             let raw = fs::read_to_string(&samples_path)
                 .map_err(|e| format!("Failed reading samples file: {e}"))?;
-            let parsed: EvalSampleFile = serde_json::from_str(&raw)
-                .map_err(|e| format!("Invalid samples JSON: {e}"))?;
+            let parsed: EvalSampleFile =
+                serde_json::from_str(&raw).map_err(|e| format!("Invalid samples JSON: {e}"))?;
 
             let providers = [
                 TranslateProviderId::GoogleCloud,
@@ -2376,7 +2385,12 @@ mod tests {
     fn translation_cache_normalizes_keys_and_evicts_oldest() {
         use crate::translate_provider::TranslateProviderId;
         let mut cache = TranslationCache::new(2);
-        cache.insert("  Hello, World! ", TranslateProviderId::Gemini, "fa", "سلام دنیا".into());
+        cache.insert(
+            "  Hello, World! ",
+            TranslateProviderId::Gemini,
+            "fa",
+            "سلام دنیا".into(),
+        );
         assert_eq!(
             cache.get("hello, world", TranslateProviderId::Gemini, "FA"),
             Some("سلام دنیا".to_string())
@@ -2388,9 +2402,18 @@ mod tests {
         cache.insert("Second", TranslateProviderId::Gemini, "fa", "دوم".into());
         cache.insert("Third", TranslateProviderId::Gemini, "fa", "سوم".into());
         assert_eq!(cache.len(), 2);
-        assert_eq!(cache.get("hello, world", TranslateProviderId::Gemini, "fa"), None);
-        assert_eq!(cache.get("second", TranslateProviderId::Gemini, "fa"), Some("دوم".to_string()));
-        assert_eq!(cache.get("third", TranslateProviderId::Gemini, "fa"), Some("سوم".to_string()));
+        assert_eq!(
+            cache.get("hello, world", TranslateProviderId::Gemini, "fa"),
+            None
+        );
+        assert_eq!(
+            cache.get("second", TranslateProviderId::Gemini, "fa"),
+            Some("دوم".to_string())
+        );
+        assert_eq!(
+            cache.get("third", TranslateProviderId::Gemini, "fa"),
+            Some("سوم".to_string())
+        );
     }
 
     #[test]
@@ -2421,10 +2444,7 @@ mod tests {
         assert_eq!(clean_whisper_output("Thanks for watching!"), "");
         assert_eq!(clean_whisper_output("ممنون."), "");
         assert_eq!(clean_whisper_output("♪ music ♪"), "");
-        assert_eq!(
-            clean_whisper_output("you you you you you"),
-            ""
-        );
+        assert_eq!(clean_whisper_output("you you you you you"), "");
         assert_eq!(
             clean_whisper_output("the end, the end, the end, the end"),
             ""
@@ -2443,7 +2463,9 @@ mod tests {
             assert!(spec.snapshot_interval_ms >= 250);
         }
         let turbo = whisper_model_spec("ggml-large-v3-turbo-q5_0.bin");
-        assert!(turbo.snapshot_interval_ms > whisper_model_spec("ggml-tiny.bin").snapshot_interval_ms);
+        assert!(
+            turbo.snapshot_interval_ms > whisper_model_spec("ggml-tiny.bin").snapshot_interval_ms
+        );
         assert_eq!(whisper_model_spec("unknown.bin").filename, "ggml-tiny.bin");
     }
 }
