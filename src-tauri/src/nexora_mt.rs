@@ -193,7 +193,9 @@ impl ByteLevelBpeTokenizer {
                 current.push(ch);
             } else if ch.is_alphanumeric() {
                 if !current.is_empty()
-                    && !current.chars().all(|c| c.is_whitespace() || c.is_alphanumeric())
+                    && !current
+                        .chars()
+                        .all(|c| c.is_whitespace() || c.is_alphanumeric())
                 {
                     words.push(std::mem::take(&mut current));
                 }
@@ -441,8 +443,7 @@ fn mha_single_query(
 
 impl NexoraMtEngine {
     pub fn from_file(path: &Path) -> Result<Self, String> {
-        let bytes =
-            fs::read(path).map_err(|e| format!("Failed reading .nxmt model file: {e}"))?;
+        let bytes = fs::read(path).map_err(|e| format!("Failed reading .nxmt model file: {e}"))?;
         Self::from_bytes(&bytes)
     }
 
@@ -634,10 +635,7 @@ impl NexoraMtEngine {
                 add_inplace(&mut hidden[t], &ffn_out);
             }
         }
-        let memory: Vec<Vec<f32>> = hidden
-            .iter()
-            .map(|h| rms_norm(h, &self.enc_norm))
-            .collect();
+        let memory: Vec<Vec<f32>> = hidden.iter().map(|h| rms_norm(h, &self.enc_norm)).collect();
 
         // Precompute cross-attention K/V projections once per decoder layer
         let cross_kv: Vec<(Vec<Vec<f32>>, Vec<Vec<f32>>)> = self
@@ -677,7 +675,8 @@ impl NexoraMtEngine {
                 let v = layer.self_attn.v_proj.matvec(&h1);
                 self_k_cache[li].push(k);
                 self_v_cache[li].push(v);
-                let ctx = mha_single_query(&q, &self_k_cache[li], &self_v_cache[li], n_heads, head_dim);
+                let ctx =
+                    mha_single_query(&q, &self_k_cache[li], &self_v_cache[li], n_heads, head_dim);
                 let proj = layer.self_attn.o_proj.matvec(&ctx);
                 add_inplace(&mut x, &proj);
 

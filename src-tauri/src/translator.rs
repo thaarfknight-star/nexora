@@ -2002,8 +2002,17 @@ pub async fn test_subtitle_overlay(
         } else {
             None
         };
-        let local_path = engine_dir(&app_for_test).join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME);
-        match translate_with_provider(provider_id, key.as_deref(), Some(local_path.as_path()), &clean, &sl, &tl, &[]) {
+        let local_path = engine_dir(&app_for_test)
+            .join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME);
+        match translate_with_provider(
+            provider_id,
+            key.as_deref(),
+            Some(local_path.as_path()),
+            &clean,
+            &sl,
+            &tl,
+            &[],
+        ) {
             Ok(out) => (out, "ok".to_string()),
             Err(err) => (String::new(), err.to_subtitle_status().to_string()),
         }
@@ -2149,8 +2158,17 @@ pub async fn test_translate_provider(
         } else {
             None
         };
-        let local_path = engine_dir(&app_for_probe).join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME);
-        let outcome = translate_with_provider(pid, api_key.as_deref(), Some(local_path.as_path()), sample, sl, &tl, &[]);
+        let local_path = engine_dir(&app_for_probe)
+            .join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME);
+        let outcome = translate_with_provider(
+            pid,
+            api_key.as_deref(),
+            Some(local_path.as_path()),
+            sample,
+            sl,
+            &tl,
+            &[],
+        );
         let latency_ms = start.elapsed().as_millis() as u64;
         match outcome {
             Ok(translated) => TestProviderResult {
@@ -2291,7 +2309,6 @@ pub async fn evaluate_translation_samples(
         .map_err(|e| e.to_string())?
     }
 }
-
 
 /// Downloads and verifies the quantized offline Nexora-MT v1 model (~26.4 MB)
 /// from GitHub Releases into `<app_data_dir>/live-translate/`.

@@ -454,8 +454,8 @@ impl TranslateProvider for LocalTranslateProvider {
                     .to_string(),
             ));
         }
-        let engine = crate::nexora_mt::get_or_load_engine(path)
-            .map_err(TranslateError::InvalidResponse)?;
+        let engine =
+            crate::nexora_mt::get_or_load_engine(path).map_err(TranslateError::InvalidResponse)?;
         let out = engine.translate(req.text, crate::nexora_mt::DEFAULT_MAX_NEW_TOKENS);
         if out.trim().is_empty() {
             Err(TranslateError::EmptyResponse)
