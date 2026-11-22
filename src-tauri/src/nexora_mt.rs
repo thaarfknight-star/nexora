@@ -471,7 +471,8 @@ fn lm_head_top_k(
 
     if rows >= 1024 && n_workers > 1 {
         let chunk_rows = rows.div_ceil(n_workers);
-        let partials: Vec<(f32, f32, Vec<(usize, f32)>)> = std::thread::scope(|s| {
+        type PartialLogits = (f32, f32, Vec<(usize, f32)>);
+        let partials: Vec<PartialLogits> = std::thread::scope(|s| {
             let mut handles = Vec::with_capacity(n_workers);
             for w in 0..n_workers {
                 let start = w * chunk_rows;
@@ -1152,7 +1153,7 @@ mod tests {
 
         let mut file_bytes = Vec::new();
         file_bytes.extend_from_slice(NXMT_MAGIC);
-        file_bytes.extend_from_slice(&NXMT_VERSION.to_le_bytes());
+        file_bytes.extend_from_slice(&NXMT_VERSION_MIN.to_le_bytes());
         file_bytes.extend_from_slice(&(header_json.len() as u32).to_le_bytes());
         file_bytes.extend_from_slice(header_json.as_bytes());
         file_bytes.extend_from_slice(&payload);
