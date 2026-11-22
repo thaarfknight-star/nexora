@@ -101,7 +101,7 @@ fn build_byte_level_tables() -> ([char; 256], HashMap<char, u8>) {
 
     let mut b2u = ['\0'; 256];
     let mut u2b = HashMap::with_capacity(256);
-    for (b, c_u32) in bs.into_iter().zip(cs.into_iter()) {
+    for (b, c_u32) in bs.into_iter().zip(cs) {
         let ch = char::from_u32(c_u32).unwrap_or('?');
         b2u[usize::from(b)] = ch;
         u2b.insert(ch, b);
@@ -518,7 +518,7 @@ impl NexoraMtEngine {
             }
             let raw = &payload[m.offset..end];
             let mut out = Vec::with_capacity(m.shape[0]);
-            for chunk in raw.chunks_exact(2) {
+            for chunk in raw.as_chunks::<2>().0 {
                 out.push(f16_to_f32(u16::from_le_bytes([chunk[0], chunk[1]])));
             }
             Ok(out)
@@ -638,7 +638,8 @@ impl NexoraMtEngine {
         let memory: Vec<Vec<f32>> = hidden.iter().map(|h| rms_norm(h, &self.enc_norm)).collect();
 
         // Precompute cross-attention K/V projections once per decoder layer
-        let cross_kv: Vec<(Vec<Vec<f32>>, Vec<Vec<f32>>)> = self
+        type LayerKv = (Vec<Vec<f32>>, Vec<Vec<f32>>);
+        let cross_kv: Vec<LayerKv> = self
             .decoder
             .iter()
             .map(|layer| {
@@ -829,7 +830,14 @@ mod tests {
         let mut tensors_meta = Vec::new();
         let mut payload = Vec::new();
 
-        let mut push_mat = |name: &str, rows: usize, cols: usize, fill: i8| {
+        fn push_mat(
+            tensors_meta: &mut Vec<serde_json::Value>,
+            payload: &mut Vec<u8>,
+            name: &str,
+            rows: usize,
+            cols: usize,
+            fill: i8,
+        ) {
             let offset = payload.len();
             let nbytes = rows * cols;
             payload.extend(std::iter::repeat_n(fill as u8, nbytes));
@@ -841,8 +849,13 @@ mod tests {
                 "offset": offset,
                 "nbytes": nbytes
             }));
-        };
-        let mut push_vec = |name: &str, len: usize| {
+        }
+        fn push_vec(
+            tensors_meta: &mut Vec<serde_json::Value>,
+            payload: &mut Vec<u8>,
+            name: &str,
+            len: usize,
+        ) {
             let offset = payload.len();
             let one = f32_to_f16_one();
             for _ in 0..len {
@@ -856,7 +869,7 @@ mod tests {
                 "offset": offset,
                 "nbytes": len * 2
             }));
-        };
+        }
 
         // Make eos_id (2) row slightly positive so greedy decode terminates cleanly.
         let tok_offset = payload.len();
@@ -874,33 +887,35 @@ mod tests {
             "nbytes": vocab_size * d_model
         }));
 
-        push_mat("pos_emb.weight", max_len, d_model, 1);
-        push_vec("encoder.0.norm1.weight", d_model);
-        push_mat("encoder.0.self_attn.q_proj.weight", d_model, d_model, 1);
-        push_mat("encoder.0.self_attn.k_proj.weight", d_model, d_model, 1);
-        push_mat("encoder.0.self_attn.v_proj.weight", d_model, d_model, 1);
-        push_mat("encoder.0.self_attn.o_proj.weight", d_model, d_model, 1);
-        push_vec("encoder.0.norm2.weight", d_model);
-        push_mat("encoder.0.ffn.w_gate.weight", ffn_dim, d_model, 1);
-        push_mat("encoder.0.ffn.w_up.weight", ffn_dim, d_model, 1);
-        push_mat("encoder.0.ffn.w_down.weight", d_model, ffn_dim, 1);
-        push_vec("enc_norm.weight", d_model);
+        let m = &mut tensors_meta;
+        let b = &mut payload;
+        push_mat(m, b, "pos_emb.weight", max_len, d_model, 1);
+        push_vec(m, b, "encoder.0.norm1.weight", d_model);
+        push_mat(m, b, "encoder.0.self_attn.q_proj.weight", d_model, d_model, 1);
+        push_mat(m, b, "encoder.0.self_attn.k_proj.weight", d_model, d_model, 1);
+        push_mat(m, b, "encoder.0.self_attn.v_proj.weight", d_model, d_model, 1);
+        push_mat(m, b, "encoder.0.self_attn.o_proj.weight", d_model, d_model, 1);
+        push_vec(m, b, "encoder.0.norm2.weight", d_model);
+        push_mat(m, b, "encoder.0.ffn.w_gate.weight", ffn_dim, d_model, 1);
+        push_mat(m, b, "encoder.0.ffn.w_up.weight", ffn_dim, d_model, 1);
+        push_mat(m, b, "encoder.0.ffn.w_down.weight", d_model, ffn_dim, 1);
+        push_vec(m, b, "enc_norm.weight", d_model);
 
-        push_vec("decoder.0.norm1.weight", d_model);
-        push_mat("decoder.0.self_attn.q_proj.weight", d_model, d_model, 1);
-        push_mat("decoder.0.self_attn.k_proj.weight", d_model, d_model, 1);
-        push_mat("decoder.0.self_attn.v_proj.weight", d_model, d_model, 1);
-        push_mat("decoder.0.self_attn.o_proj.weight", d_model, d_model, 1);
-        push_vec("decoder.0.norm2.weight", d_model);
-        push_mat("decoder.0.cross_attn.q_proj.weight", d_model, d_model, 1);
-        push_mat("decoder.0.cross_attn.k_proj.weight", d_model, d_model, 1);
-        push_mat("decoder.0.cross_attn.v_proj.weight", d_model, d_model, 1);
-        push_mat("decoder.0.cross_attn.o_proj.weight", d_model, d_model, 1);
-        push_vec("decoder.0.norm3.weight", d_model);
-        push_mat("decoder.0.ffn.w_gate.weight", ffn_dim, d_model, 1);
-        push_mat("decoder.0.ffn.w_up.weight", ffn_dim, d_model, 1);
-        push_mat("decoder.0.ffn.w_down.weight", d_model, ffn_dim, 1);
-        push_vec("dec_norm.weight", d_model);
+        push_vec(m, b, "decoder.0.norm1.weight", d_model);
+        push_mat(m, b, "decoder.0.self_attn.q_proj.weight", d_model, d_model, 1);
+        push_mat(m, b, "decoder.0.self_attn.k_proj.weight", d_model, d_model, 1);
+        push_mat(m, b, "decoder.0.self_attn.v_proj.weight", d_model, d_model, 1);
+        push_mat(m, b, "decoder.0.self_attn.o_proj.weight", d_model, d_model, 1);
+        push_vec(m, b, "decoder.0.norm2.weight", d_model);
+        push_mat(m, b, "decoder.0.cross_attn.q_proj.weight", d_model, d_model, 1);
+        push_mat(m, b, "decoder.0.cross_attn.k_proj.weight", d_model, d_model, 1);
+        push_mat(m, b, "decoder.0.cross_attn.v_proj.weight", d_model, d_model, 1);
+        push_mat(m, b, "decoder.0.cross_attn.o_proj.weight", d_model, d_model, 1);
+        push_vec(m, b, "decoder.0.norm3.weight", d_model);
+        push_mat(m, b, "decoder.0.ffn.w_gate.weight", ffn_dim, d_model, 1);
+        push_mat(m, b, "decoder.0.ffn.w_up.weight", ffn_dim, d_model, 1);
+        push_mat(m, b, "decoder.0.ffn.w_down.weight", d_model, ffn_dim, 1);
+        push_vec(m, b, "dec_norm.weight", d_model);
 
         let header_json = serde_json::json!({
             "cfg": {
