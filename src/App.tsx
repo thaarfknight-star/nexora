@@ -137,7 +137,7 @@ interface UpdateProgressPayload {
   total: number | null;
 }
 
-type IslandTab = "apps" | "media" | "stats" | "notifications" | "quick";
+type IslandTab = "apps" | "media" | "stats" | "engines" | "notifications" | "quick";
 
 const STORAGE_KEY = "nexora-theme";
 const SIZE_STORAGE_KEY = "nexora-island-size";
@@ -603,7 +603,7 @@ function IslandApp() {
   // handlers below only ask it for the next state.
   // Delay after the pointer leaves the island before it steps one
   // level down (expanded -> compact -> hidden).
-  const AUTO_CLOSE_DELAY_MS = 2500;
+  const AUTO_CLOSE_DELAY_MS = 5000;
   // Hidden-state handle hit area, in logical pixels (DEVagent spec):
   // the visible strip stays 120x4 (backend handle_width/height),
   // the clickable area around it is ~160x12 at the top edge.
@@ -697,6 +697,11 @@ function IslandApp() {
     invoke("set_island_click_through", { ignore: next === "hidden" }).catch(
       () => {},
     );
+    if (next === "hidden") {
+      clearAutoCloseTimer();
+    } else if (shouldArmAutoClose(machineGuards())) {
+      armAutoClose();
+    }
   };
 
   const armAutoClose = () => {
@@ -723,17 +728,21 @@ function IslandApp() {
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [liveSubActive, setLiveSubActive] = useState(false);
+  const [islandTranslateStatus, setIslandTranslateStatus] =
+    useState<TranslateEngineStatus | null>(null);
   const [translateInstalled, setTranslateInstalled] = useState(false);
 
   useEffect(() => {
     invoke<TranslateEngineStatus>("get_translate_status")
       .then((st) => {
+        setIslandTranslateStatus(st);
         setTranslateInstalled(st.installed);
         setLiveSubActive(st.running);
       })
       .catch(() => {});
     let unlisten: (() => void) | undefined;
     listen<TranslateEngineStatus>("translate-status-changed", (ev) => {
+      setIslandTranslateStatus(ev.payload);
       setTranslateInstalled(ev.payload.installed);
       setLiveSubActive(ev.payload.running);
     })
@@ -1073,6 +1082,9 @@ function IslandApp() {
       launchHintTimer.current = window.setTimeout(() => {
         launchHintRef.current = false;
         setLaunchHint(false);
+        if (visibleRef.current !== "hidden" && !hoveringRef.current) {
+          armAutoClose();
+        }
       }, LAUNCH_HINT_MS);
     }
     return () => {
@@ -1338,10 +1350,14 @@ function IslandApp() {
       });
     }
   }
+  const hasDownloadedEngine = Boolean(
+    islandTranslateStatus?.installed || islandTranslateStatus?.local_model_installed,
+  );
   const tabs: { id: IslandTab; label: string }[] = [
     { id: "apps", label: t(language, "tabApps") },
     { id: "media", label: t(language, "tabMedia") },
     { id: "stats", label: t(language, "tabStats") },
+    ...(hasDownloadedEngine ? [{ id: "engines" as IslandTab, label: t(language, "tabEngines") }] : []),
     { id: "notifications", label: t(language, "notifications") },
     { id: "quick", label: t(language, "tabQuick") },
   ];
@@ -1351,6 +1367,7 @@ function IslandApp() {
       className="island-shell"
       onMouseEnter={onShellMouseEnter}
       onMouseLeave={onShellMouseLeave}
+      onPointerDown={() => { if (!hoveringRef.current && visibleRef.current !== "hidden") armAutoClose(); }}
       onClick={onShellClick}
     >
       <div
@@ -2183,6 +2200,109 @@ function IslandApp() {
 
               </div>
             )}
+            {tab === "engines" && hasDownloadedEngine && (
+              <div className="island-panel" role="tabpanel">
+                {islandTranslateStatus?.local_model_installed && islandTranslateStatus?.installed && (
+                  <div className="panel-line">
+                    <span className="panel-title">{t(language, "localEngineTitle")}</span>
+                    <div className="panel-controls">
+                      <button
+                        type="button"
+                        className={`mini-btn${islandTranslateStatus.running && islandTranslateStatus.translate_provider === "local" ? " danger-btn" : " primary-btn"}`}
+                        onClick={() => {
+                          if (islandTranslateStatus.running && islandTranslateStatus.translate_provider === "local") {
+                            invoke<TranslateEngineStatus>("stop_live_translate")
+                              .then((st) => {
+                                setIslandTranslateStatus(st);
+                                setLiveSubActive(st.running);
+                              })
+                              .catch(() => {});
+                          } else {
+                            const savedMode = window.localStorage.getItem("nexora-translate-capture-mode") || "system";
+                            const savedPidRaw = window.localStorage.getItem("nexora-translate-target-pid");
+                            const savedPid = savedPidRaw ? Number(savedPidRaw) : islandTranslateStatus.target_pid;
+                            const savedAppName = window.localStorage.getItem("nexora-translate-target-app") || islandTranslateStatus.target_app_name;
+                            invoke<TranslateEngineStatus>("start_live_translate", {
+                              sourceLang: "en",
+                              targetLang: "fa",
+                              captureMode: savedMode,
+                              onlineTranslation: false,
+                              translateProvider: "local",
+                              targetPid: savedMode === "app" && savedPid ? savedPid : null,
+                              targetAppName: savedMode === "app" ? savedAppName : null,
+                            })
+                              .then((st) => {
+                                setIslandTranslateStatus(st);
+                                setLiveSubActive(st.running);
+                              })
+                              .catch(() => {});
+                          }
+                        }}
+                      >
+                        {islandTranslateStatus.running && islandTranslateStatus.translate_provider === "local"
+                          ? t(language, "stopLocalTranslateBtn")
+                          : t(language, "startLocalTranslateBtn")}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {islandTranslateStatus?.installed && (
+                  <div className="panel-line">
+                    <span className="panel-title">{t(language, "onlineEngineTitle")}</span>
+                    <div className="panel-controls">
+                      <button
+                        type="button"
+                        className={`mini-btn${islandTranslateStatus.running && islandTranslateStatus.translate_provider !== "local" ? " danger-btn" : " primary-btn"}`}
+                        onClick={() => {
+                          if (islandTranslateStatus.running && islandTranslateStatus.translate_provider !== "local") {
+                            invoke<TranslateEngineStatus>("stop_live_translate")
+                              .then((st) => {
+                                setIslandTranslateStatus(st);
+                                setLiveSubActive(st.running);
+                              })
+                              .catch(() => {});
+                          } else {
+                            const savedMode = window.localStorage.getItem("nexora-translate-capture-mode") || "system";
+                            const savedPidRaw = window.localStorage.getItem("nexora-translate-target-pid");
+                            const savedPid = savedPidRaw ? Number(savedPidRaw) : islandTranslateStatus.target_pid;
+                            const savedAppName = window.localStorage.getItem("nexora-translate-target-app") || islandTranslateStatus.target_app_name;
+                            const onlineProv =
+                              islandTranslateStatus.translate_provider &&
+                              islandTranslateStatus.translate_provider !== "local" &&
+                              islandTranslateStatus.translate_provider !== "none"
+                                ? islandTranslateStatus.translate_provider
+                                : "google_free";
+                            invoke<TranslateEngineStatus>("start_live_translate", {
+                              sourceLang: islandTranslateStatus.source_lang || "en",
+                              targetLang: islandTranslateStatus.target_lang || "fa",
+                              captureMode: savedMode,
+                              onlineTranslation: true,
+                              translateProvider: onlineProv,
+                              targetPid: savedMode === "app" && savedPid ? savedPid : null,
+                              targetAppName: savedMode === "app" ? savedAppName : null,
+                            })
+                              .then((st) => {
+                                setIslandTranslateStatus(st);
+                                setLiveSubActive(st.running);
+                              })
+                              .catch(() => {});
+                          }
+                        }}
+                      >
+                        {islandTranslateStatus.running && islandTranslateStatus.translate_provider !== "local"
+                          ? t(language, "stopOnlineTranslateBtn")
+                          : t(language, "startOnlineTranslateBtn")}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <div className="quick-actions">
+                  <button type="button" className="mini-btn" onClick={openSettings}>
+                    {t(language, "openEngineSettingsBtn")}
+                  </button>
+                </div>
+              </div>
+            )}
             {tab === "quick" && (
               <div className="island-panel" role="tabpanel">
                 <div className="settings-row">
@@ -2391,8 +2511,68 @@ function SettingsView() {
   const [apiKeyMsg, setApiKeyMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [testingProvider, setTestingProvider] = useState(false);
 
+  const [openEngineCard, setOpenEngineCard] = useState<"local" | "online" | null>(null);
+  const [onlineProviderChoice, setOnlineProviderChoice] = useState<string>(() => {
+    try {
+      return window.localStorage.getItem("nexora-online-provider") || "google_free";
+    } catch {
+      return "google_free";
+    }
+  });
   const activeProvider = settings?.translate_provider ?? "none";
   const activeWhisperModel = settings?.whisper_model ?? "ggml-tiny.bin";
+
+  const handleToggleEngineByMode = (mode: "local" | "online") => {
+    const isRunningThisMode =
+      Boolean(translateStatus?.running) &&
+      (mode === "local"
+        ? translateStatus?.translate_provider === "local" || translateStatus?.translate_provider === "none"
+        : translateStatus?.translate_provider !== "local" && translateStatus?.translate_provider !== "none");
+    if (isRunningThisMode) {
+      invoke<TranslateEngineStatus>("stop_live_translate")
+        .then(setTranslateStatus)
+        .catch(() => {});
+      return;
+    }
+    const chosenProvider =
+      mode === "local"
+        ? translateStatus?.local_model_installed
+          ? "local"
+          : "none"
+        : onlineProviderChoice;
+    if (mode === "online") {
+      const consented = window.localStorage.getItem("nexora-cloud-translate-consent") === "1";
+      if (!consented) {
+        if (!window.confirm(t(language, "onlineTranslationConsent"))) {
+          return;
+        }
+        try {
+          window.localStorage.setItem("nexora-cloud-translate-consent", "1");
+        } catch {
+          // ignore
+        }
+      }
+    }
+    persistTranslateSettings({
+      translate_provider: chosenProvider,
+      online_translation: mode === "online",
+    });
+    invoke<TranslateEngineStatus>("start_live_translate", {
+      sourceLang: mode === "local" ? "en" : srcLang,
+      targetLang: mode === "local" ? "fa" : tgtLang,
+      captureMode,
+      onlineTranslation: mode === "online",
+      translateProvider: chosenProvider,
+      targetPid: captureMode === "app" ? targetPid : null,
+      targetAppName: captureMode === "app" ? targetAppName || null : null,
+    })
+      .then(setTranslateStatus)
+      .catch((err) => {
+        setTranslateStatus((prev) =>
+          prev ? { ...prev, running: false, last_error: String(err) } : prev,
+        );
+      });
+  };
 
   const refreshApiKeyStatus = () => {
     invoke<ApiKeyStatus>("get_translate_api_key_status")
@@ -2417,12 +2597,12 @@ function SettingsView() {
       .catch(() => {});
   };
 
-  const handleSaveApiKey = () => {
+  const handleSaveApiKey = (providerOverride?: string) => {
     const trimmed = apiKeyInput.trim();
     if (!trimmed) return;
     setApiKeyMsg(null);
     invoke<ApiKeyStatus>("set_translate_api_key", {
-      provider: activeProvider,
+      provider: providerOverride ?? onlineProviderChoice,
       apiKey: trimmed,
     })
       .then((st) => {
@@ -2435,10 +2615,10 @@ function SettingsView() {
       });
   };
 
-  const handleDeleteApiKey = () => {
+  const handleDeleteApiKey = (providerOverride?: string) => {
     setApiKeyMsg(null);
     invoke<ApiKeyStatus>("delete_translate_api_key", {
-      provider: activeProvider,
+      provider: providerOverride ?? onlineProviderChoice,
     })
       .then((st) => {
         setApiKeyStatus(st);
@@ -2449,11 +2629,11 @@ function SettingsView() {
       });
   };
 
-  const handleTestProvider = () => {
+  const handleTestProvider = (providerOverride?: string) => {
     setTestingProvider(true);
     setApiKeyMsg(null);
     invoke<TestProviderResult>("test_translate_provider", {
-      provider: activeProvider,
+      provider: providerOverride ?? activeProvider,
       targetLang: tgtLang,
     })
       .then((res) => {
@@ -2519,30 +2699,6 @@ function SettingsView() {
       .catch(() => {});
   };
 
-  const handleToggleTranslate = () => {
-    if (translateStatus?.running) {
-      invoke<TranslateEngineStatus>("stop_live_translate")
-        .then(setTranslateStatus)
-        .catch(() => {});
-    } else {
-      invoke<TranslateEngineStatus>("start_live_translate", {
-        sourceLang: srcLang,
-        targetLang: tgtLang,
-        captureMode,
-        onlineTranslation: activeProvider === "google_cloud" || activeProvider === "gemini",
-        translateProvider: activeProvider,
-        targetPid: captureMode === "app" ? targetPid : null,
-        targetAppName: captureMode === "app" ? targetAppName || null : null,
-      })
-        .then(setTranslateStatus)
-        .catch((err) => {
-          setTranslateStatus((prev) =>
-            prev ? { ...prev, running: false, last_error: String(err) } : prev,
-          );
-        });
-    }
-  };
-
   const handleTestSubtitle = () => {
     invoke<SubtitlePayload>("test_subtitle_overlay", {
       text: testSubText,
@@ -2572,13 +2728,7 @@ function SettingsView() {
     applyVisualCssVars(islandScalePct, clamped);
   };
 
-  const [engineHotkey, setEngineHotkey] = useState<string>(() => {
-    try {
-      return window.localStorage.getItem("nexora-engine-translate-hotkey") || "Ctrl+Shift+T";
-    } catch {
-      return "Ctrl+Shift+T";
-    }
-  });
+  const [, setEngineHotkey] = useState<string>("Ctrl+Shift+T");
   const [capturingEngineHotkey, setCapturingEngineHotkey] = useState(false);
 
   useEffect(() => {
@@ -3539,65 +3689,6 @@ function SettingsView() {
       <p className="settings-section-desc">
         {t(language, "enginesDesc")}
       </p>
-      <div className="engine-card">
-        <div className="engine-card-header">
-          <div>
-            <div className="engine-card-title">{t(language, "sectionLiveTranslate")}</div>
-            <div className="settings-row-desc">{t(language, "liveTranslateDesc")}</div>
-          </div>
-          <span className="engine-version-badge">v1.0.0</span>
-        </div>
-      <div className="settings-row">
-        <span className="settings-row-text">
-          <span>{t(language, "engineStatusLabel")}</span>
-          <span className="settings-row-desc">
-            {translateStatus?.installed && !translateStatus?.downloading && downloadProgress === null
-              ? `${t(language, "engineInstalled")} (${translateStatus.model_size_mb} MB)`
-              : t(language, "engineNotInstalled")}
-          </span>
-        </span>
-        <div className="translate-btn-group">
-          {!(translateStatus?.installed && !translateStatus?.downloading && downloadProgress === null) ? (
-            <button
-              type="button"
-              className="mini-btn primary-btn"
-              onClick={handleDownloadEngine}
-              disabled={translateStatus?.downloading || downloadProgress !== null}
-            >
-              {downloadProgress
-                ? `${t(language, "downloadingEngineBtn")} ${downloadProgress.percent}%`
-                : t(language, "downloadEngineBtn")}
-            </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                className={`mini-btn${translateStatus.running ? " danger-btn" : " primary-btn"}`}
-                onClick={handleToggleTranslate}
-              >
-                {translateStatus.running
-                  ? t(language, "stopTranslateBtn")
-                  : t(language, "startTranslateBtn")}
-              </button>
-              <button
-                type="button"
-                className="mini-btn"
-                onClick={handleDownloadEngine}
-                disabled={translateStatus?.downloading || downloadProgress !== null}
-              >
-                {t(language, "updateEngineBtn")}
-              </button>
-              <button
-                type="button"
-                className="mini-btn"
-                onClick={handleRemoveEngine}
-              >
-                {t(language, "removeEngineBtn")}
-              </button>
-            </>
-          )}
-        </div>
-      </div>
       {downloadProgress && (
         <div className="translate-progress-box">
           <div className="translate-progress-label">
@@ -3615,338 +3706,427 @@ function SettingsView() {
       {translateStatus?.last_error && (
         <div className="translate-error">{translateStatus.last_error}</div>
       )}
-      {translateStatus?.installed && !translateStatus?.downloading && downloadProgress === null && (
-      <>
-      <div className="settings-row">
-        <span className="settings-row-text">
-          <span>{t(language, "audioSourceLabel")}</span>
-          <span className="audio-mode-hint">{t(language, "audioSourceNoMicHint")}</span>
-        </span>
-        <div className="audio-mode-pills">
+      <div className="engines-stack">
+        <div className="engine-card">
           <button
             type="button"
-            className={`audio-mode-pill${captureMode === "system" ? " active" : ""}`}
-            onClick={() => {
-              setCaptureMode("system");
-              try {
-                window.localStorage.setItem("nexora-translate-capture-mode", "system");
-              } catch {
-                // ignore
-              }
-            }}
+            className="engine-card-toggle"
+            aria-expanded={openEngineCard === "local"}
+            onClick={() => setOpenEngineCard((c) => (c === "local" ? null : "local"))}
           >
-            {t(language, "audioSourceSystem")}
-          </button>
-          <button
-            type="button"
-            className={`audio-mode-pill${captureMode === "app" ? " active" : ""}`}
-            onClick={() => {
-              setCaptureMode("app");
-              refreshAudioTargets();
-              try {
-                window.localStorage.setItem("nexora-translate-capture-mode", "app");
-              } catch {
-                // ignore
-              }
-            }}
-          >
-            {t(language, "audioSourceApp")}
-          </button>
-        </div>
-      </div>
-      {captureMode === "app" && (
-        <div className="settings-row">
-          <span className="settings-row-text">
-            <span>{t(language, "targetAppLabel")}</span>
-          </span>
-          <div className="translate-btn-group">
-            <select
-              className="translate-select"
-              value={targetPid ?? ""}
-              onChange={(e) => {
-                const pid = e.target.value ? Number(e.target.value) : null;
-                setTargetPid(pid);
-                const found = audioTargets.find((item) => item.pid === pid);
-                const label = found ? found.title || found.exe_name : "";
-                setTargetAppName(label);
-                try {
-                  if (pid) {
-                    window.localStorage.setItem("nexora-translate-target-pid", String(pid));
-                  }
-                  window.localStorage.setItem("nexora-translate-target-app", label);
-                } catch {
-                  // ignore
-                }
-              }}
-            >
-              {audioTargets.length === 0 && (
-                <option value="">{t(language, "targetAppPlaceholder")}</option>
-              )}
-              {audioTargets.map((item) => (
-                <option key={item.pid} value={item.pid}>
-                  {item.exe_name} — {item.title}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className="mini-btn"
-              onClick={refreshAudioTargets}
-            >
-              {t(language, "refreshAppsBtn")}
-            </button>
-          </div>
-        </div>
-      )}
-      <div className="settings-row">
-        <span className="settings-row-text">
-          <span>{t(language, "whisperModelLabel")}</span>
-          <span className="audio-mode-hint">{t(language, "whisperModelDesc")}</span>
-        </span>
-        <select
-          className="translate-select"
-          value={activeWhisperModel}
-          onChange={(e) => {
-            persistTranslateSettings({ whisper_model: e.target.value });
-          }}
-        >
-          <option value="ggml-tiny.en.bin">ggml-tiny.en (~74 MB, English fast)</option>
-          <option value="ggml-base.en.bin">ggml-base.en (~141 MB, English accurate)</option>
-          <option value="ggml-tiny.bin">ggml-tiny (~74 MB, Multilingual fast)</option>
-          <option value="ggml-large-v3-turbo-q5_0.bin">ggml-large-v3-turbo-q5_0 (~547 MB, Multilingual HQ)</option>
-        </select>
-      </div>
-      <div className="settings-row">
-        <span className="settings-row-text">
-          <span>{t(language, "onlineTranslationLabel")}</span>
-          <span className="audio-mode-hint">{t(language, "onlineTranslationDesc")}</span>
-        </span>
-        <select
-          className="translate-select"
-          value={activeProvider}
-          onChange={(e) => {
-            const nextProvider = e.target.value;
-            const isCloud = nextProvider === "google_cloud" || nextProvider === "gemini";
-            if (isCloud) {
-              const consented = window.localStorage.getItem("nexora-cloud-translate-consent") === "1";
-              if (!consented) {
-                if (!window.confirm(t(language, "onlineTranslationConsent"))) {
-                  return;
-                }
-                try {
-                  window.localStorage.setItem("nexora-cloud-translate-consent", "1");
-                } catch {
-                  // ignore
-                }
-              }
-            }
-            setApiKeyMsg(null);
-            persistTranslateSettings({
-              translate_provider: nextProvider,
-              online_translation: isCloud,
-            });
-          }}
-        >
-          <option value="none">{t(language, "providerNone")}</option>
-          <option value="google_cloud">{t(language, "providerGoogleCloud")}</option>
-          <option value="gemini">{t(language, "providerGemini")}</option>
-          <option value="local">{t(language, "providerLocal")}</option>
-        </select>
-      </div>
-      {activeProvider === "gemini" && (
-        <div className="translate-notice-box">
-          {t(language, "geminiFreeTierNotice")}
-        </div>
-      )}
-      {activeProvider === "local" && (
-        <>
-          <div className="translate-ok-box">
-            {t(language, "localProviderNotice")}
-          </div>
-          <div className="settings-row">
-            <span className="settings-row-text">
-              <span>{t(language, "localModelLabel")}</span>
-              <span className="audio-mode-hint">
-                {translateStatus?.local_model_installed
-                  ? t(language, "localModelInstalled")
-                  : t(language, "localModelNotInstalled")}
+            <div>
+              <div className="engine-card-title">{t(language, "localEngineTitle")}</div>
+              <div className="settings-row-desc">{t(language, "localEngineDesc")}</div>
+            </div>
+            <div className="engine-card-header-right">
+              <span className="engine-version-badge">
+                {translateStatus?.installed && translateStatus?.local_model_installed
+                  ? t(language, "engineInstalled")
+                  : "Offline"}
               </span>
-            </span>
-            <div className="translate-btn-group">
-              {!translateStatus?.local_model_installed ? (
-                <button
-                  type="button"
-                  className="mini-btn primary-btn"
-                  onClick={handleDownloadLocalModel}
-                  disabled={translateStatus?.downloading || downloadProgress !== null}
+              <span className={`engine-chevron${openEngineCard === "local" ? " open" : ""}`}>▾</span>
+            </div>
+          </button>
+          {openEngineCard === "local" && (
+            <div className="engine-card-body">
+              <div className="settings-row">
+                <span className="settings-row-text">
+                  <span>{t(language, "engineStatusLabel")}</span>
+                  <span className="settings-row-desc">
+                    {translateStatus?.installed
+                      ? `${t(language, "engineInstalled")} (${translateStatus.model_size_mb} MB)`
+                      : t(language, "engineNotInstalled")}
+                  </span>
+                </span>
+                <div className="translate-btn-group">
+                  {!translateStatus?.installed ? (
+                    <button
+                      type="button"
+                      className="mini-btn primary-btn"
+                      onClick={handleDownloadEngine}
+                      disabled={translateStatus?.downloading || downloadProgress !== null}
+                    >
+                      {t(language, "downloadEngineBtn")}
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="mini-btn"
+                        onClick={handleDownloadEngine}
+                        disabled={translateStatus?.downloading || downloadProgress !== null}
+                      >
+                        {t(language, "updateEngineBtn")}
+                      </button>
+                      <button
+                        type="button"
+                        className="mini-btn danger-btn"
+                        onClick={handleRemoveEngine}
+                      >
+                        {t(language, "removeEngineBtn")}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="settings-row">
+                <span className="settings-row-text">
+                  <span>{t(language, "localModelLabel")}</span>
+                  <span className="audio-mode-hint">
+                    {translateStatus?.local_model_installed
+                      ? t(language, "localModelInstalled")
+                      : t(language, "localModelNotInstalled")}
+                  </span>
+                </span>
+                <div className="translate-btn-group">
+                  {!translateStatus?.local_model_installed ? (
+                    <button
+                      type="button"
+                      className="mini-btn primary-btn"
+                      onClick={handleDownloadLocalModel}
+                      disabled={translateStatus?.downloading || downloadProgress !== null}
+                    >
+                      {t(language, "downloadLocalModelBtn")}
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="mini-btn"
+                        onClick={() => handleTestProvider("local")}
+                        disabled={testingProvider}
+                      >
+                        {testingProvider
+                          ? t(language, "testingConnectionBtn")
+                          : t(language, "testConnectionBtn")}
+                      </button>
+                      <button
+                        type="button"
+                        className="mini-btn danger-btn"
+                        onClick={handleRemoveLocalModel}
+                      >
+                        {t(language, "removeEngineBtn")}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+              {apiKeyMsg && (
+                <div className={apiKeyMsg.ok ? "translate-ok-box" : "translate-error"}>
+                  {apiKeyMsg.text}
+                </div>
+              )}
+              <div className="settings-row">
+                <span className="settings-row-text">
+                  <span>{t(language, "whisperModelLabel")}</span>
+                  <span className="audio-mode-hint">{t(language, "whisperModelDesc")}</span>
+                </span>
+                <select
+                  className="translate-select"
+                  value={activeWhisperModel}
+                  onChange={(e) => persistTranslateSettings({ whisper_model: e.target.value })}
                 >
-                  {t(language, "downloadLocalModelBtn")}
-                </button>
-              ) : (
-                <>
+                  <option value="ggml-tiny.en.bin">ggml-tiny.en (~74 MB, English fast)</option>
+                  <option value="ggml-base.en.bin">ggml-base.en (~141 MB, English accurate)</option>
+                  <option value="ggml-tiny.bin">ggml-tiny (~74 MB, Multilingual fast)</option>
+                  <option value="ggml-large-v3-turbo-q5_0.bin">ggml-large-v3-turbo-q5_0 (~547 MB, Multilingual HQ)</option>
+                </select>
+              </div>
+              <div className="settings-row">
+                <span className="settings-row-text">
+                  <span>{t(language, "audioSourceLabel")}</span>
+                  <span className="audio-mode-hint">{t(language, "audioSourceNoMicHint")}</span>
+                </span>
+                <div className="audio-mode-pills">
+                  <button
+                    type="button"
+                    className={`audio-mode-pill${captureMode === "system" ? " active" : ""}`}
+                    onClick={() => {
+                      setCaptureMode("system");
+                      try { window.localStorage.setItem("nexora-translate-capture-mode", "system"); } catch {}
+                    }}
+                  >
+                    {t(language, "audioSourceSystem")}
+                  </button>
+                  <button
+                    type="button"
+                    className={`audio-mode-pill${captureMode === "app" ? " active" : ""}`}
+                    onClick={() => {
+                      setCaptureMode("app");
+                      refreshAudioTargets();
+                      try { window.localStorage.setItem("nexora-translate-capture-mode", "app"); } catch {}
+                    }}
+                  >
+                    {t(language, "audioSourceApp")}
+                  </button>
+                </div>
+              </div>
+              {captureMode === "app" && (
+                <div className="settings-row">
+                  <span className="settings-row-text"><span>{t(language, "targetAppLabel")}</span></span>
+                  <div className="translate-btn-group">
+                    <select
+                      className="translate-select"
+                      value={targetPid ?? ""}
+                      onChange={(e) => {
+                        const pid = e.target.value ? Number(e.target.value) : null;
+                        setTargetPid(pid);
+                        const found = audioTargets.find((item) => item.pid === pid);
+                        const label = found ? found.title || found.exe_name : "";
+                        setTargetAppName(label);
+                        try {
+                          if (pid) window.localStorage.setItem("nexora-translate-target-pid", String(pid));
+                          window.localStorage.setItem("nexora-translate-target-app", label);
+                        } catch {}
+                      }}
+                    >
+                      {audioTargets.length === 0 && (
+                        <option value="">{t(language, "targetAppPlaceholder")}</option>
+                      )}
+                      {audioTargets.map((item) => (
+                        <option key={item.pid} value={item.pid}>
+                          {item.exe_name} — {item.title}
+                        </option>
+                      ))}
+                    </select>
+                    <button type="button" className="mini-btn" onClick={refreshAudioTargets}>
+                      {t(language, "refreshAppsBtn")}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {translateStatus?.installed && (
+                <div className="settings-row">
+                  <span className="settings-row-text">
+                    <span>{t(language, "localEngineTitle")}</span>
+                  </span>
+                  <button
+                    type="button"
+                    className={`mini-btn${translateStatus.running && (translateStatus.translate_provider === "local" || translateStatus.translate_provider === "none") ? " danger-btn" : " primary-btn"}`}
+                    onClick={() => handleToggleEngineByMode("local")}
+                  >
+                    {translateStatus.running && (translateStatus.translate_provider === "local" || translateStatus.translate_provider === "none")
+                      ? t(language, "stopLocalTranslateBtn")
+                      : t(language, "startLocalTranslateBtn")}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="engine-card">
+          <button
+            type="button"
+            className="engine-card-toggle"
+            aria-expanded={openEngineCard === "online"}
+            onClick={() => setOpenEngineCard((c) => (c === "online" ? null : "online"))}
+          >
+            <div>
+              <div className="engine-card-title">{t(language, "onlineEngineTitle")}</div>
+              <div className="settings-row-desc">{t(language, "onlineEngineDesc")}</div>
+            </div>
+            <div className="engine-card-header-right">
+              <span className="engine-version-badge">Cloud</span>
+              <span className={`engine-chevron${openEngineCard === "online" ? " open" : ""}`}>▾</span>
+            </div>
+          </button>
+          {openEngineCard === "online" && (
+            <div className="engine-card-body">
+              {!translateStatus?.installed && (
+                <div className="settings-row">
+                  <span className="settings-row-text">
+                    <span>{t(language, "engineStatusLabel")}</span>
+                    <span className="settings-row-desc">{t(language, "engineNotInstalled")}</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="mini-btn primary-btn"
+                    onClick={handleDownloadEngine}
+                    disabled={translateStatus?.downloading || downloadProgress !== null}
+                  >
+                    {t(language, "downloadEngineBtn")}
+                  </button>
+                </div>
+              )}
+              <div className="settings-row">
+                <span className="settings-row-text">
+                  <span>{t(language, "onlineTranslationLabel")}</span>
+                  <span className="audio-mode-hint">{t(language, "onlineTranslationDesc")}</span>
+                </span>
+                <select
+                  className="translate-select"
+                  value={onlineProviderChoice}
+                  onChange={(e) => {
+                    const nextProv = e.target.value;
+                    setOnlineProviderChoice(nextProv);
+                    setApiKeyMsg(null);
+                    try {
+                      window.localStorage.setItem("nexora-online-provider", nextProv);
+                    } catch {}
+                    persistTranslateSettings({
+                      translate_provider: nextProv,
+                      online_translation: true,
+                    });
+                  }}
+                >
+                  <option value="google_free">{t(language, "providerGoogleFree")}</option>
+                  <option value="google_cloud">{t(language, "providerGoogleCloud")}</option>
+                  <option value="gemini">{t(language, "providerGemini")}</option>
+                </select>
+              </div>
+              {onlineProviderChoice === "gemini" && (
+                <div className="translate-notice-box">
+                  {t(language, "geminiFreeTierNotice")}
+                </div>
+              )}
+              {onlineProviderChoice === "google_free" && (
+                <div className="settings-row">
+                  <span className="settings-row-text">
+                    <span>{t(language, "providerGoogleFree")}</span>
+                  </span>
                   <button
                     type="button"
                     className="mini-btn"
-                    onClick={handleTestProvider}
+                    onClick={() => handleTestProvider("google_free")}
                     disabled={testingProvider}
                   >
                     {testingProvider
                       ? t(language, "testingConnectionBtn")
                       : t(language, "testConnectionBtn")}
                   </button>
+                </div>
+              )}
+              {(onlineProviderChoice === "google_cloud" || onlineProviderChoice === "gemini") && (
+                <div className="settings-row">
+                  <span className="settings-row-text">
+                    <span>{t(language, "apiKeyLabel")}</span>
+                    <span className="audio-mode-hint">
+                      {(onlineProviderChoice === "google_cloud" ? apiKeyStatus.google_cloud : apiKeyStatus.gemini)
+                        ? t(language, "apiKeySaved")
+                        : t(language, "apiKeyMissing")}
+                    </span>
+                  </span>
+                  <div className="translate-btn-group">
+                    <input
+                      type="password"
+                      className="translate-input"
+                      placeholder={t(language, "apiKeyPlaceholder")}
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
+                      autoComplete="off"
+                    />
+                    <button
+                      type="button"
+                      className="mini-btn primary-btn"
+                      onClick={() => handleSaveApiKey(onlineProviderChoice)}
+                      disabled={!apiKeyInput.trim()}
+                    >
+                      {t(language, "saveApiKeyBtn")}
+                    </button>
+                    <button
+                      type="button"
+                      className="mini-btn"
+                      onClick={() => handleTestProvider(onlineProviderChoice)}
+                      disabled={testingProvider}
+                    >
+                      {testingProvider
+                        ? t(language, "testingConnectionBtn")
+                        : t(language, "testConnectionBtn")}
+                    </button>
+                    {(onlineProviderChoice === "google_cloud" ? apiKeyStatus.google_cloud : apiKeyStatus.gemini) && (
+                      <button
+                        type="button"
+                        className="mini-btn danger-btn"
+                        onClick={() => handleDeleteApiKey(onlineProviderChoice)}
+                      >
+                        {t(language, "deleteApiKeyBtn")}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+              {apiKeyMsg && (
+                <div className={apiKeyMsg.ok ? "translate-ok-box" : "translate-error"}>
+                  {apiKeyMsg.text}
+                </div>
+              )}
+              <div className="settings-row">
+                <span className="settings-row-text">
+                  <span>{t(language, "sourceLangLabel")}</span>
+                  <span className="audio-mode-hint">{t(language, "sourceLangHint")}</span>
+                </span>
+                <select
+                  className="translate-select"
+                  value={srcLang}
+                  onChange={(e) => {
+                    setSrcLang(e.target.value);
+                    persistTranslateSettings({ translate_source_lang: e.target.value });
+                  }}
+                >
+                  <option value="en">English (recommended)</option>
+                  <option value="fa">فارسی (Persian)</option>
+                  <option value="ja">Japanese</option>
+                  <option value="ru">Russian</option>
+                  <option value="de">German</option>
+                  <option value="fr">French</option>
+                  <option value="auto">Auto Detect (slower)</option>
+                </select>
+              </div>
+              <div className="settings-row">
+                <span className="settings-row-text">
+                  <span>{t(language, "targetLangLabel")}</span>
+                </span>
+                <select
+                  className="translate-select"
+                  value={tgtLang}
+                  onChange={(e) => {
+                    setTgtLang(e.target.value);
+                    persistTranslateSettings({ translate_target_lang: e.target.value });
+                  }}
+                >
+                  <option value="fa">فارسی (Persian)</option>
+                  <option value="en">English</option>
+                  <option value="ar">العربية (Arabic)</option>
+                  <option value="tr">Türkçe (Turkish)</option>
+                </select>
+              </div>
+              <div className="settings-row">
+                <span className="settings-row-text">
+                  <span>{t(language, "testSubtitleLabel")}</span>
+                </span>
+                <div className="translate-btn-group">
+                  <input
+                    type="text"
+                    className="translate-input"
+                    value={testSubText}
+                    onChange={(e) => setTestSubText(e.target.value)}
+                  />
+                  <button type="button" className="mini-btn" onClick={handleTestSubtitle}>
+                    {t(language, "testSubtitleBtn")}
+                  </button>
+                </div>
+              </div>
+              {translateStatus?.installed && (
+                <div className="settings-row">
+                  <span className="settings-row-text">
+                    <span>{t(language, "onlineEngineTitle")}</span>
+                  </span>
                   <button
                     type="button"
-                    className="mini-btn danger-btn"
-                    onClick={handleRemoveLocalModel}
+                    className={`mini-btn${translateStatus.running && translateStatus.translate_provider !== "local" && translateStatus.translate_provider !== "none" ? " danger-btn" : " primary-btn"}`}
+                    onClick={() => handleToggleEngineByMode("online")}
                   >
-                    {t(language, "removeEngineBtn")}
+                    {translateStatus.running && translateStatus.translate_provider !== "local" && translateStatus.translate_provider !== "none"
+                      ? t(language, "stopOnlineTranslateBtn")
+                      : t(language, "startOnlineTranslateBtn")}
                   </button>
-                </>
+                </div>
               )}
             </div>
-          </div>
-          {apiKeyMsg && (
-            <div className={apiKeyMsg.ok ? "translate-ok-box" : "translate-error"}>
-              {apiKeyMsg.text}
-            </div>
           )}
-        </>
-      )}
-      {(activeProvider === "google_cloud" || activeProvider === "gemini") && (
-        <>
-          <div className="settings-row">
-            <span className="settings-row-text">
-              <span>{t(language, "apiKeyLabel")}</span>
-              <span className="audio-mode-hint">
-                {(activeProvider === "google_cloud" ? apiKeyStatus.google_cloud : apiKeyStatus.gemini)
-                  ? t(language, "apiKeySaved")
-                  : t(language, "apiKeyMissing")}
-              </span>
-            </span>
-            <div className="translate-btn-group">
-              <input
-                type="password"
-                className="translate-input"
-                placeholder={t(language, "apiKeyPlaceholder")}
-                value={apiKeyInput}
-                onChange={(e) => setApiKeyInput(e.target.value)}
-                autoComplete="off"
-              />
-              <button
-                type="button"
-                className="mini-btn primary-btn"
-                onClick={handleSaveApiKey}
-                disabled={!apiKeyInput.trim()}
-              >
-                {t(language, "saveApiKeyBtn")}
-              </button>
-              <button
-                type="button"
-                className="mini-btn"
-                onClick={handleTestProvider}
-                disabled={testingProvider}
-              >
-                {testingProvider
-                  ? t(language, "testingConnectionBtn")
-                  : t(language, "testConnectionBtn")}
-              </button>
-              {(activeProvider === "google_cloud" ? apiKeyStatus.google_cloud : apiKeyStatus.gemini) && (
-                <button
-                  type="button"
-                  className="mini-btn danger-btn"
-                  onClick={handleDeleteApiKey}
-                >
-                  {t(language, "deleteApiKeyBtn")}
-                </button>
-              )}
-            </div>
-          </div>
-          {apiKeyMsg && (
-            <div className={apiKeyMsg.ok ? "translate-ok-box" : "translate-error"}>
-              {apiKeyMsg.text}
-            </div>
-          )}
-        </>
-      )}
-      <div className="settings-row">
-        <span className="settings-row-text">
-          <span>{t(language, "sourceLangLabel")}</span>
-          <span className="audio-mode-hint">{t(language, "sourceLangHint")}</span>
-        </span>
-        <select
-          className="translate-select"
-          value={srcLang}
-          onChange={(e) => {
-            setSrcLang(e.target.value);
-            persistTranslateSettings({ translate_source_lang: e.target.value });
-          }}
-        >
-          <option value="en">English (recommended)</option>
-          <option value="fa">فارسی (Persian)</option>
-          <option value="ja">Japanese</option>
-          <option value="ru">Russian</option>
-          <option value="de">German</option>
-          <option value="fr">French</option>
-          <option value="auto">Auto Detect (slower)</option>
-        </select>
-      </div>
-      <div className="settings-row">
-        <span className="settings-row-text">
-          <span>{t(language, "targetLangLabel")}</span>
-        </span>
-        <select
-          className="translate-select"
-          value={tgtLang}
-          onChange={(e) => {
-            setTgtLang(e.target.value);
-            persistTranslateSettings({ translate_target_lang: e.target.value });
-          }}
-        >
-          <option value="fa">فارسی (Persian)</option>
-          <option value="en">English</option>
-          <option value="ar">العربية (Arabic)</option>
-          <option value="tr">Türkçe (Turkish)</option>
-        </select>
-      </div>
-      <div className="settings-row">
-        <span className="settings-row-text">
-          <span>{t(language, "testSubtitleLabel")}</span>
-        </span>
-        <div className="translate-btn-group">
-          <input
-            type="text"
-            className="translate-input"
-            value={testSubText}
-            onChange={(e) => setTestSubText(e.target.value)}
-          />
-          <button
-            type="button"
-            className="mini-btn"
-            onClick={handleTestSubtitle}
-          >
-            {t(language, "testSubtitleBtn")}
-          </button>
         </div>
       </div>
-      <div className="settings-row">
-        <span className="settings-row-text">
-          <span>{t(language, "engineShortcutLabel")}</span>
-        </span>
-        <div className="translate-btn-group">
-          <span className="settings-slider-value">{engineHotkey}</span>
-          <button
-            type="button"
-            className="mini-btn"
-            onClick={() => setCapturingEngineHotkey((v) => !v)}
-          >
-            {capturingEngineHotkey ? "..." : t(language, "changeHotkey")}
-          </button>
-        </div>
-      </div>
-      </>
-      )}
-      </div>
-
         </>
       )}
       {section === "updates" && (

@@ -750,7 +750,8 @@ pub fn translate_with_provider(
 ) -> Result<String, crate::translate_provider::TranslateError> {
     use crate::translate_provider::{
         translate_with_retry_and_fallback, GeminiTranslateProvider, GoogleCloudTranslateProvider,
-        LocalTranslateProvider, TranslateError, TranslateProviderId, TranslateRequest,
+        GoogleFreeTranslateProvider, LocalTranslateProvider, TranslateError, TranslateProviderId,
+        TranslateRequest,
     };
     let clean = text.trim();
     if clean.is_empty() {
@@ -772,6 +773,10 @@ pub fn translate_with_provider(
     };
     match provider_id {
         TranslateProviderId::None => Ok(clean.to_string()),
+        TranslateProviderId::GoogleFree => {
+            let provider = GoogleFreeTranslateProvider;
+            translate_with_retry_and_fallback(&provider, None, &req)
+        }
         TranslateProviderId::GoogleCloud => {
             let key = api_key
                 .filter(|k| !k.trim().is_empty())
@@ -1327,14 +1332,25 @@ fn run_wasapi_loopback_worker(
         Mutex::new((None::<(String, bool, u64)>, false)),
         std::sync::Condvar::new(),
     ));
-    let latest_gen = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let latest_translate_gen = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let last_translated_text = std::sync::Arc::new(Mutex::new(String::new()));
 
     let text_slot_rx = std::sync::Arc::clone(&text_slot);
-    let latest_gen_tr = std::sync::Arc::clone(&latest_gen);
+    let latest_gen_tr = std::sync::Arc::clone(&latest_translate_gen);
+    let last_tr_writer = std::sync::Arc::clone(&last_translated_text);
     let app_translator = app.clone();
     let src_for_tr = source_lang.to_string();
     let tgt_for_tr = target_lang.to_string();
     let translator_handle = std::thread::spawn(move || {
+        // Pre-warm local Nexora-MT v1 engine into RAM so first sentence has zero cold load.
+        let local_path = engine_dir(&app_translator)
+            .join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME);
+        if provider_id == crate::translate_provider::TranslateProviderId::Local
+            && local_path.exists()
+        {
+            let _ = crate::nexora_mt::get_or_load_engine(&local_path);
+        }
+
         let mut cache = TranslationCache::new(TRANSLATION_CACHE_MAX_ENTRIES);
         let mut rolling_context: VecDeque<String> = VecDeque::new();
         let mut last_remote_call = Instant::now()
@@ -1355,7 +1371,7 @@ fn run_wasapi_loopback_worker(
             let Some((text, finalized, gen_id)) = item else {
                 continue;
             };
-            // Latest-wins: drop stale work before making an HTTP request.
+            // Latest-wins: skip only if a newer translation job is already queued.
             if gen_id < latest_gen_tr.load(Ordering::SeqCst) {
                 continue;
             }
@@ -1367,27 +1383,28 @@ fn run_wasapi_loopback_worker(
                 if let Some(cached) = cache.get(&text, provider_id, &tgt_for_tr) {
                     Ok(cached)
                 } else {
-                    let since = last_remote_call.elapsed();
-                    if since < Duration::from_millis(TRANSLATION_MIN_INTERVAL_MS) {
-                        std::thread::sleep(
-                            Duration::from_millis(TRANSLATION_MIN_INTERVAL_MS) - since,
-                        );
+                    // Local Nexora-MT v1 has zero network rate-limit — never sleep before calling it.
+                    if provider_id.is_cloud() {
+                        let since = last_remote_call.elapsed();
+                        if since < Duration::from_millis(TRANSLATION_MIN_INTERVAL_MS) {
+                            std::thread::sleep(
+                                Duration::from_millis(TRANSLATION_MIN_INTERVAL_MS) - since,
+                            );
+                        }
+                        if !RUNNING.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        if gen_id < latest_gen_tr.load(Ordering::SeqCst) {
+                            continue;
+                        }
+                        last_remote_call = Instant::now();
                     }
-                    if !RUNNING.load(Ordering::SeqCst) {
-                        break;
-                    }
-                    if gen_id < latest_gen_tr.load(Ordering::SeqCst) {
-                        continue;
-                    }
-                    last_remote_call = Instant::now();
                     let api_key = if provider_id.requires_api_key() {
                         crate::translate_secrets::get_api_key(provider_id)
                     } else {
                         None
                     };
                     let ctx_vec: Vec<String> = rolling_context.iter().cloned().collect();
-                    let local_path = engine_dir(&app_translator)
-                        .join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME);
                     let res = translate_with_provider(
                         provider_id,
                         api_key.as_deref(),
@@ -1403,13 +1420,15 @@ fn run_wasapi_loopback_worker(
                     res
                 };
 
-            // Latest-wins: if a newer subtitle superseded this one while in flight, drop it.
-            if !RUNNING.load(Ordering::SeqCst) || gen_id < latest_gen_tr.load(Ordering::SeqCst) {
+            if !RUNNING.load(Ordering::SeqCst) {
                 continue;
             }
 
             match outcome {
                 Ok(translated) => {
+                    if let Ok(mut guard) = last_tr_writer.lock() {
+                        *guard = translated.clone();
+                    }
                     if finalized {
                         if rolling_context.len()
                             >= crate::translate_provider::MAX_LLM_CONTEXT_SENTENCES
@@ -1447,7 +1466,8 @@ fn run_wasapi_loopback_worker(
 
     let audio_slot_rx = std::sync::Arc::clone(&audio_slot);
     let text_slot_tx = std::sync::Arc::clone(&text_slot);
-    let latest_gen_whisper = std::sync::Arc::clone(&latest_gen);
+    let latest_gen_whisper = std::sync::Arc::clone(&latest_translate_gen);
+    let last_tr_reader = std::sync::Arc::clone(&last_translated_text);
     let app_whisper = app.clone();
     let tgt_for_whisper = target_lang.to_string();
     let server_bin_opt = find_whisper_server(dir);
@@ -1464,6 +1484,8 @@ fn run_wasapi_loopback_worker(
             .as_deref()
             .and_then(|sb| ResidentWhisperServer::start(sb, &model_owned, &src_owned, threads));
         let mut stability = SubtitleStabilityTracker::new();
+        let mut last_queued_norm = String::new();
+        let mut last_queued_words = 0usize;
 
         let (lock, cvar) = &*audio_slot_rx;
         loop {
@@ -1496,8 +1518,6 @@ fn run_wasapi_loopback_worker(
 
             if let Some(text) = text_opt {
                 if !text.is_empty() && RUNNING.load(Ordering::SeqCst) {
-                    let gen_id = latest_gen_whisper.fetch_add(1, Ordering::SeqCst) + 1;
-                    // Always display partial `original` immediately.
                     if provider_id == crate::translate_provider::TranslateProviderId::None {
                         emit_subtitle(
                             &app_whisper,
@@ -1510,17 +1530,38 @@ fn run_wasapi_loopback_worker(
                             },
                         );
                     } else {
+                        // Keep displaying the last completed translation while updating `original` live
+                        // so the overlay never flashes stuck on "Translating...".
+                        let prev_tr = last_tr_reader.lock().map(|g| g.clone()).unwrap_or_default();
+                        let status = if prev_tr.is_empty() { "pending" } else { "ok" };
                         emit_subtitle(
                             &app_whisper,
                             &SubtitlePayload {
                                 original: text.clone(),
-                                translated: String::new(),
+                                translated: prev_tr,
                                 target_lang: tgt_for_whisper.clone(),
                                 active: true,
-                                translation_status: "pending".to_string(),
+                                translation_status: status.to_string(),
                             },
                         );
-                        if stability.observe(&text, finalized) {
+
+                        let norm = normalize_cache_text(&text);
+                        let word_count = text.split_whitespace().count();
+                        let should_queue = if provider_id
+                            == crate::translate_provider::TranslateProviderId::Local
+                        {
+                            !norm.is_empty() && norm != last_queued_norm
+                        } else {
+                            stability.observe(&text, finalized)
+                                || (!norm.is_empty()
+                                    && norm != last_queued_norm
+                                    && word_count >= last_queued_words.saturating_add(2))
+                        };
+
+                        if should_queue {
+                            last_queued_norm = norm;
+                            last_queued_words = if finalized { 0 } else { word_count };
+                            let gen_id = latest_gen_whisper.fetch_add(1, Ordering::SeqCst) + 1;
                             let (tlock, tcvar) = &*text_slot_tx;
                             let mut tg = tlock.lock().unwrap_or_else(|e| e.into_inner());
                             tg.0 = Some((text, finalized, gen_id));

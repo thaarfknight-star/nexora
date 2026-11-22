@@ -17,6 +17,36 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.19",
+    date: "2026-11-22",
+    title: {
+      en: "Real-Time Local Translation Fix, Separate Collapsible Engines, Island Engines Tab & 5s Auto-Collapse",
+      fa: "ترجمه لحظه‌ای واقعی موتور محلی، جداسازی و بازوبسته‌شدن موتورها، تب Engines جزیره و جمع‌شدن ۵ ثانیه‌ای",
+    },
+    features: {
+      en: [
+        "Split Local Offline Translate and Online Live Translate into two independent collapsible cards in Settings → Engines.",
+        "Added a conditional Engines tab to the Dynamic Island (shown only when at least one engine is downloaded).",
+        "Restored Google Translate (Free, no API key) alongside Google Cloud Translation v2 and Gemini 2.5 Flash-Lite.",
+        "Changed all 7 theme hover animations to play once smoothly instead of looping, and added 5-second inactivity auto-collapse.",
+      ],
+      fa: [
+        "جداسازی کامل موتور ترجمه آفلاین محلی و موتور ترجمه آنلاین در دو کارت مستقل و قابل باز و بسته شدن در تنظیمات.",
+        "افزودن تب «موتورها» به داینامیک آیلند (فقط زمانی که حداقل یک موتور دانلود شده باشد).",
+        "بازگرداندن حالت Google Translate رایگان (بدون کلید API) در کنار Google Cloud و Gemini.",
+        "اجرای نرم و یک‌باره انیمیشن‌های هاور هر ۷ تم به‌جای تکرار مداوم، و جمع‌شدن خودکار جزیره پس از ۵ ثانیه بدون کلیک یا هاور.",
+      ],
+    },
+    fixes: {
+      en: [
+        "Fixed live subtitles getting stuck on 'Translating...' during continuous speech and parallelized Nexora-MT v1 CPU decoding for instant real-time output.",
+      ],
+      fa: [
+        "رفع کامل گیر کردن زیرنویس محلی و آنلاین روی «در حال ترجمه...» در گفتار پیوسته و چندترد کردن موتور Nexora-MT v1 برای ترجمه در لحظه.",
+      ],
+    },
+  },
+  {
     version: "0.2.18",
     date: "2026-11-22",
     title: {
