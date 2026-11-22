@@ -46,3 +46,12 @@ taskbar is that branch's job — the watchdog only restores it.
 - `cargo test` covers the watchdog logic that can run without Windows
   (argument parsing, dead-parent exit, idempotent start/stop). The real
   Win32 paths are only exercised by the tests above on Windows.
+
+## Test 4 — Installing a new version over a running Nexora (with & without Live Translate)
+
+1. Run the installed Nexora build (both without Live Translate and with Live Translate actively running so `whisper-server.exe` is alive).
+2. Trigger either an in-app update (`Settings → Updates → Download & Install`) or run `Nexora_<new>_x64-setup.exe` manually while Nexora is still running.
+3. Expected:
+   - `prepare_for_update_exit` logs `restore_taskbar → stop_watchdog → shutdown_translator → exit` in `nexora-diagnostics.log`.
+   - `NSIS_HOOK_PREINSTALL` (`src-tauri/windows/hooks.nsh`) terminates any remaining `whisper-server.exe` and `nexora.exe` before `CheckIfAppIsRunning`.
+   - Setup completes without `"Failed to kill Nexora. Please close it first then try again"`, the taskbar remains visible throughout, and the new version starts cleanly.

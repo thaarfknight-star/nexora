@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.15] - 2026-11-22
+
+### What'''s New
+- **NSIS Pre-Install Process Cleanup Hook**: Added `src-tauri/windows/hooks.nsh` (`NSIS_HOOK_PREINSTALL`, which executes directly before Tauri v2'''s `CheckIfAppIsRunning`) to cleanly terminate lingering `whisper-server.exe`, `whisper-cli.exe`, and `nexora.exe` processes before overwriting files.
+- **Deterministic Diagnostics-Logged Update Exit**: Added `updater::prepare_for_update_exit` (restore taskbar → stop watchdog with 2 s bounded wait → synchronously kill `whisper-server.exe` → log exit), invoked across in-app updates, tray quit, and clean exit.
+
+### Bug Fixes
+- Fixed NSIS aborting with `Failed to kill Nexora. Please close it first then try again` when updating in-app or running Setup over a running Nexora instance.
+
 ## [0.2.14] - 2026-11-22
 
 ### What'''s New

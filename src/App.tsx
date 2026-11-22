@@ -924,7 +924,7 @@ function IslandApp() {
           } catch {
             // ignore
           }
-          await invoke("stop_live_translate").catch(() => {});
+          await invoke("prepare_for_update_exit").catch(() => {});
           await update.downloadAndInstall();
         } catch {
           // silent on background startup check
@@ -2771,7 +2771,7 @@ function SettingsView() {
         } catch {
           // ignore
         }
-        await invoke("stop_live_translate").catch(() => {});
+        await invoke("prepare_for_update_exit").catch(() => {});
         let downloaded = 0;
         let total = 0;
         await update.downloadAndInstall((ev) => {
