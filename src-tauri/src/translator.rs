@@ -400,12 +400,10 @@ pub fn parse_clients5_translate_response(raw: &str) -> Option<String> {
     let val: serde_json::Value = serde_json::from_str(raw).ok()?;
     let arr = val.as_array()?;
     let first = arr.first()?;
-    let text = if let Some(s) = first.as_str() {
-        s.to_string()
-    } else if let Some(inner) = first.as_array() {
-        inner.first().and_then(|v| v.as_str())?.to_string()
-    } else {
-        return None;
+    let text = match first {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(inner) => inner.first()?.as_str()?.to_string(),
+        _ => return None,
     };
     let trimmed = text.trim().to_string();
     if trimmed.is_empty() {
