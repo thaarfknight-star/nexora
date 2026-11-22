@@ -173,6 +173,12 @@ def main() -> None:
 
         if notes:
             feed["notes"] = notes
+        feed["pub_date"] = (
+            datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
         feed_path.write_text(
             json.dumps(feed, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
@@ -222,6 +228,18 @@ def main() -> None:
             notes_file.write_text(notes, encoding="utf-8")
             edit_cmd.extend(["--notes-file", str(notes_file)])
         run(*edit_cmd)
+        # Best-effort: also attach update-feed.json to the versioned tag release (ReChat convention)
+        run(
+            "gh",
+            "release",
+            "upload",
+            TAG,
+            str(feed_path),
+            "--repo",
+            REPO,
+            "--clobber",
+            check=False,
+        )
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+import { check as checkPluginUpdate } from "@tauri-apps/plugin-updater";
 import { latestReleaseNote } from "./releaseNotes";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -911,6 +912,27 @@ function IslandApp() {
     invoke<IslandState>("get_island_state")
       .then(setState)
       .catch(() => {});
+    // Silent startup update check via official @tauri-apps/plugin-updater (ReChat flow)
+    if (window.localStorage.getItem("nexora-auto-update") !== "0") {
+      void (async () => {
+        try {
+          const update = await checkPluginUpdate();
+          if (!update) return;
+          const notes = update.body ? "\n\n" + update.body : "";
+          const promptText = t(window.localStorage.getItem("nexora-language") === "fa" ? "fa" : "en", "updateConfirmPrompt").replace("{v}", update.version) + notes;
+          if (!window.confirm(promptText)) return;
+          try {
+            window.localStorage.setItem("nexora-show-whats-new", "1");
+          } catch {
+            // ignore
+          }
+          await invoke("stop_live_translate").catch(() => {});
+          await update.downloadAndInstall();
+        } catch {
+          // silent on background startup check
+        }
+      })();
+    }
     invoke<UpdateInfo>("check_updates")
       .then((info) => {
         try {
@@ -2700,6 +2722,9 @@ function SettingsView() {
     }
   };
 
+  const [autoUpdate, setAutoUpdate] = useState<boolean>(
+    () => window.localStorage.getItem("nexora-auto-update") !== "0",
+  );
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
   const [updateProgressPct, setUpdateProgressPct] = useState<number | null>(null);
@@ -2771,16 +2796,48 @@ function SettingsView() {
     setInstallingUpdate(true);
     setUpdateProgressPct(0);
     setUpdateError(null);
-    try {
-      window.localStorage.setItem("nexora-show-whats-new", "1");
-    } catch {
-      // ignore
-    }
-    invoke<void>("download_and_install_update").catch((err) => {
-      setUpdateError(String(err));
-      setInstallingUpdate(false);
-      setUpdateProgressPct(null);
-    });
+    void (async () => {
+      try {
+        const update = await checkPluginUpdate();
+        if (!update) {
+          setInstallingUpdate(false);
+          setUpdateProgressPct(null);
+          return;
+        }
+        const notes = update.body ? "\n\n" + update.body : "";
+        const promptText = t(language, "updateConfirmPrompt").replace("{v}", update.version) + notes;
+        if (!window.confirm(promptText)) {
+          setInstallingUpdate(false);
+          setUpdateProgressPct(null);
+          return;
+        }
+        try {
+          window.localStorage.setItem("nexora-show-whats-new", "1");
+        } catch {
+          // ignore
+        }
+        await invoke("stop_live_translate").catch(() => {});
+        let downloaded = 0;
+        let total = 0;
+        await update.downloadAndInstall((ev) => {
+          if (ev.event === "Started") {
+            total = ev.data.contentLength ?? 0;
+            setUpdateProgressPct(1);
+          } else if (ev.event === "Progress") {
+            downloaded += ev.data.chunkLength;
+            if (total > 0) {
+              setUpdateProgressPct(Math.min(99, Math.round((downloaded / total) * 100)));
+            }
+          } else if (ev.event === "Finished") {
+            setUpdateProgressPct(100);
+          }
+        });
+      } catch (err) {
+        setUpdateError(String(err));
+        setInstallingUpdate(false);
+        setUpdateProgressPct(null);
+      }
+    })();
   };
 
   // The Restore-taskbar row (Taskbar section): bring the Windows
@@ -3696,6 +3753,22 @@ function SettingsView() {
       <p className="settings-section-desc">
         {t(language, "updatesDesc")}
       </p>
+      <div className="settings-row">
+        <span>{t(language, "autoUpdateLabel")}</span>
+        <input
+          type="checkbox"
+          checked={autoUpdate}
+          onChange={(e) => {
+            const on = e.target.checked;
+            setAutoUpdate(on);
+            try {
+              window.localStorage.setItem("nexora-auto-update", on ? "1" : "0");
+            } catch {
+              // ignore
+            }
+          }}
+        />
+      </div>
       <div className="settings-row">
         <span>
           {updateInfo
