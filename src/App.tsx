@@ -906,6 +906,9 @@ function IslandApp() {
     invoke<IslandState>("get_island_state")
       .then(setState)
       .catch(() => {});
+    const hbTimer = window.setInterval(() => {
+      invoke("island_heartbeat").catch(() => {});
+    }, 5000);
     // Silent startup update check via official @tauri-apps/plugin-updater (ReChat flow)
     if (window.localStorage.getItem("nexora-auto-update") !== "0") {
       void (async () => {

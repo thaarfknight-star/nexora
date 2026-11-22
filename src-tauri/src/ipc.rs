@@ -30,7 +30,13 @@ pub fn set_island_expanded(
 /// and back on when it hides to its handle.
 #[tauri::command]
 pub fn set_island_click_through(window: tauri::Window, ignore: bool) -> Result<(), String> {
+    island::record_ui_heartbeat();
     island::set_click_through(&window, ignore).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn island_heartbeat() {
+    island::record_ui_heartbeat();
 }
 
 #[tauri::command]

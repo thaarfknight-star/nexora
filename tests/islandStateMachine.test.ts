@@ -178,3 +178,16 @@ test("shouldArmAutoClose blocks while onboarding, pinned, hovering, or hinting",
     false,
   );
 });
+
+test("pinned island ignores esc and shell-click but closes on explicit hotkey", () => {
+  const pinned = withGuards({ pinned: true });
+  assert.equal(nextVisible("expanded", "esc", pinned), "expanded");
+  assert.equal(nextVisible("compact", "shell-click", pinned), "compact");
+  assert.equal(nextVisible("expanded", "hotkey", pinned), "hidden");
+});
+
+test("toggle-expand from hidden stays hidden while bell and onboarding-open expand", () => {
+  assert.equal(nextVisible("hidden", "toggle-expand", open), "hidden");
+  assert.equal(nextVisible("hidden", "bell", open), "expanded");
+  assert.equal(nextVisible("hidden", "onboarding-open", open), "expanded");
+});

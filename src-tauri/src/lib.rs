@@ -147,12 +147,20 @@ pub fn run() {
                 }
             }
         })
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::ScaleFactorChanged { .. } = event {
+                    island::reapply_anchor_on_window(window);
+                }
+            }
+        })
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             ipc::get_island_state,
             ipc::set_island_expanded,
             ipc::set_island_click_through,
+            ipc::island_heartbeat,
             ipc::get_system_stats,
             ipc::get_now_playing,
             ipc::media_play,
