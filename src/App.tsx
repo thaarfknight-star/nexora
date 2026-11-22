@@ -64,6 +64,7 @@ interface NexoraSettings {
   poll_interval_secs: number;
   /** Speed unit: "auto" (MB/s above 1024 KB/s), "kb" or "mb". */
   stats_speed_unit: string;
+  online_translation?: boolean;
   /** Percent style: "with" (24%) or "without" (24). */
   stats_percent_style: string;
   /** UI language: "en" (default) or "fa". */
@@ -906,7 +907,7 @@ function IslandApp() {
     invoke<IslandState>("get_island_state")
       .then(setState)
       .catch(() => {});
-    const hbTimer = window.setInterval(() => {
+    window.setInterval(() => {
       invoke("island_heartbeat").catch(() => {});
     }, 5000);
     // Silent startup update check via official @tauri-apps/plugin-updater (ReChat flow)
