@@ -47,6 +47,22 @@ fn default_stats_percent_style() -> String {
     "with".into()
 }
 
+fn default_translate_provider() -> String {
+    "none".into()
+}
+
+fn default_translate_source_lang() -> String {
+    "en".into()
+}
+
+fn default_translate_target_lang() -> String {
+    "fa".into()
+}
+
+fn default_whisper_model() -> String {
+    "ggml-tiny.bin".into()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NexoraSettings {
     #[serde(default = "default_auto_hide_taskbar")]
@@ -88,10 +104,22 @@ pub struct NexoraSettings {
     /// Stats percent style: `"with"` shows the `%` sign, `"without"` hides it.
     #[serde(default = "default_stats_percent_style")]
     pub stats_percent_style: String,
-    /// Whether Live Subtitles may send transcribed text to external translation
-    /// services (Google Translate / MyMemory). Defaults to `false` (local transcription only).
+    /// Legacy flag kept for backwards compatibility; when `translate_provider`
+    /// is `"google_cloud"` or `"gemini"`, online translation is enabled.
     #[serde(default)]
     pub online_translation: bool,
+    /// Active translation provider: `"none"`, `"google_cloud"`, `"gemini"`, or `"local"`.
+    #[serde(default = "default_translate_provider")]
+    pub translate_provider: String,
+    /// Spoken audio language for Live Subtitles (e.g. `"en"`, `"fa"`, `"auto"`).
+    #[serde(default = "default_translate_source_lang")]
+    pub translate_source_lang: String,
+    /// Target subtitle language (e.g. `"fa"`, `"en"`, `"ar"`, `"tr"`).
+    #[serde(default = "default_translate_target_lang")]
+    pub translate_target_lang: String,
+    /// Selected Whisper GGML speech model filename.
+    #[serde(default = "default_whisper_model")]
+    pub whisper_model: String,
 }
 
 impl Default for NexoraSettings {
@@ -116,6 +144,10 @@ pub fn defaults() -> NexoraSettings {
         stats_speed_unit: "auto".into(),
         stats_percent_style: "with".into(),
         online_translation: false,
+        translate_provider: default_translate_provider(),
+        translate_source_lang: default_translate_source_lang(),
+        translate_target_lang: default_translate_target_lang(),
+        whisper_model: default_whisper_model(),
     }
 }
 
@@ -143,6 +175,29 @@ impl NexoraSettings {
         }
         if let Some(radius) = self.island_radius_px {
             self.island_radius_px = Some(radius.min(48));
+        }
+        self.translate_provider =
+            crate::translate_provider::TranslateProviderId::parse_id(&self.translate_provider)
+                .as_str()
+                .to_string();
+        if self.translate_source_lang.trim().is_empty() {
+            self.translate_source_lang = default_translate_source_lang();
+        } else {
+            self.translate_source_lang = self.translate_source_lang.trim().to_ascii_lowercase();
+        }
+        if self.translate_target_lang.trim().is_empty() {
+            self.translate_target_lang = default_translate_target_lang();
+        } else {
+            self.translate_target_lang = self.translate_target_lang.trim().to_ascii_lowercase();
+        }
+        if !matches!(
+            self.whisper_model.as_str(),
+            "ggml-tiny.bin"
+                | "ggml-tiny.en.bin"
+                | "ggml-base.en.bin"
+                | "ggml-large-v3-turbo-q5_0.bin"
+        ) {
+            self.whisper_model = default_whisper_model();
         }
         self
     }
@@ -262,6 +317,10 @@ mod tests {
             stats_speed_unit: "mb".into(),
             stats_percent_style: "without".into(),
             online_translation: false,
+            translate_provider: "gemini".into(),
+            translate_source_lang: "en".into(),
+            translate_target_lang: "fa".into(),
+            whisper_model: "ggml-base.en.bin".into(),
             language: "fa".into(),
             island_hotkey: "Ctrl+Alt+N".into(),
         };
@@ -300,6 +359,10 @@ mod tests {
                 stats_speed_unit: "auto".into(),
                 stats_percent_style: "with".into(),
                 online_translation: false,
+                translate_provider: "none".into(),
+                translate_source_lang: "en".into(),
+                translate_target_lang: "fa".into(),
+                whisper_model: "ggml-tiny.bin".into(),
                 language: "en".into(),
                 island_hotkey: "Alt+Space".into(),
             }
@@ -332,6 +395,10 @@ mod tests {
             stats_speed_unit: "auto".into(),
             stats_percent_style: "with".into(),
             online_translation: false,
+            translate_provider: "none".into(),
+            translate_source_lang: "en".into(),
+            translate_target_lang: "fa".into(),
+            whisper_model: "ggml-tiny.bin".into(),
             language: "en".into(),
             island_hotkey: "Alt+Space".into(),
         };
@@ -357,6 +424,10 @@ mod tests {
             stats_speed_unit: "auto".into(),
             stats_percent_style: "with".into(),
             online_translation: false,
+            translate_provider: "none".into(),
+            translate_source_lang: "en".into(),
+            translate_target_lang: "fa".into(),
+            whisper_model: "ggml-tiny.bin".into(),
             island_hotkey: "not-a-key".into(),
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
@@ -380,6 +451,10 @@ mod tests {
             stats_speed_unit: "auto".into(),
             stats_percent_style: "with".into(),
             online_translation: false,
+            translate_provider: "none".into(),
+            translate_source_lang: "en".into(),
+            translate_target_lang: "fa".into(),
+            whisper_model: "ggml-tiny.bin".into(),
             language: "de".into(),
             island_hotkey: "Alt+Space".into(),
         };
@@ -415,6 +490,23 @@ mod tests {
         fs::write(settings_path(&dir), r#"{"poll_interval_secs": 9999}"#).expect("write high");
         let high = load_from_dir(&dir);
         assert_eq!(high.poll_interval_secs, 60);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn invalid_translate_provider_and_model_normalize_to_safe_defaults() {
+        let dir = test_dir();
+        fs::create_dir_all(&dir).expect("create test dir");
+        fs::write(
+            settings_path(&dir),
+            r#"{"translate_provider": "gtx", "whisper_model": "../evil.bin"}"#,
+        )
+        .expect("write invalid");
+        let loaded = load_from_dir(&dir);
+        assert_eq!(loaded.translate_provider, "none");
+        assert_eq!(loaded.whisper_model, "ggml-tiny.bin");
+        assert_eq!(loaded.translate_source_lang, "en");
+        assert_eq!(loaded.translate_target_lang, "fa");
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -10,6 +10,7 @@ pub mod settings;
 pub mod stats;
 pub mod taskbar;
 pub mod taskbar_content;
+pub mod translate_provider;
 pub mod translator;
 pub mod tray;
 pub mod updater;

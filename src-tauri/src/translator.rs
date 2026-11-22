@@ -127,7 +127,7 @@ fn shared_http_client() -> &'static reqwest::blocking::Client {
             .pool_idle_timeout(Duration::from_secs(90))
             .pool_max_idle_per_host(4)
             .tcp_nodelay(true)
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+            .user_agent("Nexora/0.2")
             .build()
             .unwrap_or_else(|_| reqwest::blocking::Client::new())
     })
@@ -271,38 +271,6 @@ fn emit_subtitle(app: &AppHandle, payload: &SubtitlePayload) {
     let _ = app.emit("subtitle-update", payload);
 }
 
-fn url_encode_query(input: &str) -> String {
-    let mut out = String::with_capacity(input.len() * 2);
-    for b in input.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char);
-            }
-            b' ' => out.push_str("%20"),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
-/// Parses Google Translate's lightweight JSON array response (`[[["translated","orig",...]]]`).
-pub fn parse_google_translate_response(raw: &str) -> Option<String> {
-    let val: serde_json::Value = serde_json::from_str(raw).ok()?;
-    let sentences = val.get(0)?.as_array()?;
-    let mut out = String::new();
-    for seg in sentences {
-        if let Some(piece) = seg.get(0).and_then(|v| v.as_str()) {
-            out.push_str(piece);
-        }
-    }
-    let trimmed = out.trim().to_string();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
-}
-
 /// Builds an in-memory 16-bit signed mono RIFF/WAVE buffer for zero-disk-I/O
 /// inference against `whisper-server.exe`.
 pub fn encode_pcm16_mono_wav_bytes(pcm_bytes: &[u8], sample_rate: u32) -> Vec<u8> {
@@ -406,110 +374,59 @@ pub fn clean_whisper_output(raw: &str) -> String {
         .join(" ")
 }
 
-/// Parses Google clients5 (`dict-chrome-ex`) JSON response (`[["translated","en"]]` or `["translated"]`).
-pub fn parse_clients5_translate_response(raw: &str) -> Option<String> {
-    let val: serde_json::Value = serde_json::from_str(raw).ok()?;
-    let arr = val.as_array()?;
-    let first = arr.first()?;
-    let text = match first {
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Array(inner) => inner.first()?.as_str()?.to_string(),
-        _ => return None,
+/// Translates `text` using the configured official provider (`GoogleCloud`,
+/// `Gemini`, or `Local`). Returns `Ok(text)` unchanged when `provider == None`.
+pub fn translate_with_provider(
+    provider_id: crate::translate_provider::TranslateProviderId,
+    api_key: Option<&str>,
+    text: &str,
+    source_lang: &str,
+    target_lang: &str,
+    context: &[String],
+) -> Result<String, crate::translate_provider::TranslateError> {
+    use crate::translate_provider::{
+        translate_with_retry_and_fallback, GeminiTranslateProvider, GoogleCloudTranslateProvider,
+        LocalTranslateProvider, TranslateError, TranslateProviderId, TranslateRequest,
     };
-    let trimmed = text.trim().to_string();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
-}
-
-/// Parses MyMemory JSON response (`{"responseData":{"translatedText":"..."}}`).
-pub fn parse_mymemory_response(raw: &str) -> Option<String> {
-    let val: serde_json::Value = serde_json::from_str(raw).ok()?;
-    let txt = val
-        .get("responseData")?
-        .get("translatedText")?
-        .as_str()?
-        .trim()
-        .to_string();
-    if txt.is_empty() || txt.to_uppercase().contains("MYMEMORY WARNING") {
-        None
-    } else {
-        Some(txt)
-    }
-}
-
-/// Translates `text` into `target_lang` using a 3-provider fallback chain
-/// (Google gtx -> Google clients5 -> MyMemory) over the persistent pooled HTTP client.
-fn translate_text(text: &str, source_lang: &str, target_lang: &str) -> String {
     let clean = text.trim();
     if clean.is_empty() {
-        return String::new();
+        return Err(TranslateError::EmptyResponse);
     }
-    let sl = if source_lang.is_empty() {
-        "auto"
-    } else {
-        source_lang
+    let req = TranslateRequest {
+        text: clean,
+        source_lang: if source_lang.is_empty() {
+            "auto"
+        } else {
+            source_lang
+        },
+        target_lang: if target_lang.is_empty() {
+            "fa"
+        } else {
+            target_lang
+        },
+        context,
     };
-    let tl = if target_lang.is_empty() {
-        "fa"
-    } else {
-        target_lang
-    };
-    if sl != "auto" && sl.eq_ignore_ascii_case(tl) {
-        return clean.to_string();
-    }
-
-    let encoded = url_encode_query(clean);
-    let client = shared_http_client();
-
-    // Provider 1: Google Translate gtx
-    let url1 = format!(
-        "https://translate.googleapis.com/translate_a/single?client=gtx&sl={sl}&tl={tl}&dt=t&q={encoded}"
-    );
-    if let Ok(resp) = client.get(&url1).send() {
-        if resp.status().is_success() {
-            if let Ok(body) = resp.text() {
-                if let Some(translated) = parse_google_translate_response(&body) {
-                    if !translated.eq_ignore_ascii_case(clean) {
-                        return translated;
-                    }
-                }
-            }
+    match provider_id {
+        TranslateProviderId::None => Ok(clean.to_string()),
+        TranslateProviderId::GoogleCloud => {
+            let key = api_key
+                .filter(|k| !k.trim().is_empty())
+                .ok_or(TranslateError::MissingApiKey)?;
+            let provider = GoogleCloudTranslateProvider::new(key.to_string());
+            translate_with_retry_and_fallback(&provider, None, &req)
+        }
+        TranslateProviderId::Gemini => {
+            let key = api_key
+                .filter(|k| !k.trim().is_empty())
+                .ok_or(TranslateError::MissingApiKey)?;
+            let provider = GeminiTranslateProvider::new(key.to_string());
+            translate_with_retry_and_fallback(&provider, None, &req)
+        }
+        TranslateProviderId::Local => {
+            let provider = LocalTranslateProvider;
+            translate_with_retry_and_fallback(&provider, None, &req)
         }
     }
-
-    // Provider 2: Google Translate clients5 (separate rate-limit bucket)
-    let url2 = format!(
-        "https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl={sl}&tl={tl}&q={encoded}"
-    );
-    if let Ok(resp) = client.get(&url2).send() {
-        if resp.status().is_success() {
-            if let Ok(body) = resp.text() {
-                if let Some(translated) = parse_clients5_translate_response(&body) {
-                    if !translated.eq_ignore_ascii_case(clean) {
-                        return translated;
-                    }
-                }
-            }
-        }
-    }
-
-    // Provider 3: MyMemory public translation API (needs explicit source lang; default en when auto)
-    let mm_sl = if sl == "auto" { "en" } else { sl };
-    let url3 = format!("https://api.mymemory.translated.net/get?q={encoded}&langpair={mm_sl}|{tl}");
-    if let Ok(resp) = client.get(&url3).send() {
-        if resp.status().is_success() {
-            if let Ok(body) = resp.text() {
-                if let Some(translated) = parse_mymemory_response(&body) {
-                    return translated;
-                }
-            }
-        }
-    }
-
-    clean.to_string()
 }
 
 /// Streams an HTTP file to disk natively via `reqwest`, emitting smooth progress percentages.
@@ -1088,7 +1005,7 @@ fn run_wasapi_loopback_worker(
                     break;
                 }
                 last_remote_call = Instant::now();
-                let res = translate_text(&text, &src_for_tr, &tgt_for_tr);
+                let res = translate_with_provider(crate::translate_provider::TranslateProviderId::None, None, &text, &src_for_tr, &tgt_for_tr, &[]).unwrap_or_else(|_| text.clone());
                 if !res.eq_ignore_ascii_case(&text) {
                     if cache.len() >= 256 {
                         cache.clear();
@@ -1591,7 +1508,7 @@ pub async fn test_subtitle_overlay(
     let clean = text.trim().to_string();
     let tl = target_lang.clone();
     let translated =
-        tauri::async_runtime::spawn_blocking(move || translate_text(&clean, "auto", &tl))
+        tauri::async_runtime::spawn_blocking(move || translate_with_provider(crate::translate_provider::TranslateProviderId::None, None, &clean, "auto", &tl, &[]).unwrap_or(clean))
             .await
             .map_err(|e| e.to_string())?;
 
@@ -1626,27 +1543,6 @@ pub async fn test_subtitle_overlay(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parses_google_translate_segments() {
-        let sample =
-            r#"[[["سلام دنیا","Hello world",null,null,1],["!","!",null,null,1]],null,"en"]"#;
-        assert_eq!(
-            parse_google_translate_response(sample),
-            Some("سلام دنیا!".to_string())
-        );
-    }
-
-    #[test]
-    fn rejects_empty_or_invalid_translate_json() {
-        assert_eq!(parse_google_translate_response("not json"), None);
-        assert_eq!(parse_google_translate_response("[]"), None);
-    }
-
-    #[test]
-    fn encodes_query_spaces_and_symbols() {
-        assert_eq!(url_encode_query("Hello world!"), "Hello%20world%21");
-    }
 
     #[test]
     fn silence_gate_filters_quiet_buffers() {
@@ -1693,18 +1589,6 @@ mod tests {
         assert_eq!(
             parse_whisper_server_response("  Plain text line  \n"),
             "Plain text line"
-        );
-    }
-
-    #[test]
-    fn parses_clients5_and_mymemory_fallback_responses() {
-        assert_eq!(
-            parse_clients5_translate_response(r#"[["سلام دنیا","en"]]"#),
-            Some("سلام دنیا".to_string())
-        );
-        assert_eq!(
-            parse_mymemory_response(r#"{"responseData":{"translatedText":"سلام دنیا"}}"#),
-            Some("سلام دنیا".to_string())
         );
     }
 
