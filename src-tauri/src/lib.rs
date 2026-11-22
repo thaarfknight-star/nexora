@@ -5,6 +5,7 @@ pub mod hotkey;
 pub mod ipc;
 pub mod island;
 pub mod media;
+pub mod nexora_mt;
 pub mod notifications;
 pub mod settings;
 pub mod stats;

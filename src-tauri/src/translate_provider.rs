@@ -421,18 +421,46 @@ pub const LOCAL_TRANSLATE_MODEL_FILENAME: &str = "nexora-mt-en-fa-v1.nxmt";
 /// finishes training and is published to GitHub Releases.
 pub const LOCAL_TRANSLATE_MODEL_SHA256: &str = "TODO_FILL_NEXORA_MT_V1_SHA256";
 
-/// Scaffold for future local offline translation (custom Nexora-MT v1).
-pub struct LocalTranslateProvider;
+/// Official release URL for the quantized Nexora-MT v1 offline model (~26.4 MB).
+pub const LOCAL_TRANSLATE_MODEL_URL: &str =
+    "https://github.com/thaarfknight-star/nexora/releases/download/nexora-mt-v1/nexora-mt-en-fa-v1.nxmt";
+
+/// Pure-Rust offline translation provider powered by Nexora-MT v1 (`.nxmt`).
+pub struct LocalTranslateProvider {
+    model_path: Option<std::path::PathBuf>,
+}
+
+impl LocalTranslateProvider {
+    pub fn new(model_path: Option<std::path::PathBuf>) -> Self {
+        Self { model_path }
+    }
+}
 
 impl TranslateProvider for LocalTranslateProvider {
     fn id(&self) -> TranslateProviderId {
         TranslateProviderId::Local
     }
 
-    fn translate(&self, _req: &TranslateRequest<'_>) -> Result<String, TranslateError> {
-        Err(TranslateError::Unsupported(
-            "Local offline translation model (Nexora-MT v1) is not installed yet".to_string(),
-        ))
+    fn translate(&self, req: &TranslateRequest<'_>) -> Result<String, TranslateError> {
+        let Some(ref path) = self.model_path else {
+            return Err(TranslateError::Unsupported(
+                "Local Nexora-MT v1 model path is not configured".to_string(),
+            ));
+        };
+        if !path.exists() {
+            return Err(TranslateError::Unsupported(
+                "Local Nexora-MT v1 model (nexora-mt-en-fa-v1.nxmt) is not installed yet"
+                    .to_string(),
+            ));
+        }
+        let engine = crate::nexora_mt::get_or_load_engine(path)
+            .map_err(TranslateError::InvalidResponse)?;
+        let out = engine.translate(req.text, crate::nexora_mt::DEFAULT_MAX_NEW_TOKENS);
+        if out.trim().is_empty() {
+            Err(TranslateError::EmptyResponse)
+        } else {
+            Ok(out)
+        }
     }
 }
 

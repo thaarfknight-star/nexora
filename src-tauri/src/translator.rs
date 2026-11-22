@@ -734,9 +734,11 @@ impl TranslationCache {
 
 /// Translates `text` using the configured official provider (`GoogleCloud`,
 /// `Gemini`, or `Local`). Returns `Ok(text)` unchanged when `provider == None`.
+#[allow(clippy::too_many_arguments)]
 pub fn translate_with_provider(
     provider_id: crate::translate_provider::TranslateProviderId,
     api_key: Option<&str>,
+    local_model_path: Option<&Path>,
     text: &str,
     source_lang: &str,
     target_lang: &str,
@@ -781,7 +783,7 @@ pub fn translate_with_provider(
             translate_with_retry_and_fallback(&provider, None, &req)
         }
         TranslateProviderId::Local => {
-            let provider = LocalTranslateProvider;
+            let provider = LocalTranslateProvider::new(local_model_path.map(Path::to_path_buf));
             translate_with_retry_and_fallback(&provider, None, &req)
         }
     }
@@ -1380,9 +1382,12 @@ fn run_wasapi_loopback_worker(
                         None
                     };
                     let ctx_vec: Vec<String> = rolling_context.iter().cloned().collect();
+                    let local_path = engine_dir(&app_translator)
+                        .join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME);
                     let res = translate_with_provider(
                         provider_id,
                         api_key.as_deref(),
+                        Some(local_path.as_path()),
                         &text,
                         &src_for_tr,
                         &tgt_for_tr,
@@ -1983,6 +1988,7 @@ pub async fn test_subtitle_overlay(
     let clean = text.trim().to_string();
     let sl = cfg.translate_source_lang;
     let tl = target_lang.clone();
+    let app_for_test = app.clone();
     let (translated, status) = tauri::async_runtime::spawn_blocking(move || {
         if provider_id == crate::translate_provider::TranslateProviderId::None {
             return (clean, "ok".to_string());
@@ -1992,7 +1998,8 @@ pub async fn test_subtitle_overlay(
         } else {
             None
         };
-        match translate_with_provider(provider_id, key.as_deref(), &clean, &sl, &tl, &[]) {
+        let local_path = engine_dir(&app_for_test).join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME);
+        match translate_with_provider(provider_id, key.as_deref(), Some(local_path.as_path()), &clean, &sl, &tl, &[]) {
             Ok(out) => (out, "ok".to_string()),
             Err(err) => (String::new(), err.to_subtitle_status().to_string()),
         }
@@ -2129,6 +2136,7 @@ pub async fn test_translate_provider(
         "Hello, world!"
     };
     let sl = if tl == "en" { "fa" } else { "en" };
+    let app_for_probe = app.clone();
 
     let res = tauri::async_runtime::spawn_blocking(move || {
         let start = std::time::Instant::now();
@@ -2137,7 +2145,8 @@ pub async fn test_translate_provider(
         } else {
             None
         };
-        let outcome = translate_with_provider(pid, api_key.as_deref(), sample, sl, &tl, &[]);
+        let local_path = engine_dir(&app_for_probe).join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME);
+        let outcome = translate_with_provider(pid, api_key.as_deref(), Some(local_path.as_path()), sample, sl, &tl, &[]);
         let latency_ms = start.elapsed().as_millis() as u64;
         match outcome {
             Ok(translated) => TestProviderResult {
@@ -2238,6 +2247,7 @@ pub async fn evaluate_translation_samples(
                     let outcome = translate_with_provider(
                         pid,
                         Some(&key),
+                        None,
                         &sample.source_text,
                         &sample.source_lang,
                         &sample.target_lang,
