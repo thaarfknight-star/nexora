@@ -17,6 +17,38 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.17",
+    date: "2026-11-22",
+    title: {
+      en: "Official Live Translate Architecture, Adaptive Whisper VAD & Bold Theme Animations",
+      fa: "معماری رسمی ترجمه زنده، مدل‌های انتخابی Whisper، ذخیره امن کلید API و انیمیشن‌های متمایز تم‌ها",
+    },
+    features: {
+      en: [
+        "Upgraded all 7 Dynamic Island theme entrance and hover animations with bold, unmistakable per-theme motion and sheen/halo effects.",
+        "Added official Google Cloud Translation v2 and Gemini 2.5 Flash-Lite providers with secure Windows Credential Manager key storage and Test Connection.",
+        "Added selectable SHA-256-verified Whisper models (tiny.en, base.en, tiny, large-v3-turbo-q5_0), adaptive noise-floor VAD, and hallucination/repetition filtering.",
+        "Added live partial subtitle rendering with stability gating, latest-wins cancellation, bounded cache, and explicit offline/failed status badges.",
+      ],
+      fa: [
+        "بازطراحی انیمیشن‌های ظاهر شدن و هاور هر ۷ تم داینامیک آیلند با افکت‌های متمایز و کاملاً قابل مشاهده (شاین شیشه‌ای، هاله نئون، موج شفق قطبی و...).",
+        "جایگزینی endpointهای غیررسمی با API رسمی Google Cloud Translation v2 و Gemini 2.5 Flash-Lite همراه با ذخیره امن کلید در Windows Credential Manager و دکمه تست اتصال.",
+        "افزودن مدل‌های قابل انتخاب Whisper (tiny.en، base.en، tiny، large-v3-turbo-q5_0) با تایید SHA-256، دروازه VAD تطبیقی و فیلتر توهم و تکرار.",
+        "نمایش فوری متن اصلی زیرنویس با پایدارسازی، لغو درخواست‌های قدیمی (latest-wins)، کش نرمال‌شده و نمایشگر واضح وضعیت آفلاین/خطا.",
+      ],
+    },
+    fixes: {
+      en: [
+        "Removed unofficial Google/MyMemory endpoints and fake Chrome User-Agent headers.",
+        "Stopped silently masking failed/offline translations as original text and fixed identical proper-noun outputs being treated as errors.",
+      ],
+      fa: [
+        "حذف کامل endpointهای غیررسمی Google و MyMemory و هدرهای جعلی مرورگر.",
+        "رفع نمایش بی‌صدای متن اصلی به‌جای ترجمه در زمان آفلاین یا خطا، و پذیرش صحیح ترجمه اسامی خاص یکسان با ورودی.",
+      ],
+    },
+  },
+  {
     version: "0.2.16",
     date: "2026-11-22",
     title: {

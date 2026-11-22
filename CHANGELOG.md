@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.17] - 2026-11-22
+
+### What's New
+- **Bolder Theme-Specific Island Animations**: Upgraded all 7 Dynamic Island theme entrance and hover animations with unmistakable visual signatures (Liquid Glass sheen sweep, Neon Glass dual-spectrum halo pulse, Aurora spectral wave, Sunset ember flare, Midnight starlight drift, Forest organic spring, Obsidian chrome sweep), respecting `prefers-reduced-motion`.
+- **Official Live Translate Provider Architecture**: Replaced unofficial scraping endpoints (`client=gtx`, `clients5`, MyMemory) and fake browser headers with official Google Cloud Translation v2 (`X-Goog-Api-Key`) and Gemini `gemini-2.5-flash-lite` (`x-goog-api-key`) providers, plus a `Local` scaffold reserved for `Nexora-MT v1`.
+- **Secure Windows Credential Manager API Keys & Test Connection**: Stored provider API keys exclusively in Windows Credential Manager via `keyring` (`windows-native`), never in `settings.json` or logs, with a per-provider **Test Connection** button.
+- **Realtime Subtitle Stability, Latest-Wins & Status Badges**: Live `original` text renders immediately while translation runs on stabilized/finalized phrases with latest-wins cancellation, bounded normalized caching, rolling 3-sentence LLM context, and explicit `ok` / `pending` / `offline` / `failed` overlay badges.
+- **Selectable Whisper Models & Adaptive VAD**: Added verified selectable models (`ggml-tiny.en`, `ggml-base.en`, `ggml-tiny`, `ggml-large-v3-turbo-q5_0`) with adaptive snapshot intervals, adaptive noise-floor VAD gating, and an extensible multilingual hallucination & infinite-repetition filter.
+- **Privacy & Dev Evaluation**: Added first-use cloud consent (text-only, never audio), Gemini API Free Tier data-usage notice, `tests/translation-samples.json`, debug-only `evaluate_translation_samples`, and `docs/LIVE_TRANSLATE.md`.
+
+### Bug Fixes
+- Stopped treating identical-to-input translations (such as proper nouns or game terms) as translation failures.
+- Stopped silently displaying untranslated original text as a successful translation when offline or failing.
+
 ## [0.2.16] - 2026-11-22
 
 ### What'''s New
