@@ -891,10 +891,10 @@ mod tests {
         let b = &mut payload;
         push_mat(m, b, "pos_emb.weight", max_len, d_model, 1);
         push_vec(m, b, "encoder.0.norm1.weight", d_model);
-        push_mat(m, b, "encoder.0.self_attn.q_proj.weight", d_model, d_model, 1);
-        push_mat(m, b, "encoder.0.self_attn.k_proj.weight", d_model, d_model, 1);
-        push_mat(m, b, "encoder.0.self_attn.v_proj.weight", d_model, d_model, 1);
-        push_mat(m, b, "encoder.0.self_attn.o_proj.weight", d_model, d_model, 1);
+        for p_name in ["q_proj", "k_proj", "v_proj", "o_proj"] {
+            let k = format!("encoder.0.self_attn.{p_name}.weight");
+            push_mat(m, b, &k, d_model, d_model, 1);
+        }
         push_vec(m, b, "encoder.0.norm2.weight", d_model);
         push_mat(m, b, "encoder.0.ffn.w_gate.weight", ffn_dim, d_model, 1);
         push_mat(m, b, "encoder.0.ffn.w_up.weight", ffn_dim, d_model, 1);
@@ -902,15 +902,15 @@ mod tests {
         push_vec(m, b, "enc_norm.weight", d_model);
 
         push_vec(m, b, "decoder.0.norm1.weight", d_model);
-        push_mat(m, b, "decoder.0.self_attn.q_proj.weight", d_model, d_model, 1);
-        push_mat(m, b, "decoder.0.self_attn.k_proj.weight", d_model, d_model, 1);
-        push_mat(m, b, "decoder.0.self_attn.v_proj.weight", d_model, d_model, 1);
-        push_mat(m, b, "decoder.0.self_attn.o_proj.weight", d_model, d_model, 1);
+        for p_name in ["q_proj", "k_proj", "v_proj", "o_proj"] {
+            let k = format!("decoder.0.self_attn.{p_name}.weight");
+            push_mat(m, b, &k, d_model, d_model, 1);
+        }
         push_vec(m, b, "decoder.0.norm2.weight", d_model);
-        push_mat(m, b, "decoder.0.cross_attn.q_proj.weight", d_model, d_model, 1);
-        push_mat(m, b, "decoder.0.cross_attn.k_proj.weight", d_model, d_model, 1);
-        push_mat(m, b, "decoder.0.cross_attn.v_proj.weight", d_model, d_model, 1);
-        push_mat(m, b, "decoder.0.cross_attn.o_proj.weight", d_model, d_model, 1);
+        for p_name in ["q_proj", "k_proj", "v_proj", "o_proj"] {
+            let k = format!("decoder.0.cross_attn.{p_name}.weight");
+            push_mat(m, b, &k, d_model, d_model, 1);
+        }
         push_vec(m, b, "decoder.0.norm3.weight", d_model);
         push_mat(m, b, "decoder.0.ffn.w_gate.weight", ffn_dim, d_model, 1);
         push_mat(m, b, "decoder.0.ffn.w_up.weight", ffn_dim, d_model, 1);
