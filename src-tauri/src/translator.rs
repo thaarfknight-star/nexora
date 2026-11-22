@@ -1162,7 +1162,13 @@ pub fn get_translate_status(app: AppHandle) -> TranslateEngineStatus {
 }
 
 #[tauri::command]
-pub async fn download_translate_engine(app: AppHandle) -> Result<TranslateEngineStatus, String> {
+pub async fn download_translate_engine(
+    window: tauri::Window,
+    app: AppHandle,
+) -> Result<TranslateEngineStatus, String> {
+    if !crate::ipc::is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
     if DOWNLOADING
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -1242,7 +1248,13 @@ pub async fn download_translate_engine(app: AppHandle) -> Result<TranslateEngine
 }
 
 #[tauri::command]
-pub fn remove_translate_engine(app: AppHandle) -> Result<TranslateEngineStatus, String> {
+pub fn remove_translate_engine(
+    window: tauri::Window,
+    app: AppHandle,
+) -> Result<TranslateEngineStatus, String> {
+    if !crate::ipc::is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
     RUNNING.store(false, Ordering::SeqCst);
     if let Some(win) = app.get_webview_window("subtitle") {
         let _ = win.hide();
@@ -1262,6 +1274,7 @@ pub fn remove_translate_engine(app: AppHandle) -> Result<TranslateEngineStatus, 
 
 #[tauri::command]
 pub async fn start_live_translate(
+    window: tauri::Window,
     app: AppHandle,
     source_lang: String,
     target_lang: String,
@@ -1269,6 +1282,9 @@ pub async fn start_live_translate(
     target_pid: Option<u32>,
     target_app_name: Option<String>,
 ) -> Result<TranslateEngineStatus, String> {
+    if !crate::ipc::is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
     let resolved_mode = match capture_mode.as_deref() {
         Some("app") => "app".to_string(),
         _ => "system".to_string(),

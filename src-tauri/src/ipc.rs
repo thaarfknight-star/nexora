@@ -5,6 +5,12 @@ use crate::{
     watchdog,
 };
 
+/// Only `"main"` and `"settings"` windows may invoke privileged commands
+/// (launcher, taskbar restore, updater, engine management).
+pub fn is_privileged_window(label: &str) -> bool {
+    label == "main" || label == "settings"
+}
+
 #[tauri::command]
 pub fn get_island_state() -> island::IslandState {
     island::current_state()
@@ -104,7 +110,10 @@ pub fn open_start_menu() -> bool {
 /// Launch a pinned app by its resolved target path. `true` means the
 /// launch was invoked; `false` means it was not (empty path or error).
 #[tauri::command]
-pub fn launch_pinned_app(target: String) -> bool {
+pub fn launch_pinned_app(window: tauri::Window, target: String) -> bool {
+    if !is_privileged_window(window.label()) {
+        return false;
+    }
     taskbar_content::launch_pinned_app(&target)
 }
 
@@ -112,7 +121,10 @@ pub fn launch_pinned_app(target: String) -> bool {
 /// promises. Thin wrapper over `watchdog::restore_taskbar()`; `false`
 /// off Windows, like the other taskbar commands.
 #[tauri::command]
-pub fn restore_taskbar_now() -> bool {
+pub fn restore_taskbar_now(window: tauri::Window) -> bool {
+    if !is_privileged_window(window.label()) {
+        return false;
+    }
     watchdog::restore_taskbar()
 }
 
@@ -164,7 +176,13 @@ pub fn open_settings(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
-pub async fn check_updates(app: tauri::AppHandle) -> Result<updater::UpdateInfo, String> {
+pub async fn check_updates(
+    window: tauri::Window,
+    app: tauri::AppHandle,
+) -> Result<updater::UpdateInfo, String> {
+    if !is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
     let info = updater::check(app).await?;
     if info.update_available {
         if let Some(version) = &info.available_version {
@@ -179,15 +197,23 @@ pub async fn check_updates(app: tauri::AppHandle) -> Result<updater::UpdateInfo,
 }
 
 #[tauri::command]
-pub async fn download_and_install_update(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn download_and_install_update(
+    window: tauri::Window,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    if !is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
     updater::download_and_install(app).await
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
-    #[cfg(not(windows))]
-    fn restore_taskbar_now_returns_false_off_windows() {
-        assert!(!super::restore_taskbar_now());
+    fn privileged_window_allows_only_main_and_settings() {
+        assert!(super::is_privileged_window("main"));
+        assert!(super::is_privileged_window("settings"));
+        assert!(!super::is_privileged_window("subtitle"));
+        assert!(!super::is_privileged_window("unknown"));
     }
 }
