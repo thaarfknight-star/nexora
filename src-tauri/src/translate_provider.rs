@@ -419,7 +419,8 @@ impl TranslateProvider for GeminiTranslateProvider {
 pub const LOCAL_TRANSLATE_MODEL_FILENAME: &str = "nexora-mt-en-fa-v1.nxmt";
 /// TODO: Fill with the verified SHA-256 hex digest once `nexora-mt-en-fa-v1.nxmt`
 /// finishes training and is published to GitHub Releases.
-pub const LOCAL_TRANSLATE_MODEL_SHA256: &str = "TODO_FILL_NEXORA_MT_V1_SHA256";
+pub const LOCAL_TRANSLATE_MODEL_SHA256: &str =
+    "2f8f70c73e51a894a38f6470e41946994061cad196a58ba42d6b58aa36051f57";
 
 /// Official release URL for the quantized Nexora-MT v1 offline model (~26.4 MB).
 pub const LOCAL_TRANSLATE_MODEL_URL: &str =

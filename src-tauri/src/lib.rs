@@ -196,6 +196,8 @@ pub fn run() {
             translator::get_translate_status,
             translator::list_audio_sources,
             translator::download_translate_engine,
+            translator::download_local_translate_model,
+            translator::remove_local_translate_model,
             translator::remove_translate_engine,
             translator::start_live_translate,
             translator::stop_live_translate,

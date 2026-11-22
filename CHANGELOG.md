@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.18] - 2026-11-22
+
+### What's New
+- **Native Offline Translator (`Nexora-MT v1`)**: Shipped our custom from-scratch English → Persian offline neural translation engine (`src-tauri/src/nexora_mt.rs`) written in 100% pure Rust with ByteLevel BPE tokenization, INT8/f16 `.nxmt` binary loading, Pre-Norm RMSNorm SwiGLU Transformer, and incremental KV-cache for low-latency CPU subtitle translation.
+- **One-Click SHA-256 Verified Offline Model Download**: Published `nexora-mt-en-fa-v1.nxmt` (~26.4 MB) on GitHub Release `nexora-mt-v1` with fail-closed SHA-256 verification and added Download / Test / Remove controls directly under **Settings → Engines → Live Translate** (zero internet and zero API key required once downloaded).
+
+### Bug Fixes
+- Wired `LocalTranslateProvider` to load the resident `Nexora-MT v1` engine instead of returning an unsupported placeholder error.
+
 ## [0.2.17] - 2026-11-22
 
 ### What's New

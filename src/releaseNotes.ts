@@ -17,6 +17,32 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.18",
+    date: "2026-11-22",
+    title: {
+      en: "Nexora-MT v1 — Pure-Rust Offline English → Persian Subtitle Translator",
+      fa: "موتور ترجمه آفلاین اختصاصی Nexora-MT v1 (انگلیسی به فارسی، بدون اینترنت)",
+    },
+    features: {
+      en: [
+        "Added native pure-Rust inference engine for Nexora-MT v1 (.nxmt) with ByteLevel BPE, INT8 quantization, and incremental KV-cache.",
+        "Added one-click SHA-256 verified download, test, and remove controls for nexora-mt-en-fa-v1.nxmt (~27 MB) inside Settings → Engines.",
+      ],
+      fa: [
+        "افزودن موتور بومی خالص Rust برای اجرای مدل اختصاصی Nexora-MT v1 با توکنایزر ByteLevel BPE، وزن‌های INT8 و KV-Cache پرسرعت روی CPU.",
+        "افزودن دانلود یک‌کلیکی با تایید SHA-256، دکمه تست و حذف برای مدل آفلاین nexora-mt-en-fa-v1.nxmt (حدود ۲۷ مگابایت) در تنظیمات موتورها.",
+      ],
+    },
+    fixes: {
+      en: [
+        "Activated the Local offline translation provider using the resident Nexora-MT v1 engine.",
+      ],
+      fa: [
+        "فعال‌سازی کامل پروایدر ترجمه آفلاین محلی با بارگذاری مقیم مدل Nexora-MT v1 در حافظه.",
+      ],
+    },
+  },
+  {
     version: "0.2.17",
     date: "2026-11-22",
     title: {

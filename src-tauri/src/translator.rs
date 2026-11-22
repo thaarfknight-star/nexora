@@ -159,6 +159,7 @@ pub struct TranslateEngineStatus {
     pub online_translation: bool,
     pub translate_provider: String,
     pub whisper_model: String,
+    pub local_model_installed: bool,
     pub target_pid: Option<u32>,
     pub target_app_name: Option<String>,
     pub model_path: String,
@@ -298,6 +299,9 @@ fn build_status(app: &AppHandle) -> TranslateEngineStatus {
         online_translation: prefs.online_translation || provider != "none",
         translate_provider: provider,
         whisper_model: model,
+        local_model_installed: dir
+            .join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME)
+            .exists(),
         target_pid: prefs.target_pid,
         target_app_name: prefs.target_app_name.clone(),
         model_path: dir.to_string_lossy().to_string(),
@@ -2286,6 +2290,101 @@ pub async fn evaluate_translation_samples(
         .await
         .map_err(|e| e.to_string())?
     }
+}
+
+
+/// Downloads and verifies the quantized offline Nexora-MT v1 model (~26.4 MB)
+/// from GitHub Releases into `<app_data_dir>/live-translate/`.
+#[tauri::command]
+pub async fn download_local_translate_model(
+    window: tauri::Window,
+    app: AppHandle,
+) -> Result<TranslateEngineStatus, String> {
+    if !crate::ipc::is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
+    if DOWNLOADING
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Ok(build_status(&app));
+    }
+
+    let app_clone = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let dir = engine_dir(&app_clone);
+        fs::create_dir_all(&dir).map_err(|e| format!("Failed to create engine dir: {e}"))?;
+        cleanup_partial_downloads(&dir);
+
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(300))
+            .user_agent("Nexora/0.2")
+            .build()
+            .map_err(|e| format!("Failed to initialize HTTP client: {e}"))?;
+
+        let filename = crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME;
+        let part_path = dir.join(format!("{filename}.part"));
+        let final_path = dir.join(filename);
+
+        download_file_streaming(
+            &client,
+            crate::translate_provider::LOCAL_TRANSLATE_MODEL_URL,
+            &part_path,
+            5,
+            95,
+            "Downloading Nexora-MT v1 offline model (~27 MB)...",
+            &app_clone,
+        )?;
+        verify_file_sha256(
+            &part_path,
+            crate::translate_provider::LOCAL_TRANSLATE_MODEL_SHA256,
+        )?;
+        fs::rename(&part_path, &final_path)
+            .map_err(|e| format!("Failed finalizing Nexora-MT v1 model: {e}"))?;
+
+        let _ = app_clone.emit(
+            "translate-download-progress",
+            DownloadProgressPayload {
+                percent: 100,
+                stage: "Offline translation model ready".to_string(),
+            },
+        );
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    DOWNLOADING.store(false, Ordering::SeqCst);
+    {
+        let mut prefs = ENGINE_STATE.lock().unwrap_or_else(|e| e.into_inner());
+        prefs.last_error = result.as_ref().err().cloned();
+    }
+    if let Err(ref err) = result {
+        crate::diagnostics::log("translator", &format!("local model download failed: {err}"));
+    }
+    result?;
+    let st = build_status(&app);
+    emit_status_changed(&app, &st);
+    Ok(st)
+}
+
+/// Removes the downloaded Nexora-MT v1 offline model file.
+#[tauri::command]
+pub fn remove_local_translate_model(
+    window: tauri::Window,
+    app: AppHandle,
+) -> Result<TranslateEngineStatus, String> {
+    if !crate::ipc::is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
+    let path = engine_dir(&app).join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME);
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| format!("Failed removing local model: {e}"))?;
+    }
+    let st = build_status(&app);
+    emit_status_changed(&app, &st);
+    Ok(st)
 }
 
 #[cfg(test)]
