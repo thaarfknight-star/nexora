@@ -1,6 +1,6 @@
 [package]
 name = "nexora"
-version = "0.2.16"
+version = "0.2.17"
 description = "Floating Dynamic Island shell replacement for Windows 10/11"
 authors = ["Taha Arefi"]
 license = "MIT OR Apache-2.0"
@@ -66,6 +66,8 @@ windows-future = "0.2"
 # Windows-only: native WASAPI loopback capture (full system playback
 # and per-application process-tree loopback — never microphone).
 wasapi = "0.27"
+# Windows-only: secure API key storage via Windows Credential Manager.
+keyring = { version = "3", features = ["windows-native"] }
 # Windows-only: stats.rs reads GPU utilization through NVML (NVIDIA
 # driver). nvml-wrapper loads nvml.dll dynamically with libloading, so
 # machines without an NVIDIA GPU/driver just get `None` from init.

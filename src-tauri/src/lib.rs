@@ -10,6 +10,8 @@ pub mod settings;
 pub mod stats;
 pub mod taskbar;
 pub mod taskbar_content;
+pub mod translate_provider;
+pub mod translate_secrets;
 pub mod translator;
 pub mod tray;
 pub mod updater;
@@ -197,6 +199,11 @@ pub fn run() {
             translator::start_live_translate,
             translator::stop_live_translate,
             translator::test_subtitle_overlay,
+            translator::set_translate_api_key,
+            translator::delete_translate_api_key,
+            translator::get_translate_api_key_status,
+            translator::test_translate_provider,
+            translator::evaluate_translation_samples,
         ])
         .build(tauri::generate_context!())
         .expect("error while running Nexora Tauri application")

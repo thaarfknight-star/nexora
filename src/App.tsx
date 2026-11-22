@@ -65,6 +65,10 @@ interface NexoraSettings {
   /** Speed unit: "auto" (MB/s above 1024 KB/s), "kb" or "mb". */
   stats_speed_unit: string;
   online_translation?: boolean;
+  translate_provider?: string;
+  translate_source_lang?: string;
+  translate_target_lang?: string;
+  whisper_model?: string;
   /** Percent style: "with" (24%) or "without" (24). */
   stats_percent_style: string;
   /** UI language: "en" (default) or "fa". */
@@ -463,6 +467,8 @@ interface TranslateEngineStatus {
   target_lang: string;
   capture_mode: string;
   online_translation?: boolean;
+  translate_provider?: string;
+  whisper_model?: string;
   target_pid: number | null;
   target_app_name: string | null;
   model_path: string;
@@ -474,6 +480,19 @@ interface SubtitlePayload {
   translated: string;
   target_lang: string;
   active: boolean;
+  translation_status?: "ok" | "pending" | "failed" | "offline" | string;
+}
+
+interface ApiKeyStatus {
+  google_cloud: boolean;
+  gemini: boolean;
+}
+
+interface TestProviderResult {
+  ok: boolean;
+  translated: string | null;
+  latency_ms: number;
+  error: string | null;
 }
 
 interface DownloadProgressPayload {
@@ -743,10 +762,11 @@ function IslandApp() {
           const savedPid = savedPidRaw ? Number(savedPidRaw) : st.target_pid;
           const savedAppName = window.localStorage.getItem("nexora-translate-target-app") || st.target_app_name;
           invoke<TranslateEngineStatus>("start_live_translate", {
-            sourceLang: st.source_lang || "auto",
+            sourceLang: st.source_lang || "en",
             targetLang: st.target_lang || "fa",
             captureMode: savedMode,
-            onlineTranslation: window.localStorage.getItem("nexora-online-translation") === "1",
+            onlineTranslation: st.translate_provider !== "none",
+            translateProvider: st.translate_provider || "none",
             targetPid: savedMode === "app" && savedPid ? savedPid : null,
             targetAppName: savedMode === "app" ? savedAppName : null,
           })
@@ -2362,9 +2382,103 @@ function SettingsView() {
     };
   }, []);
 
+  const [apiKeyStatus, setApiKeyStatus] = useState<ApiKeyStatus>({
+    google_cloud: false,
+    gemini: false,
+  });
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [apiKeyMsg, setApiKeyMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [testingProvider, setTestingProvider] = useState(false);
+
+  const activeProvider = settings?.translate_provider ?? "none";
+  const activeWhisperModel = settings?.whisper_model ?? "ggml-tiny.bin";
+
+  const refreshApiKeyStatus = () => {
+    invoke<ApiKeyStatus>("get_translate_api_key_status")
+      .then(setApiKeyStatus)
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    refreshApiKeyStatus();
+  }, []);
+
+  const persistTranslateSettings = (patch: Partial<NexoraSettings>) => {
+    if (!settings) return;
+    const next = { ...settings, ...patch };
+    invoke<NexoraSettings>("set_settings", { settings: next })
+      .then((saved) => {
+        setSettings(saved);
+        invoke<TranslateEngineStatus>("get_translate_status")
+          .then(setTranslateStatus)
+          .catch(() => {});
+      })
+      .catch(() => {});
+  };
+
+  const handleSaveApiKey = () => {
+    const trimmed = apiKeyInput.trim();
+    if (!trimmed) return;
+    setApiKeyMsg(null);
+    invoke<ApiKeyStatus>("set_translate_api_key", {
+      provider: activeProvider,
+      apiKey: trimmed,
+    })
+      .then((st) => {
+        setApiKeyStatus(st);
+        setApiKeyInput("");
+        setApiKeyMsg({ ok: true, text: t(language, "apiKeySaved") });
+      })
+      .catch((err) => {
+        setApiKeyMsg({ ok: false, text: String(err) });
+      });
+  };
+
+  const handleDeleteApiKey = () => {
+    setApiKeyMsg(null);
+    invoke<ApiKeyStatus>("delete_translate_api_key", {
+      provider: activeProvider,
+    })
+      .then((st) => {
+        setApiKeyStatus(st);
+        setApiKeyInput("");
+      })
+      .catch((err) => {
+        setApiKeyMsg({ ok: false, text: String(err) });
+      });
+  };
+
+  const handleTestProvider = () => {
+    setTestingProvider(true);
+    setApiKeyMsg(null);
+    invoke<TestProviderResult>("test_translate_provider", {
+      provider: activeProvider,
+      targetLang: tgtLang,
+    })
+      .then((res) => {
+        if (res.ok) {
+          setApiKeyMsg({
+            ok: true,
+            text: tf(language, "testConnectionOk", {
+              ms: res.latency_ms,
+              text: res.translated ?? "",
+            }),
+          });
+        } else {
+          setApiKeyMsg({ ok: false, text: res.error ?? "Failed" });
+        }
+      })
+      .catch((err) => {
+        setApiKeyMsg({ ok: false, text: String(err) });
+      })
+      .finally(() => setTestingProvider(false));
+  };
+
   const handleDownloadEngine = () => {
     setDownloadProgress({ percent: 5, stage: "Starting download..." });
-    invoke<TranslateEngineStatus>("download_translate_engine")
+    invoke<TranslateEngineStatus>("download_translate_engine", {
+      whisperModel: activeWhisperModel,
+    })
       .then((st) => {
         setTranslateStatus(st);
         setDownloadProgress(null);
@@ -2393,7 +2507,8 @@ function SettingsView() {
         sourceLang: srcLang,
         targetLang: tgtLang,
         captureMode,
-        onlineTranslation: Boolean(settings?.online_translation),
+        onlineTranslation: activeProvider === "google_cloud" || activeProvider === "gemini",
+        translateProvider: activeProvider,
         targetPid: captureMode === "app" ? targetPid : null,
         targetAppName: captureMode === "app" ? targetAppName || null : null,
       })
@@ -3563,57 +3678,145 @@ function SettingsView() {
       )}
       <div className="settings-row">
         <span className="settings-row-text">
+          <span>{t(language, "whisperModelLabel")}</span>
+          <span className="audio-mode-hint">{t(language, "whisperModelDesc")}</span>
+        </span>
+        <select
+          className="translate-select"
+          value={activeWhisperModel}
+          onChange={(e) => {
+            persistTranslateSettings({ whisper_model: e.target.value });
+          }}
+        >
+          <option value="ggml-tiny.en.bin">ggml-tiny.en (~74 MB, English fast)</option>
+          <option value="ggml-base.en.bin">ggml-base.en (~141 MB, English accurate)</option>
+          <option value="ggml-tiny.bin">ggml-tiny (~74 MB, Multilingual fast)</option>
+          <option value="ggml-large-v3-turbo-q5_0.bin">ggml-large-v3-turbo-q5_0 (~547 MB, Multilingual HQ)</option>
+        </select>
+      </div>
+      <div className="settings-row">
+        <span className="settings-row-text">
           <span>{t(language, "onlineTranslationLabel")}</span>
           <span className="audio-mode-hint">{t(language, "onlineTranslationDesc")}</span>
         </span>
-        <input
-          type="checkbox"
-          checked={Boolean(settings?.online_translation)}
+        <select
+          className="translate-select"
+          value={activeProvider}
           onChange={(e) => {
-            const wantOn = e.target.checked;
-            if (wantOn) {
-              const consented = window.localStorage.getItem("nexora-online-translation-consent") === "1";
+            const nextProvider = e.target.value;
+            const isCloud = nextProvider === "google_cloud" || nextProvider === "gemini";
+            if (isCloud) {
+              const consented = window.localStorage.getItem("nexora-cloud-translate-consent") === "1";
               if (!consented) {
                 if (!window.confirm(t(language, "onlineTranslationConsent"))) {
                   return;
                 }
                 try {
-                  window.localStorage.setItem("nexora-online-translation-consent", "1");
+                  window.localStorage.setItem("nexora-cloud-translate-consent", "1");
                 } catch {
                   // ignore
                 }
               }
             }
-            try {
-              window.localStorage.setItem("nexora-online-translation", wantOn ? "1" : "0");
-            } catch {
-              // ignore
-            }
-            if (settings) {
-              invoke<NexoraSettings>("set_settings", {
-                settings: { ...settings, online_translation: wantOn },
-              })
-                .then(setSettings)
-                .catch(() => {});
-            }
+            setApiKeyMsg(null);
+            persistTranslateSettings({
+              translate_provider: nextProvider,
+              online_translation: isCloud,
+            });
           }}
-        />
+        >
+          <option value="none">{t(language, "providerNone")}</option>
+          <option value="google_cloud">{t(language, "providerGoogleCloud")}</option>
+          <option value="gemini">{t(language, "providerGemini")}</option>
+          <option value="local">{t(language, "providerLocal")}</option>
+        </select>
       </div>
+      {activeProvider === "gemini" && (
+        <div className="translate-notice-box">
+          {t(language, "geminiFreeTierNotice")}
+        </div>
+      )}
+      {activeProvider === "local" && (
+        <div className="translate-notice-box">
+          {t(language, "localProviderNotice")}
+        </div>
+      )}
+      {(activeProvider === "google_cloud" || activeProvider === "gemini") && (
+        <>
+          <div className="settings-row">
+            <span className="settings-row-text">
+              <span>{t(language, "apiKeyLabel")}</span>
+              <span className="audio-mode-hint">
+                {(activeProvider === "google_cloud" ? apiKeyStatus.google_cloud : apiKeyStatus.gemini)
+                  ? t(language, "apiKeySaved")
+                  : t(language, "apiKeyMissing")}
+              </span>
+            </span>
+            <div className="translate-btn-group">
+              <input
+                type="password"
+                className="translate-input"
+                placeholder={t(language, "apiKeyPlaceholder")}
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                autoComplete="off"
+              />
+              <button
+                type="button"
+                className="mini-btn primary-btn"
+                onClick={handleSaveApiKey}
+                disabled={!apiKeyInput.trim()}
+              >
+                {t(language, "saveApiKeyBtn")}
+              </button>
+              <button
+                type="button"
+                className="mini-btn"
+                onClick={handleTestProvider}
+                disabled={testingProvider}
+              >
+                {testingProvider
+                  ? t(language, "testingConnectionBtn")
+                  : t(language, "testConnectionBtn")}
+              </button>
+              {(activeProvider === "google_cloud" ? apiKeyStatus.google_cloud : apiKeyStatus.gemini) && (
+                <button
+                  type="button"
+                  className="mini-btn danger-btn"
+                  onClick={handleDeleteApiKey}
+                >
+                  {t(language, "deleteApiKeyBtn")}
+                </button>
+              )}
+            </div>
+          </div>
+          {apiKeyMsg && (
+            <div className={apiKeyMsg.ok ? "translate-ok-box" : "translate-error"}>
+              {apiKeyMsg.text}
+            </div>
+          )}
+        </>
+      )}
       <div className="settings-row">
         <span className="settings-row-text">
           <span>{t(language, "sourceLangLabel")}</span>
+          <span className="audio-mode-hint">{t(language, "sourceLangHint")}</span>
         </span>
         <select
           className="translate-select"
           value={srcLang}
-          onChange={(e) => setSrcLang(e.target.value)}
+          onChange={(e) => {
+            setSrcLang(e.target.value);
+            persistTranslateSettings({ translate_source_lang: e.target.value });
+          }}
         >
-          <option value="auto">Auto Detect</option>
-          <option value="en">English</option>
+          <option value="en">English (recommended)</option>
+          <option value="fa">فارسی (Persian)</option>
           <option value="ja">Japanese</option>
           <option value="ru">Russian</option>
           <option value="de">German</option>
           <option value="fr">French</option>
+          <option value="auto">Auto Detect (slower)</option>
         </select>
       </div>
       <div className="settings-row">
@@ -3623,7 +3826,10 @@ function SettingsView() {
         <select
           className="translate-select"
           value={tgtLang}
-          onChange={(e) => setTgtLang(e.target.value)}
+          onChange={(e) => {
+            setTgtLang(e.target.value);
+            persistTranslateSettings({ translate_target_lang: e.target.value });
+          }}
         >
           <option value="fa">فارسی (Persian)</option>
           <option value="en">English</option>
@@ -3827,6 +4033,7 @@ function SubtitleOverlay() {
     translated: "",
     target_lang: "fa",
     active: false,
+    translation_status: "ok",
   });
 
   useEffect(() => {
@@ -3848,6 +4055,8 @@ function SubtitleOverlay() {
   }
 
   const isRtl = payload.target_lang === "fa" || payload.target_lang === "ar";
+  const uiLang: Language = isRtl ? "fa" : "en";
+  const status = payload.translation_status ?? "ok";
   return (
     <div className="subtitle-overlay-root" dir={isRtl ? "rtl" : "ltr"}>
       <div className="subtitle-box">
@@ -3856,7 +4065,24 @@ function SubtitleOverlay() {
             {payload.original}
           </div>
         )}
-        <div className="subtitle-translated">{payload.translated}</div>
+        {payload.translated && (
+          <div className="subtitle-translated">{payload.translated}</div>
+        )}
+        {status === "pending" && !payload.translated && (
+          <div className="subtitle-status-badge pending">
+            {t(uiLang, "subtitleStatusPending")}
+          </div>
+        )}
+        {status === "offline" && (
+          <div className="subtitle-status-badge offline">
+            {t(uiLang, "subtitleStatusOffline")}
+          </div>
+        )}
+        {status === "failed" && (
+          <div className="subtitle-status-badge failed">
+            {t(uiLang, "subtitleStatusFailed")}
+          </div>
+        )}
       </div>
     </div>
   );
