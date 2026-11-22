@@ -1532,10 +1532,7 @@ fn run_wasapi_loopback_worker(
                     } else {
                         // Keep displaying the last completed translation while updating `original` live
                         // so the overlay never flashes stuck on "Translating...".
-                        let prev_tr = last_tr_reader
-                            .lock()
-                            .map(|g| g.clone())
-                            .unwrap_or_default();
+                        let prev_tr = last_tr_reader.lock().map(|g| g.clone()).unwrap_or_default();
                         let status = if prev_tr.is_empty() { "pending" } else { "ok" };
                         emit_subtitle(
                             &app_whisper,
@@ -1564,8 +1561,7 @@ fn run_wasapi_loopback_worker(
                         if should_queue {
                             last_queued_norm = norm;
                             last_queued_words = if finalized { 0 } else { word_count };
-                            let gen_id =
-                                latest_gen_whisper.fetch_add(1, Ordering::SeqCst) + 1;
+                            let gen_id = latest_gen_whisper.fetch_add(1, Ordering::SeqCst) + 1;
                             let (tlock, tcvar) = &*text_slot_tx;
                             let mut tg = tlock.lock().unwrap_or_else(|e| e.into_inner());
                             tg.0 = Some((text, finalized, gen_id));

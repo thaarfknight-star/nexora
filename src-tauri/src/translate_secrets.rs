@@ -15,7 +15,9 @@ fn account_name(provider: TranslateProviderId) -> Result<&'static str, String> {
     match provider {
         TranslateProviderId::GoogleCloud => Ok("translate_api_key_google_cloud"),
         TranslateProviderId::Gemini => Ok("translate_api_key_gemini"),
-        TranslateProviderId::None | TranslateProviderId::Local | TranslateProviderId::GoogleFree => {
+        TranslateProviderId::None
+        | TranslateProviderId::Local
+        | TranslateProviderId::GoogleFree => {
             Err("This translation provider does not use an API key.".to_string())
         }
     }
