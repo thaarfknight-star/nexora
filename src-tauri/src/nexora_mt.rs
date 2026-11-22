@@ -511,7 +511,8 @@ fn lm_head_top_k(
                     }
                     let mut best: Vec<(usize, f32)> = Vec::with_capacity(top_k + 1);
                     for (id, val) in logits {
-                        if best.len() < top_k || val > best.last().map_or(f32::NEG_INFINITY, |x| x.1)
+                        if best.len() < top_k
+                            || val > best.last().map_or(f32::NEG_INFINITY, |x| x.1)
                         {
                             best.push((id, val));
                             best.sort_by(|a, b| {
@@ -526,7 +527,10 @@ fn lm_head_top_k(
             handles.into_iter().filter_map(|h| h.join().ok()).collect()
         });
 
-        let gmax = partials.iter().map(|p| p.0).fold(f32::NEG_INFINITY, f32::max);
+        let gmax = partials
+            .iter()
+            .map(|p| p.0)
+            .fold(f32::NEG_INFINITY, f32::max);
         let gsum: f32 = partials.iter().map(|p| p.1 * (p.0 - gmax).exp()).sum();
         let mut merged: Vec<(usize, f32)> = partials.into_iter().flat_map(|p| p.2).collect();
         merged.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -963,7 +967,6 @@ pub fn get_or_load_engine(model_path: &Path) -> Result<Arc<NexoraMtEngine>, Stri
     });
     Ok(engine)
 }
-
 
 /// Clears the resident cached engine so an updated `.nxmt` file reloads immediately.
 pub fn invalidate_cached_engine() {
