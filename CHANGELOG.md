@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.19] - 2026-11-22
+
+### What's New
+- **Separate Collapsible Engine Cards in Settings**: Split **Local Offline Translate (Whisper + Nexora-MT v1)** and **Online Live Translate (Google Translate Free / Cloud v2 / Gemini)** into two independent, collapsible accordion cards so Settings stays clean and uncluttered.
+- **Dynamic Island `Engines` Tab**: Added a conditional **Engines** tab to the Dynamic Island that appears only when at least one engine is downloaded, offering one-click Start/Stop for Local and Online subtitles.
+- **Free Google Translate Mode Restored**: Re-added `Google Translate (Free, no API key)` alongside Google Cloud Translation v2 and Gemini 2.5 Flash-Lite.
+- **Smooth One-Shot Hover Animations & 5-Second Auto-Collapse**: All 7 theme hover animations now play once smoothly on mouse enter instead of looping endlessly, and the Dynamic Island automatically collapses back to the top edge after 5 seconds with no click or hover.
+
+### Bug Fixes
+- Fixed Local (`Nexora-MT v1`) and Online live subtitles staying stuck on "Translating..." during continuous speech by separating translation job generations from raw Whisper snapshots, keeping the previous translation visible while new words arrive, removing rate-limit sleep for local translation, and parallelizing `Nexora-MT v1` `lm_head` inference across CPU threads.
+
 ## [0.2.18] - 2026-11-22
 
 ### What's New
