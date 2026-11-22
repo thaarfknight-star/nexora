@@ -1883,9 +1883,7 @@ mod tests {
             Some("سلام دنیا".to_string())
         );
         assert_eq!(
-            parse_llama_chat_response(
-                r#"{"choices":[{"message":{"content":""سلام دنیا""}}]}"#
-            ),
+            parse_llama_chat_response(r#"{"choices":[{"message":{"content":"\"سلام دنیا\""}}]}"#),
             Some("سلام دنیا".to_string())
         );
     }
