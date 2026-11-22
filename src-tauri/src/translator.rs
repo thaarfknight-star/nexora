@@ -2150,6 +2150,125 @@ pub async fn test_translate_provider(
     Ok(res)
 }
 
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalSampleItem {
+    pub id: String,
+    pub category: String,
+    pub source_lang: String,
+    pub target_lang: String,
+    pub source_text: String,
+    #[serde(default)]
+    pub reference_note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalSampleFile {
+    pub schema_version: u32,
+    #[serde(default)]
+    pub description: String,
+    pub samples: Vec<EvalSampleItem>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EvalProviderOutput {
+    pub provider: String,
+    pub ok: bool,
+    pub translated: Option<String>,
+    pub latency_ms: u64,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EvalSampleResult {
+    pub id: String,
+    pub source_text: String,
+    pub results: Vec<EvalProviderOutput>,
+}
+
+/// Dev-only quality & latency evaluation helper.
+/// Reads `tests/translation-samples.json`, translates every sample with each
+/// configured cloud provider (reading keys strictly from OS secure storage),
+/// measures latency, and writes a JSON report to `output_path`.
+/// Disabled in release builds (`cfg(not(debug_assertions))`).
+#[tauri::command]
+pub async fn evaluate_translation_samples(
+    window: tauri::Window,
+    samples_path: String,
+    output_path: String,
+) -> Result<Vec<EvalSampleResult>, String> {
+    if !crate::ipc::is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (samples_path, output_path);
+        Err("evaluate_translation_samples is only available in debug builds".to_string())
+    }
+    #[cfg(debug_assertions)]
+    {
+        use crate::translate_provider::TranslateProviderId;
+        tauri::async_runtime::spawn_blocking(move || {
+            let raw = fs::read_to_string(&samples_path)
+                .map_err(|e| format!("Failed reading samples file: {e}"))?;
+            let parsed: EvalSampleFile = serde_json::from_str(&raw)
+                .map_err(|e| format!("Invalid samples JSON: {e}"))?;
+
+            let providers = [
+                TranslateProviderId::GoogleCloud,
+                TranslateProviderId::Gemini,
+            ];
+            let mut report = Vec::with_capacity(parsed.samples.len());
+            for sample in parsed.samples {
+                let mut results = Vec::new();
+                for pid in providers {
+                    let Some(key) = crate::translate_secrets::get_api_key(pid) else {
+                        continue;
+                    };
+                    let start = std::time::Instant::now();
+                    let outcome = translate_with_provider(
+                        pid,
+                        Some(&key),
+                        &sample.source_text,
+                        &sample.source_lang,
+                        &sample.target_lang,
+                        &[],
+                    );
+                    let latency_ms = start.elapsed().as_millis() as u64;
+                    match outcome {
+                        Ok(translated) => results.push(EvalProviderOutput {
+                            provider: pid.as_str().to_string(),
+                            ok: true,
+                            translated: Some(translated),
+                            latency_ms,
+                            error: None,
+                        }),
+                        Err(err) => results.push(EvalProviderOutput {
+                            provider: pid.as_str().to_string(),
+                            ok: false,
+                            translated: None,
+                            latency_ms,
+                            error: Some(err.to_string()),
+                        }),
+                    }
+                }
+                report.push(EvalSampleResult {
+                    id: sample.id,
+                    source_text: sample.source_text,
+                    results,
+                });
+            }
+            let out_json = serde_json::to_string_pretty(&report)
+                .map_err(|e| format!("Failed serializing evaluation report: {e}"))?;
+            fs::write(&output_path, out_json)
+                .map_err(|e| format!("Failed writing evaluation report: {e}"))?;
+            Ok(report)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

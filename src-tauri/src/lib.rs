@@ -203,6 +203,7 @@ pub fn run() {
             translator::delete_translate_api_key,
             translator::get_translate_api_key_status,
             translator::test_translate_provider,
+            translator::evaluate_translation_samples,
         ])
         .build(tauri::generate_context!())
         .expect("error while running Nexora Tauri application")

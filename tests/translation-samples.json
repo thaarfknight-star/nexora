@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "description": "Evaluation samples for comparing Live Translate providers (latency & quality). Fill in your own real gaming/video sentences and run evaluate_translation_samples in a debug build.",
+  "samples": [
+    {
+      "id": "sample-1",
+      "category": "gaming_callout",
+      "source_lang": "en",
+      "target_lang": "fa",
+      "source_text": "Watch out, two enemies are flanking from the left!",
+      "reference_note": "Short urgent gaming callout",
+      "outputs": {
+        "google_cloud": "",
+        "gemini": "",
+        "local": ""
+      }
+    },
+    {
+      "id": "sample-2",
+      "category": "casual_stream",
+      "source_lang": "en",
+      "target_lang": "fa",
+      "source_text": "Honestly, I did not expect that boss fight to have a second phase.",
+      "reference_note": "Conversational streamer reaction",
+      "outputs": {
+        "google_cloud": "",
+        "gemini": "",
+        "local": ""
+      }
+    },
+    {
+      "id": "sample-3",
+      "category": "proper_noun_same_text",
+      "source_lang": "en",
+      "target_lang": "fa",
+      "source_text": "Nexora Dynamic Island v0.2",
+      "reference_note": "Proper noun / product name that may remain largely unchanged",
+      "outputs": {
+        "google_cloud": "",
+        "gemini": "",
+        "local": ""
+      }
+    }
+  ]
+}
