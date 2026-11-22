@@ -2399,7 +2399,8 @@ pub async fn download_local_translate_model(
             crate::translate_provider::LOCAL_TRANSLATE_MODEL_SHA256,
         )?;
         fs::rename(&part_path, &final_path)
-            .map_err(|e| format!("Failed finalizing Nexora-MT v1 model: {e}"))?;
+            .map_err(|e| format!("Failed finalizing Nexora-MT model: {e}"))?;
+        crate::nexora_mt::invalidate_cached_engine();
 
         let _ = app_clone.emit(
             "translate-download-progress",
@@ -2439,6 +2440,7 @@ pub fn remove_local_translate_model(
     let path = engine_dir(&app).join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME);
     if path.exists() {
         fs::remove_file(&path).map_err(|e| format!("Failed removing local model: {e}"))?;
+        crate::nexora_mt::invalidate_cached_engine();
     }
     let st = build_status(&app);
     emit_status_changed(&app, &st);

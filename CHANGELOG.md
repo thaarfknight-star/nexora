@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.20] - 2026-11-22
+
+### What's New
+- **Beam Search (`beam = 3`) & 3-Gram Anti-Repetition in Nexora-MT**: Upgraded `src-tauri/src/nexora_mt.rs` from greedy decoding to length-normalized Beam Search with 3-gram repetition blocking for noticeably smoother, more grammatical Persian subtitles even on `Nexora-MT v1`.
+- **`.nxmt` v2 (Per-Row INT8) Engine Support & Colab Trainer**: Added backwards-compatible `.nxmt` v2 (`i8_row` per-row symmetric quantization) support to the pure-Rust engine and added `nexora-mt/train_nexora_mt_v2_colab.ipynb` (multi-source conversational/subtitle corpora, `d_model=512`, 6 enc / 4 dec, 24k BPE).
+- **One-Click Update Model Button**: Added an **Update Model** button directly beside `Nexora-MT` in Settings → Engines that atomically downloads, SHA-256 verifies, and hot-reloads the offline translation model without restarting Nexora.
+
 ## [0.2.19] - 2026-11-22
 
 ### What's New

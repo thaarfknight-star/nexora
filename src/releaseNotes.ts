@@ -17,6 +17,34 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.20",
+    date: "2026-11-22",
+    title: {
+      en: "Beam Search Decoding, .nxmt v2 (Per-Row INT8) Engine & One-Click Model Updates",
+      fa: "دیکودینگ Beam Search، پشتیبانی موتور از .nxmt v2 (کوانتایزیشن سطری) و دکمه آپدیت مدل",
+    },
+    features: {
+      en: [
+        "Upgraded Nexora-MT pure-Rust decoder to Beam Search (beam=3) with length penalty and 3-gram repetition blocking for smoother Persian subtitles.",
+        "Added native .nxmt v2 (Per-Row INT8) format support and the Nexora-MT v2 multi-corpus Colab training notebook.",
+        "Added a real one-click Update Model button for the offline translation model with automatic hot-reload.",
+      ],
+      fa: [
+        "ارتقای موتور بومی Nexora-MT به Beam Search (beam=3) با جریمه تکرار ۳-گرام برای ترجمه‌های روان‌تر و دستوری‌تر فارسی.",
+        "افزودن پشتیبانی کامل از فرمت .nxmt v2 (کوانتایزیشن سطری Per-Row INT8) و نوت‌بوک آموزش Nexora-MT v2 در Colab.",
+        "افزودن دکمه واقعی «آپدیت مدل» برای مدل ترجمه آفلاین با بارگذاری مجدد خودکار بدون نیاز به ریستارت برنامه.",
+      ],
+    },
+    fixes: {
+      en: [
+        "Invalidated the resident Nexora-MT RAM cache immediately when updating or removing the offline model.",
+      ],
+      fa: [
+        "پاک‌سازی خودکار کش حافظه مدل Nexora-MT بلافاصله پس از آپدیت یا حذف مدل آفلاین.",
+      ],
+    },
+  },
+  {
     version: "0.2.19",
     date: "2026-11-22",
     title: {

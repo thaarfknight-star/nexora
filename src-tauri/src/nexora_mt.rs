@@ -17,7 +17,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 const NXMT_MAGIC: &[u8; 4] = b"NXMT";
-const NXMT_VERSION: u32 = 1;
+const NXMT_VERSION_MIN: u32 = 1;
+const NXMT_VERSION_MAX: u32 = 2;
+const BEAM_WIDTH: usize = 3;
+const LENGTH_PENALTY_ALPHA: f32 = 0.6;
 const RMS_EPS: f32 = 1e-6;
 pub const DEFAULT_MAX_NEW_TOKENS: usize = 64;
 
@@ -283,11 +286,12 @@ impl ByteLevelBpeTokenizer {
     }
 }
 
-/// INT8 per-tensor quantized 2D weight matrix `[rows, cols]`.
+/// INT8 quantized 2D weight matrix `[rows, cols]` supporting both v1 (per-tensor)
+/// and v2 (per-row / channel-wise) symmetric scales.
 struct QuantMatrix {
     rows: usize,
     cols: usize,
-    scale: f32,
+    row_scales: Vec<f32>,
     data: Vec<i8>,
 }
 
@@ -295,7 +299,6 @@ impl QuantMatrix {
     /// Computes `y = W * x` where `W` is `[rows, cols]` and `x` is `[cols]`.
     fn matvec(&self, x: &[f32]) -> Vec<f32> {
         let mut out = vec![0.0f32; self.rows];
-        let scale = self.scale;
         let cols = self.cols;
         let (x_chunks, x_rem) = x.as_chunks::<4>();
         for (r, out_val) in out.iter_mut().enumerate() {
@@ -315,7 +318,7 @@ impl QuantMatrix {
             for (&q, &xv) in q_rem.iter().zip(x_rem.iter()) {
                 acc += f32::from(q) * xv;
             }
-            *out_val = acc * scale;
+            *out_val = acc * self.row_scales[r];
         }
         out
     }
@@ -323,7 +326,7 @@ impl QuantMatrix {
     /// Reads row `idx` dequantized into `f32`, optionally multiplied by `mult`.
     fn row_f32(&self, idx: usize, mult: f32) -> Vec<f32> {
         let start = idx * self.cols;
-        let s = self.scale * mult;
+        let s = self.row_scales[idx] * mult;
         self.data[start..start + self.cols]
             .iter()
             .map(|&q| f32::from(q) * s)
@@ -453,6 +456,109 @@ fn mha_single_query(
     concat
 }
 
+/// Computes `(max_logit, sum_exp, top_k_tokens)` over the weight-tied `lm_head`.
+fn lm_head_top_k(
+    tok_emb: &QuantMatrix,
+    final_h: &[f32],
+    top_k: usize,
+    n_workers: usize,
+) -> (f32, f32, Vec<(usize, f32)>) {
+    let cols = tok_emb.cols;
+    let rows = tok_emb.rows;
+    let data = &tok_emb.data;
+    let row_scales = &tok_emb.row_scales;
+    let (h_chunks, h_rem) = final_h.as_chunks::<4>();
+
+    if rows >= 1024 && n_workers > 1 {
+        let chunk_rows = rows.div_ceil(n_workers);
+        type PartialLogits = (f32, f32, Vec<(usize, f32)>);
+        let partials: Vec<PartialLogits> = std::thread::scope(|s| {
+            let mut handles = Vec::with_capacity(n_workers);
+            for w in 0..n_workers {
+                let start = w * chunk_rows;
+                let end = (start + chunk_rows).min(rows);
+                if start >= end {
+                    continue;
+                }
+                handles.push(s.spawn(move || {
+                    let mut logits = Vec::with_capacity(end - start);
+                    let mut lmax = f32::NEG_INFINITY;
+                    for v_id in start..end {
+                        let row = &data[v_id * cols..(v_id + 1) * cols];
+                        let (qc, qr) = row.as_chunks::<4>();
+                        let mut a0 = 0.0f32;
+                        let mut a1 = 0.0f32;
+                        let mut a2 = 0.0f32;
+                        let mut a3 = 0.0f32;
+                        for (q4, h4) in qc.iter().zip(h_chunks.iter()) {
+                            a0 += f32::from(q4[0]) * h4[0];
+                            a1 += f32::from(q4[1]) * h4[1];
+                            a2 += f32::from(q4[2]) * h4[2];
+                            a3 += f32::from(q4[3]) * h4[3];
+                        }
+                        let mut dot = (a0 + a1) + (a2 + a3);
+                        for (&q, &hv) in qr.iter().zip(h_rem.iter()) {
+                            dot += f32::from(q) * hv;
+                        }
+                        let val = dot * row_scales[v_id];
+                        if val > lmax {
+                            lmax = val;
+                        }
+                        logits.push((v_id, val));
+                    }
+                    let mut sexp = 0.0f32;
+                    for &(_, val) in &logits {
+                        sexp += (val - lmax).exp();
+                    }
+                    let mut best: Vec<(usize, f32)> = Vec::with_capacity(top_k + 1);
+                    for (id, val) in logits {
+                        if best.len() < top_k
+                            || val > best.last().map_or(f32::NEG_INFINITY, |x| x.1)
+                        {
+                            best.push((id, val));
+                            best.sort_by(|a, b| {
+                                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+                            });
+                            best.truncate(top_k);
+                        }
+                    }
+                    (lmax, sexp, best)
+                }));
+            }
+            handles.into_iter().filter_map(|h| h.join().ok()).collect()
+        });
+
+        let gmax = partials
+            .iter()
+            .map(|p| p.0)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let gsum: f32 = partials.iter().map(|p| p.1 * (p.0 - gmax).exp()).sum();
+        let mut merged: Vec<(usize, f32)> = partials.into_iter().flat_map(|p| p.2).collect();
+        merged.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        merged.truncate(top_k);
+        (gmax, gsum, merged)
+    } else {
+        let mut logits = Vec::with_capacity(rows);
+        let mut lmax = f32::NEG_INFINITY;
+        for v_id in 0..rows {
+            let row = &data[v_id * cols..(v_id + 1) * cols];
+            let mut dot = 0.0f32;
+            for (&q, &hv) in row.iter().zip(final_h.iter()) {
+                dot += f32::from(q) * hv;
+            }
+            let val = dot * row_scales[v_id];
+            if val > lmax {
+                lmax = val;
+            }
+            logits.push((v_id, val));
+        }
+        let sexp: f32 = logits.iter().map(|&(_, v)| (v - lmax).exp()).sum();
+        logits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        logits.truncate(top_k);
+        (lmax, sexp, logits)
+    }
+}
+
 impl NexoraMtEngine {
     pub fn from_file(path: &Path) -> Result<Self, String> {
         let bytes = fs::read(path).map_err(|e| format!("Failed reading .nxmt model file: {e}"))?;
@@ -464,7 +570,7 @@ impl NexoraMtEngine {
             return Err("Invalid .nxmt file: bad magic header".to_string());
         }
         let version = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-        if version != NXMT_VERSION {
+        if !(NXMT_VERSION_MIN..=NXMT_VERSION_MAX).contains(&version) {
             return Err(format!("Unsupported .nxmt version: {version}"));
         }
         let header_len = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
@@ -489,26 +595,50 @@ impl NexoraMtEngine {
             let m = meta_map
                 .get(name)
                 .ok_or_else(|| format!("Missing tensor '{name}' in .nxmt"))?;
-            if m.dtype != "i8" || m.shape.len() != 2 {
+            if m.shape.len() != 2 || (m.dtype != "i8" && m.dtype != "i8_row") {
                 return Err(format!(
-                    "Tensor '{name}' expected 2D i8, got {} {:?}",
+                    "Tensor '{name}' expected 2D i8/i8_row, got {} {:?}",
                     m.dtype, m.shape
                 ));
             }
+            let rows = m.shape[0];
+            let cols = m.shape[1];
             let end = m
                 .offset
                 .checked_add(m.nbytes)
                 .ok_or_else(|| format!("Overflow reading tensor '{name}'"))?;
-            if end > payload.len() || m.nbytes != m.shape[0] * m.shape[1] {
+            if end > payload.len() {
                 return Err(format!("Truncated tensor '{name}'"));
             }
-            let data: Vec<i8> = payload[m.offset..end].iter().map(|&b| b as i8).collect();
-            Ok(QuantMatrix {
-                rows: m.shape[0],
-                cols: m.shape[1],
-                scale: m.scale,
-                data,
-            })
+            let raw = &payload[m.offset..end];
+            if m.dtype == "i8_row" {
+                let scale_bytes = rows * 4;
+                if m.nbytes != scale_bytes + rows * cols {
+                    return Err(format!("Truncated i8_row tensor '{name}'"));
+                }
+                let mut row_scales = Vec::with_capacity(rows);
+                for chunk in raw[..scale_bytes].as_chunks::<4>().0 {
+                    row_scales.push(f32::from_le_bytes(*chunk));
+                }
+                let data: Vec<i8> = raw[scale_bytes..].iter().map(|&b| b as i8).collect();
+                Ok(QuantMatrix {
+                    rows,
+                    cols,
+                    row_scales,
+                    data,
+                })
+            } else {
+                if m.nbytes != rows * cols {
+                    return Err(format!("Truncated i8 tensor '{name}'"));
+                }
+                let data: Vec<i8> = raw.iter().map(|&b| b as i8).collect();
+                Ok(QuantMatrix {
+                    rows,
+                    cols,
+                    row_scales: vec![m.scale; rows],
+                    data,
+                })
+            }
         };
 
         let load_vec = |name: &str| -> Result<Vec<f32>, String> {
@@ -667,138 +797,140 @@ impl NexoraMtEngine {
             })
             .collect();
 
-        // Incremental KV-cache for decoder self-attention
-        let mut self_k_cache: Vec<Vec<Vec<f32>>> = vec![Vec::new(); self.decoder.len()];
-        let mut self_v_cache: Vec<Vec<Vec<f32>>> = vec![Vec::new(); self.decoder.len()];
+        // Beam Search (beam = 3) with per-beam incremental KV-cache, length penalty,
+        // and 3-gram repetition blocking for smoother, more natural Persian subtitles.
+        #[derive(Clone)]
+        struct Beam {
+            tokens: Vec<usize>,
+            log_prob: f32,
+            finished: bool,
+            self_k: Vec<Vec<Vec<f32>>>,
+            self_v: Vec<Vec<Vec<f32>>>,
+        }
+
+        fn would_repeat_trigram(tokens: &[usize], next_tok: usize) -> bool {
+            let n = tokens.len();
+            if n >= 2 && tokens[n - 1] == next_tok && tokens[n - 2] == next_tok {
+                return true;
+            }
+            if n < 3 {
+                return false;
+            }
+            let a = tokens[n - 2];
+            let b = tokens[n - 1];
+            for i in 0..=(n - 3) {
+                if tokens[i] == a && tokens[i + 1] == b && tokens[i + 2] == next_tok {
+                    return true;
+                }
+            }
+            false
+        }
+
+        fn norm_score(log_prob: f32, len: usize) -> f32 {
+            let lp = ((5.0 + len as f32) / 6.0).powf(LENGTH_PENALTY_ALPHA);
+            log_prob / lp
+        }
 
         let adaptive_cap = src_ids.len().saturating_mul(2).saturating_add(8).min(48);
         let max_steps = max_new_tokens
             .min(adaptive_cap)
             .min(self.cfg.max_len.saturating_sub(1));
-        let mut generated: Vec<usize> = Vec::with_capacity(max_steps);
-        let mut cur_tok = self.cfg.bos_id;
+
+        let mut beams = vec![Beam {
+            tokens: vec![self.cfg.bos_id],
+            log_prob: 0.0,
+            finished: false,
+            self_k: vec![Vec::new(); self.decoder.len()],
+            self_v: vec![Vec::new(); self.decoder.len()],
+        }];
+
+        let n_workers = std::thread::available_parallelism()
+            .map(|n| n.get().clamp(1, 4))
+            .unwrap_or(2);
 
         for step in 0..max_steps {
-            let mut x = self.tok_emb.row_f32(cur_tok, emb_scale);
-            let p = self.pos_emb.row_f32(step, 1.0);
-            add_inplace(&mut x, &p);
-
-            for (li, layer) in self.decoder.iter().enumerate() {
-                // Causal self-attention with KV-cache
-                let h1 = rms_norm(&x, &layer.norm1);
-                let q = layer.self_attn.q_proj.matvec(&h1);
-                let k = layer.self_attn.k_proj.matvec(&h1);
-                let v = layer.self_attn.v_proj.matvec(&h1);
-                self_k_cache[li].push(k);
-                self_v_cache[li].push(v);
-                let ctx =
-                    mha_single_query(&q, &self_k_cache[li], &self_v_cache[li], n_heads, head_dim);
-                let proj = layer.self_attn.o_proj.matvec(&ctx);
-                add_inplace(&mut x, &proj);
-
-                // Cross-attention over encoder memory
-                let h2 = rms_norm(&x, &layer.norm2);
-                let cq = layer.cross_attn.q_proj.matvec(&h2);
-                let (ref cks, ref cvs) = cross_kv[li];
-                let cctx = mha_single_query(&cq, cks, cvs, n_heads, head_dim);
-                let cproj = layer.cross_attn.o_proj.matvec(&cctx);
-                add_inplace(&mut x, &cproj);
-
-                // SwiGLU FFN
-                let h3 = rms_norm(&x, &layer.norm3);
-                let ffn_out = swiglu_vec(&h3, &layer.ffn);
-                add_inplace(&mut x, &ffn_out);
+            if beams.iter().all(|b| b.finished) {
+                break;
             }
+            let mut candidates: Vec<Beam> = Vec::with_capacity(BEAM_WIDTH * BEAM_WIDTH);
 
-            let final_h = rms_norm(&x, &self.dec_norm);
+            for beam in beams {
+                if beam.finished {
+                    candidates.push(beam);
+                    continue;
+                }
+                let cur_tok = *beam.tokens.last().unwrap_or(&self.cfg.bos_id);
+                let mut x = self.tok_emb.row_f32(cur_tok, emb_scale);
+                let p = self.pos_emb.row_f32(step, 1.0);
+                add_inplace(&mut x, &p);
 
-            // Parallel 4-way unrolled greedy argmax over weight-tied lm_head (`tok_emb`)
-            let cols = self.tok_emb.cols;
-            let rows = self.tok_emb.rows;
-            let data = &self.tok_emb.data;
-            let (h_chunks, h_rem) = final_h.as_chunks::<4>();
-            let n_workers = std::thread::available_parallelism()
-                .map(|n| n.get().clamp(1, 4))
-                .unwrap_or(2);
-            let best_id = if rows >= 1024 && n_workers > 1 {
-                let chunk_rows = rows.div_ceil(n_workers);
-                std::thread::scope(|s| {
-                    let mut handles = Vec::with_capacity(n_workers);
-                    for w in 0..n_workers {
-                        let start = w * chunk_rows;
-                        let end = (start + chunk_rows).min(rows);
-                        if start >= end {
-                            continue;
-                        }
-                        handles.push(s.spawn(move || {
-                            let mut local_id = start;
-                            let mut local_best = f32::NEG_INFINITY;
-                            for v_id in start..end {
-                                let row = &data[v_id * cols..(v_id + 1) * cols];
-                                let (qc, qr) = row.as_chunks::<4>();
-                                let mut a0 = 0.0f32;
-                                let mut a1 = 0.0f32;
-                                let mut a2 = 0.0f32;
-                                let mut a3 = 0.0f32;
-                                for (q4, h4) in qc.iter().zip(h_chunks.iter()) {
-                                    a0 += f32::from(q4[0]) * h4[0];
-                                    a1 += f32::from(q4[1]) * h4[1];
-                                    a2 += f32::from(q4[2]) * h4[2];
-                                    a3 += f32::from(q4[3]) * h4[3];
-                                }
-                                let mut dot = (a0 + a1) + (a2 + a3);
-                                for (&q, &hv) in qr.iter().zip(h_rem.iter()) {
-                                    dot += f32::from(q) * hv;
-                                }
-                                if dot > local_best {
-                                    local_best = dot;
-                                    local_id = v_id;
-                                }
-                            }
-                            (local_id, local_best)
-                        }));
+                let mut next_k = beam.self_k;
+                let mut next_v = beam.self_v;
+
+                for (li, layer) in self.decoder.iter().enumerate() {
+                    let h1 = rms_norm(&x, &layer.norm1);
+                    let q = layer.self_attn.q_proj.matvec(&h1);
+                    let k = layer.self_attn.k_proj.matvec(&h1);
+                    let v = layer.self_attn.v_proj.matvec(&h1);
+                    next_k[li].push(k);
+                    next_v[li].push(v);
+                    let ctx = mha_single_query(&q, &next_k[li], &next_v[li], n_heads, head_dim);
+                    let proj = layer.self_attn.o_proj.matvec(&ctx);
+                    add_inplace(&mut x, &proj);
+
+                    let h2 = rms_norm(&x, &layer.norm2);
+                    let cq = layer.cross_attn.q_proj.matvec(&h2);
+                    let (ref cks, ref cvs) = cross_kv[li];
+                    let cctx = mha_single_query(&cq, cks, cvs, n_heads, head_dim);
+                    let cproj = layer.cross_attn.o_proj.matvec(&cctx);
+                    add_inplace(&mut x, &cproj);
+
+                    let h3 = rms_norm(&x, &layer.norm3);
+                    let ffn_out = swiglu_vec(&h3, &layer.ffn);
+                    add_inplace(&mut x, &ffn_out);
+                }
+
+                let final_h = rms_norm(&x, &self.dec_norm);
+                let (max_logit, sum_exp, top_tokens) =
+                    lm_head_top_k(&self.tok_emb, &final_h, BEAM_WIDTH + 2, n_workers);
+                let log_denom = max_logit + sum_exp.max(1e-12).ln();
+                let mut added = 0usize;
+                for (tok_id, logit) in top_tokens {
+                    if tok_id != self.cfg.eos_id && would_repeat_trigram(&beam.tokens, tok_id) {
+                        continue;
                     }
-                    let mut global_id = self.cfg.eos_id;
-                    let mut global_best = f32::NEG_INFINITY;
-                    for h in handles {
-                        if let Ok((id, score)) = h.join() {
-                            if score > global_best {
-                                global_best = score;
-                                global_id = id;
-                            }
-                        }
+                    let mut next_tokens = beam.tokens.clone();
+                    let finished = tok_id == self.cfg.eos_id;
+                    if !finished {
+                        next_tokens.push(tok_id);
                     }
-                    global_id
-                })
-            } else {
-                let mut local_id = self.cfg.eos_id;
-                let mut local_best = f32::NEG_INFINITY;
-                for v_id in 0..rows {
-                    let row = &data[v_id * cols..(v_id + 1) * cols];
-                    let mut dot = 0.0f32;
-                    for (&q, &hv) in row.iter().zip(final_h.iter()) {
-                        dot += f32::from(q) * hv;
-                    }
-                    if dot > local_best {
-                        local_best = dot;
-                        local_id = v_id;
+                    candidates.push(Beam {
+                        tokens: next_tokens,
+                        log_prob: beam.log_prob + (logit - log_denom),
+                        finished,
+                        self_k: next_k.clone(),
+                        self_v: next_v.clone(),
+                    });
+                    added += 1;
+                    if added >= BEAM_WIDTH {
+                        break;
                     }
                 }
-                local_id
-            };
+            }
 
-            if best_id == self.cfg.eos_id {
-                break;
-            }
-            // Prevent repetitive greedy loops on noisy partial audio.
-            let n = generated.len();
-            if n >= 2 && generated[n - 1] == best_id && generated[n - 2] == best_id {
-                break;
-            }
-            generated.push(best_id);
-            cur_tok = best_id;
+            candidates.sort_by(|a, b| {
+                let sa = norm_score(a.log_prob, a.tokens.len().saturating_sub(1).max(1));
+                let sb = norm_score(b.log_prob, b.tokens.len().saturating_sub(1).max(1));
+                sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            candidates.truncate(BEAM_WIDTH);
+            beams = candidates;
         }
 
+        let best = beams.into_iter().next();
+        let generated = best
+            .map(|b| b.tokens.into_iter().skip(1).collect::<Vec<_>>())
+            .unwrap_or_default();
         self.tokenizer.decode(&generated)
     }
 }
@@ -835,6 +967,15 @@ pub fn get_or_load_engine(model_path: &Path) -> Result<Arc<NexoraMtEngine>, Stri
         engine: Arc::clone(&engine),
     });
     Ok(engine)
+}
+
+/// Clears the resident cached engine so an updated `.nxmt` file reloads immediately.
+pub fn invalidate_cached_engine() {
+    if let Some(slot) = RESIDENT_ENGINE.get() {
+        if let Ok(mut guard) = slot.lock() {
+            *guard = None;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1012,12 +1153,138 @@ mod tests {
 
         let mut file_bytes = Vec::new();
         file_bytes.extend_from_slice(NXMT_MAGIC);
-        file_bytes.extend_from_slice(&NXMT_VERSION.to_le_bytes());
+        file_bytes.extend_from_slice(&NXMT_VERSION_MIN.to_le_bytes());
         file_bytes.extend_from_slice(&(header_json.len() as u32).to_le_bytes());
         file_bytes.extend_from_slice(header_json.as_bytes());
         file_bytes.extend_from_slice(&payload);
 
         let engine = NexoraMtEngine::from_bytes(&file_bytes).expect("synthetic .nxmt loads");
         let _out = engine.translate("Hello", 8);
+    }
+
+    #[test]
+    fn loads_synthetic_nxmt_v2_per_row_int8_and_runs_beam_search() {
+        let (b2u, _) = build_byte_level_tables();
+        let mut vocab = serde_json::Map::new();
+        vocab.insert("<pad>".into(), 0.into());
+        vocab.insert("<bos>".into(), 1.into());
+        vocab.insert("<eos>".into(), 2.into());
+        vocab.insert("<unk>".into(), 3.into());
+        for (idx, ch) in b2u.iter().enumerate() {
+            vocab.insert(ch.to_string(), ((idx + 4) as u64).into());
+        }
+        let vocab_size = b2u.len() + 4;
+        let d_model = 4usize;
+        let ffn_dim = 8usize;
+        let max_len = 16usize;
+        let tok_json = serde_json::json!({
+            "model": { "vocab": vocab, "merges": [] }
+        })
+        .to_string();
+
+        let mut tensors_meta = Vec::new();
+        let mut payload = Vec::new();
+        fn push_row_mat(
+            tensors_meta: &mut Vec<serde_json::Value>,
+            payload: &mut Vec<u8>,
+            name: &str,
+            rows: usize,
+            cols: usize,
+            fill: i8,
+        ) {
+            let offset = payload.len();
+            for _ in 0..rows {
+                payload.extend_from_slice(&0.01f32.to_le_bytes());
+            }
+            payload.extend(std::iter::repeat_n(fill as u8, rows * cols));
+            let nbytes = rows * 4 + rows * cols;
+            tensors_meta.push(serde_json::json!({
+                "name": name,
+                "shape": [rows, cols],
+                "dtype": "i8_row",
+                "scale": 1.0,
+                "offset": offset,
+                "nbytes": nbytes
+            }));
+        }
+        fn push_vec(
+            tensors_meta: &mut Vec<serde_json::Value>,
+            payload: &mut Vec<u8>,
+            name: &str,
+            len: usize,
+        ) {
+            let offset = payload.len();
+            let one = f32_to_f16_one();
+            for _ in 0..len {
+                payload.extend_from_slice(&one);
+            }
+            tensors_meta.push(serde_json::json!({
+                "name": name,
+                "shape": [len],
+                "dtype": "f16",
+                "scale": 1.0,
+                "offset": offset,
+                "nbytes": len * 2
+            }));
+        }
+
+        let m = &mut tensors_meta;
+        let b = &mut payload;
+        push_row_mat(m, b, "tok_emb.weight", vocab_size, d_model, 1);
+        push_row_mat(m, b, "pos_emb.weight", max_len, d_model, 1);
+        push_vec(m, b, "encoder.0.norm1.weight", d_model);
+        for p_name in ["q_proj", "k_proj", "v_proj", "o_proj"] {
+            let k = format!("encoder.0.self_attn.{p_name}.weight");
+            push_row_mat(m, b, &k, d_model, d_model, 1);
+        }
+        push_vec(m, b, "encoder.0.norm2.weight", d_model);
+        push_row_mat(m, b, "encoder.0.ffn.w_gate.weight", ffn_dim, d_model, 1);
+        push_row_mat(m, b, "encoder.0.ffn.w_up.weight", ffn_dim, d_model, 1);
+        push_row_mat(m, b, "encoder.0.ffn.w_down.weight", d_model, ffn_dim, 1);
+        push_vec(m, b, "enc_norm.weight", d_model);
+
+        push_vec(m, b, "decoder.0.norm1.weight", d_model);
+        for p_name in ["q_proj", "k_proj", "v_proj", "o_proj"] {
+            let k = format!("decoder.0.self_attn.{p_name}.weight");
+            push_row_mat(m, b, &k, d_model, d_model, 1);
+        }
+        push_vec(m, b, "decoder.0.norm2.weight", d_model);
+        for p_name in ["q_proj", "k_proj", "v_proj", "o_proj"] {
+            let k = format!("decoder.0.cross_attn.{p_name}.weight");
+            push_row_mat(m, b, &k, d_model, d_model, 1);
+        }
+        push_vec(m, b, "decoder.0.norm3.weight", d_model);
+        push_row_mat(m, b, "decoder.0.ffn.w_gate.weight", ffn_dim, d_model, 1);
+        push_row_mat(m, b, "decoder.0.ffn.w_up.weight", ffn_dim, d_model, 1);
+        push_row_mat(m, b, "decoder.0.ffn.w_down.weight", d_model, ffn_dim, 1);
+        push_vec(m, b, "dec_norm.weight", d_model);
+
+        let header_json = serde_json::json!({
+            "cfg": {
+                "vocab_size": vocab_size,
+                "d_model": d_model,
+                "n_heads": 2,
+                "enc_layers": 1,
+                "dec_layers": 1,
+                "ffn_dim": ffn_dim,
+                "max_len": max_len,
+                "pad_id": 0,
+                "bos_id": 1,
+                "eos_id": 2
+            },
+            "tokenizer_json": tok_json,
+            "tensors": tensors_meta
+        })
+        .to_string();
+
+        let mut file_bytes = Vec::new();
+        file_bytes.extend_from_slice(NXMT_MAGIC);
+        file_bytes.extend_from_slice(&2u32.to_le_bytes());
+        file_bytes.extend_from_slice(&(header_json.len() as u32).to_le_bytes());
+        file_bytes.extend_from_slice(header_json.as_bytes());
+        file_bytes.extend_from_slice(&payload);
+
+        let engine = NexoraMtEngine::from_bytes(&file_bytes).expect("synthetic .nxmt v2 loads");
+        let _out = engine.translate("Hello Nexora", 6);
     }
 }
