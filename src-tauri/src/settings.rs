@@ -137,6 +137,13 @@ impl NexoraSettings {
         if !crate::hotkey::is_valid_shortcut(&self.island_hotkey) {
             self.island_hotkey = default_island_hotkey();
         }
+        self.poll_interval_secs = self.poll_interval_secs.clamp(1, 60);
+        if let Some(blur) = self.island_blur_px {
+            self.island_blur_px = Some(blur.min(64));
+        }
+        if let Some(radius) = self.island_radius_px {
+            self.island_radius_px = Some(radius.min(48));
+        }
         self
     }
 }
@@ -383,6 +390,26 @@ mod tests {
         fs::write(settings_path(&dir), r#"{"theme": "neon-glass"}"#).expect("write legacy");
         let loaded = load_from_dir(&dir);
         assert!(!loaded.online_translation);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn numeric_settings_are_clamped_within_safe_bounds() {
+        let dir = test_dir();
+        fs::create_dir_all(&dir).expect("create test dir");
+        fs::write(
+            settings_path(&dir),
+            r#"{"poll_interval_secs": 0, "island_blur_px": 255, "island_radius_px": 200}"#,
+        )
+        .expect("write out-of-range");
+        let low = load_from_dir(&dir);
+        assert_eq!(low.poll_interval_secs, 1);
+        assert_eq!(low.island_blur_px, Some(64));
+        assert_eq!(low.island_radius_px, Some(48));
+
+        fs::write(settings_path(&dir), r#"{"poll_interval_secs": 9999}"#).expect("write high");
+        let high = load_from_dir(&dir);
+        assert_eq!(high.poll_interval_secs, 60);
         let _ = fs::remove_dir_all(&dir);
     }
 }
