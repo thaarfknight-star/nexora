@@ -1404,7 +1404,8 @@ pub async fn start_live_translate(
     if !crate::ipc::is_privileged_window(window.label()) {
         return Err("Unauthorized window".to_string());
     }
-    let allow_online = online_translation.unwrap_or_else(|| crate::settings::load(&app).online_translation);
+    let allow_online =
+        online_translation.unwrap_or_else(|| crate::settings::load(&app).online_translation);
     let resolved_mode = match capture_mode.as_deref() {
         Some("app") => "app".to_string(),
         _ => "system".to_string(),

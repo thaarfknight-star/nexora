@@ -912,10 +912,7 @@ mod tests {
             r"C:\Windows\System32\cmd.exe",
             &allowed
         ));
-        assert!(!is_allowed_pinned_target(
-            r"\\evil\share\run.exe",
-            &allowed
-        ));
+        assert!(!is_allowed_pinned_target(r"\\evil\share\run.exe", &allowed));
         assert!(!is_allowed_pinned_target("http://example.com", &allowed));
         assert!(!is_allowed_pinned_target(
             "file:///C:/Windows/calc.exe",
