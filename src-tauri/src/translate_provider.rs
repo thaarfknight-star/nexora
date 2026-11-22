@@ -56,6 +56,8 @@ fn provider_http_client() -> &'static reqwest::blocking::Client {
 pub enum TranslateProviderId {
     /// Local speech transcription only; zero external network requests.
     None,
+    /// Free Google Translate endpoint (no API key required).
+    GoogleFree,
     /// Official Google Cloud Translation API v2 (user-supplied API key).
     GoogleCloud,
     /// Official Gemini API (`gemini-2.5-flash-lite`, user-supplied API key).
@@ -67,6 +69,7 @@ pub enum TranslateProviderId {
 impl TranslateProviderId {
     pub fn parse_id(raw: &str) -> Self {
         match raw.trim().to_ascii_lowercase().as_str() {
+            "google_free" | "google-free" | "google" => Self::GoogleFree,
             "google_cloud" | "google-cloud" | "gcloud" => Self::GoogleCloud,
             "gemini" => Self::Gemini,
             "local" => Self::Local,
@@ -77,6 +80,7 @@ impl TranslateProviderId {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",
+            Self::GoogleFree => "google_free",
             Self::GoogleCloud => "google_cloud",
             Self::Gemini => "gemini",
             Self::Local => "local",
@@ -84,11 +88,11 @@ impl TranslateProviderId {
     }
 
     pub fn is_cloud(self) -> bool {
-        matches!(self, Self::GoogleCloud | Self::Gemini)
+        matches!(self, Self::GoogleFree | Self::GoogleCloud | Self::Gemini)
     }
 
     pub fn requires_api_key(self) -> bool {
-        self.is_cloud()
+        matches!(self, Self::GoogleCloud | Self::Gemini)
     }
 }
 
@@ -212,6 +216,90 @@ pub struct TranslateRequest<'a> {
 pub trait TranslateProvider: Send + Sync {
     fn id(&self) -> TranslateProviderId;
     fn translate(&self, req: &TranslateRequest<'_>) -> Result<String, TranslateError>;
+}
+
+/// Free Google Translate provider (no API key required; uses Nexora User-Agent).
+pub struct GoogleFreeTranslateProvider;
+
+fn url_encode_query(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() * 2);
+    for b in input.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            b' ' => out.push_str("%20"),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// Parses Google Translate's lightweight JSON array response (`[[["translated","orig",...]]]`).
+pub fn parse_google_free_response(raw: &str) -> Result<String, TranslateError> {
+    let val: serde_json::Value = serde_json::from_str(raw)
+        .map_err(|e| TranslateError::InvalidResponse(format!("JSON parse error: {e}")))?;
+    let sentences = val
+        .get(0)
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| TranslateError::InvalidResponse("missing segments array".into()))?;
+    let mut out = String::new();
+    for seg in sentences {
+        if let Some(piece) = seg.get(0).and_then(|v| v.as_str()) {
+            out.push_str(piece);
+        }
+    }
+    let trimmed = out.trim();
+    if trimmed.is_empty() {
+        Err(TranslateError::EmptyResponse)
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
+impl TranslateProvider for GoogleFreeTranslateProvider {
+    fn id(&self) -> TranslateProviderId {
+        TranslateProviderId::GoogleFree
+    }
+
+    fn translate(&self, req: &TranslateRequest<'_>) -> Result<String, TranslateError> {
+        let clean = req.text.trim();
+        if clean.is_empty() {
+            return Err(TranslateError::EmptyResponse);
+        }
+        let sl = if req.source_lang.is_empty() {
+            "auto"
+        } else {
+            req.source_lang
+        };
+        let tl = if req.target_lang.is_empty() {
+            "fa"
+        } else {
+            req.target_lang
+        };
+        let encoded = url_encode_query(clean);
+        let url = format!(
+            "https://translate.googleapis.com/translate_a/single?client=gtx&sl={sl}&tl={tl}&dt=t&q={encoded}"
+        );
+        let resp = provider_http_client()
+            .get(&url)
+            .send()
+            .map_err(map_reqwest_error)?;
+        let status = resp.status();
+        if status.as_u16() == 429 {
+            return Err(TranslateError::RateLimited);
+        }
+        if !status.is_success() {
+            return Err(TranslateError::InvalidResponse(format!(
+                "HTTP {}",
+                status.as_u16()
+            )));
+        }
+        let raw = resp
+            .text()
+            .map_err(|e| TranslateError::InvalidResponse(e.to_string()))?;
+        parse_google_free_response(&raw)
+    }
 }
 
 /// Official Google Cloud Translation API v2 provider.
@@ -795,6 +883,14 @@ mod tests {
         assert_eq!(
             TranslateProviderId::parse_id("local"),
             TranslateProviderId::Local
+        );
+        assert_eq!(
+            TranslateProviderId::parse_id("google_free"),
+            TranslateProviderId::GoogleFree
+        );
+        assert_eq!(
+            parse_google_free_response(r#"[[["سلام دنیا","Hello world",null,null,1]]]"#),
+            Ok("سلام دنیا".to_string())
         );
         assert_eq!(
             TranslateProviderId::parse_id("unknown"),

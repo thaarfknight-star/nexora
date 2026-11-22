@@ -297,10 +297,22 @@ impl QuantMatrix {
         let mut out = vec![0.0f32; self.rows];
         let scale = self.scale;
         let cols = self.cols;
+        let (x_chunks, x_rem) = x.as_chunks::<4>();
         for (r, out_val) in out.iter_mut().enumerate() {
             let row = &self.data[r * cols..(r + 1) * cols];
-            let mut acc = 0.0f32;
-            for (&q, &xv) in row.iter().zip(x.iter()) {
+            let (q_chunks, q_rem) = row.as_chunks::<4>();
+            let mut a0 = 0.0f32;
+            let mut a1 = 0.0f32;
+            let mut a2 = 0.0f32;
+            let mut a3 = 0.0f32;
+            for (qc, xc) in q_chunks.iter().zip(x_chunks.iter()) {
+                a0 += f32::from(qc[0]) * xc[0];
+                a1 += f32::from(qc[1]) * xc[1];
+                a2 += f32::from(qc[2]) * xc[2];
+                a3 += f32::from(qc[3]) * xc[3];
+            }
+            let mut acc = (a0 + a1) + (a2 + a3);
+            for (&q, &xv) in q_rem.iter().zip(x_rem.iter()) {
                 acc += f32::from(q) * xv;
             }
             *out_val = acc * scale;
@@ -659,7 +671,10 @@ impl NexoraMtEngine {
         let mut self_k_cache: Vec<Vec<Vec<f32>>> = vec![Vec::new(); self.decoder.len()];
         let mut self_v_cache: Vec<Vec<Vec<f32>>> = vec![Vec::new(); self.decoder.len()];
 
-        let max_steps = max_new_tokens.min(self.cfg.max_len.saturating_sub(1));
+        let adaptive_cap = src_ids.len().saturating_mul(2).saturating_add(8).min(48);
+        let max_steps = max_new_tokens
+            .min(adaptive_cap)
+            .min(self.cfg.max_len.saturating_sub(1));
         let mut generated: Vec<usize> = Vec::with_capacity(max_steps);
         let mut cur_tok = self.cfg.bos_id;
 
@@ -697,23 +712,87 @@ impl NexoraMtEngine {
 
             let final_h = rms_norm(&x, &self.dec_norm);
 
-            // Greedy argmax over weight-tied lm_head (`tok_emb`)
-            let mut best_id = self.cfg.eos_id;
-            let mut best_logit = f32::NEG_INFINITY;
+            // Parallel 4-way unrolled greedy argmax over weight-tied lm_head (`tok_emb`)
             let cols = self.tok_emb.cols;
-            for v_id in 0..self.tok_emb.rows {
-                let row = &self.tok_emb.data[v_id * cols..(v_id + 1) * cols];
-                let mut dot = 0.0f32;
-                for (&q, &hv) in row.iter().zip(final_h.iter()) {
-                    dot += f32::from(q) * hv;
+            let rows = self.tok_emb.rows;
+            let data = &self.tok_emb.data;
+            let (h_chunks, h_rem) = final_h.as_chunks::<4>();
+            let n_workers = std::thread::available_parallelism()
+                .map(|n| n.get().clamp(1, 4))
+                .unwrap_or(2);
+            let best_id = if rows >= 1024 && n_workers > 1 {
+                let chunk_rows = rows.div_ceil(n_workers);
+                std::thread::scope(|s| {
+                    let mut handles = Vec::with_capacity(n_workers);
+                    for w in 0..n_workers {
+                        let start = w * chunk_rows;
+                        let end = (start + chunk_rows).min(rows);
+                        if start >= end {
+                            continue;
+                        }
+                        handles.push(s.spawn(move || {
+                            let mut local_id = start;
+                            let mut local_best = f32::NEG_INFINITY;
+                            for v_id in start..end {
+                                let row = &data[v_id * cols..(v_id + 1) * cols];
+                                let (qc, qr) = row.as_chunks::<4>();
+                                let mut a0 = 0.0f32;
+                                let mut a1 = 0.0f32;
+                                let mut a2 = 0.0f32;
+                                let mut a3 = 0.0f32;
+                                for (q4, h4) in qc.iter().zip(h_chunks.iter()) {
+                                    a0 += f32::from(q4[0]) * h4[0];
+                                    a1 += f32::from(q4[1]) * h4[1];
+                                    a2 += f32::from(q4[2]) * h4[2];
+                                    a3 += f32::from(q4[3]) * h4[3];
+                                }
+                                let mut dot = (a0 + a1) + (a2 + a3);
+                                for (&q, &hv) in qr.iter().zip(h_rem.iter()) {
+                                    dot += f32::from(q) * hv;
+                                }
+                                if dot > local_best {
+                                    local_best = dot;
+                                    local_id = v_id;
+                                }
+                            }
+                            (local_id, local_best)
+                        }));
+                    }
+                    let mut global_id = self.cfg.eos_id;
+                    let mut global_best = f32::NEG_INFINITY;
+                    for h in handles {
+                        if let Ok((id, score)) = h.join() {
+                            if score > global_best {
+                                global_best = score;
+                                global_id = id;
+                            }
+                        }
+                    }
+                    global_id
+                })
+            } else {
+                let mut local_id = self.cfg.eos_id;
+                let mut local_best = f32::NEG_INFINITY;
+                for v_id in 0..rows {
+                    let row = &data[v_id * cols..(v_id + 1) * cols];
+                    let mut dot = 0.0f32;
+                    for (&q, &hv) in row.iter().zip(final_h.iter()) {
+                        dot += f32::from(q) * hv;
+                    }
+                    if dot > local_best {
+                        local_best = dot;
+                        local_id = v_id;
+                    }
                 }
-                if dot > best_logit {
-                    best_logit = dot;
-                    best_id = v_id;
-                }
-            }
+                local_id
+            };
 
             if best_id == self.cfg.eos_id {
+                break;
+            }
+            // Prevent repetitive greedy loops on noisy partial audio.
+            let n = generated.len();
+            if n >= 2 && generated[n - 1] == best_id && generated[n - 2] == best_id {
                 break;
             }
             generated.push(best_id);
