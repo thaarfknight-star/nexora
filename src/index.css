@@ -2217,6 +2217,45 @@ body,
   -webkit-backdrop-filter: blur(16px);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
   text-align: center;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.45s ease, transform 0.45s ease;
+}
+
+.subtitle-box--fading {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+@keyframes subWordIn {
+  from {
+    opacity: 0.25;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.sub-word {
+  display: inline;
+  animation: subWordIn 0.14s ease-out;
+}
+
+.subtitle-css-textarea {
+  width: 100%;
+  min-height: 82px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(8, 10, 18, 0.65);
+  color: #e2e8f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  resize: vertical;
+  direction: ltr;
+  text-align: left;
 }
 
 .subtitle-original {

@@ -120,6 +120,9 @@ pub struct NexoraSettings {
     /// Selected Whisper GGML speech model filename.
     #[serde(default = "default_whisper_model")]
     pub whisper_model: String,
+    /// User-defined custom CSS applied inside the floating subtitle overlay window.
+    #[serde(default)]
+    pub subtitle_custom_css: String,
 }
 
 impl Default for NexoraSettings {
@@ -148,6 +151,7 @@ pub fn defaults() -> NexoraSettings {
         translate_source_lang: default_translate_source_lang(),
         translate_target_lang: default_translate_target_lang(),
         whisper_model: default_whisper_model(),
+        subtitle_custom_css: String::new(),
     }
 }
 
@@ -198,6 +202,9 @@ impl NexoraSettings {
                 | "ggml-large-v3-turbo-q5_0.bin"
         ) {
             self.whisper_model = default_whisper_model();
+        }
+        if self.subtitle_custom_css.len() > 8192 {
+            self.subtitle_custom_css.truncate(8192);
         }
         self
     }

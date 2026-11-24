@@ -13,7 +13,8 @@ pub mod taskbar;
 pub mod taskbar_content;
 pub mod translate_provider;
 pub mod translate_secrets;
-pub mod translator;
+pub mod dubbing;
+mod translator;
 pub mod tray;
 pub mod updater;
 pub mod vibrancy;
@@ -202,6 +203,12 @@ pub fn run() {
             translator::start_live_translate,
             translator::stop_live_translate,
             translator::test_subtitle_overlay,
+            dubbing::get_dubbing_status,
+            dubbing::download_dubbing_engine,
+            dubbing::remove_dubbing_engine,
+            dubbing::start_live_dubbing,
+            dubbing::stop_live_dubbing,
+            dubbing::test_dubbing_voice,
             translator::set_translate_api_key,
             translator::delete_translate_api_key,
             translator::get_translate_api_key_status,
