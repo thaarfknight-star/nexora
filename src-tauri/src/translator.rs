@@ -2400,9 +2400,9 @@ pub async fn download_local_translate_model(
         )?;
         fs::rename(&part_path, &final_path)
             .map_err(|e| format!("Failed finalizing Nexora-MT model: {e}"))?;
-        let legacy_path = dir.join(crate::translate_provider::LEGACY_LOCAL_TRANSLATE_MODEL_FILENAME);
-        if legacy_path.exists() {
-            let _ = fs::remove_file(&legacy_path);
+        let legacy = dir.join(crate::translate_provider::LEGACY_LOCAL_TRANSLATE_MODEL_FILENAME);
+        if legacy.exists() {
+            let _ = fs::remove_file(&legacy);
         }
         crate::nexora_mt::invalidate_cached_engine();
 
