@@ -148,7 +148,8 @@ fn build_status(app: &AppHandle) -> DubbingStatus {
     let prefs = DUB_PREFS.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let spec = voice_spec(&prefs.voice_id);
     let piper_installed = find_piper_binary(&dir).is_some();
-    let voice_installed = dir.join(spec.onnx_filename).is_file() && dir.join(spec.json_filename).is_file();
+    let voice_installed =
+        dir.join(spec.onnx_filename).is_file() && dir.join(spec.json_filename).is_file();
     let whisper_ready = {
         let t_dir = crate::translator::engine_dir(app);
         crate::translator::find_whisper_binary(&t_dir).is_some()
@@ -414,9 +415,7 @@ fn run_dubbing_pipeline(
     speech_rate_pct: u16,
     provider_id: crate::translate_provider::TranslateProviderId,
 ) -> Result<(), String> {
-    use wasapi::{
-        initialize_mta, AudioClient, Direction, SampleType, StreamMode, WaveFormat,
-    };
+    use wasapi::{initialize_mta, AudioClient, Direction, SampleType, StreamMode, WaveFormat};
 
     let _ = initialize_mta();
     let desired_format = WaveFormat::new(16, 16, SampleType::Int, CAPTURE_SAMPLE_RATE, 1, None);
@@ -461,8 +460,10 @@ fn run_dubbing_pipeline(
 
     let phrase_slot: Arc<(Mutex<(Option<Vec<u8>>, bool)>, Condvar)> =
         Arc::new((Mutex::new((None, false)), Condvar::new()));
-    let tts_queue: Arc<(Mutex<(VecDeque<String>, bool)>, Condvar)> =
-        Arc::new((Mutex::new((VecDeque::with_capacity(MAX_TTS_QUEUE + 1), false)), Condvar::new()));
+    let tts_queue: Arc<(Mutex<(VecDeque<String>, bool)>, Condvar)> = Arc::new((
+        Mutex::new((VecDeque::with_capacity(MAX_TTS_QUEUE + 1), false)),
+        Condvar::new(),
+    ));
 
     // Thread 1: Playback + Audio Ducking worker
     let tts_rx = Arc::clone(&tts_queue);
@@ -519,9 +520,9 @@ fn run_dubbing_pipeline(
         let threads = std::thread::available_parallelism()
             .map(|n| n.get().clamp(2, 6))
             .unwrap_or(4);
-        let server = server_bin
-            .as_deref()
-            .and_then(|sb| crate::translator::ResidentWhisperServer::start(sb, &whisper_model_path, "en", threads));
+        let server = server_bin.as_deref().and_then(|sb| {
+            crate::translator::ResidentWhisperServer::start(sb, &whisper_model_path, "en", threads)
+        });
         let api_key = crate::translate_secrets::get_api_key(provider_id);
         let provider = crate::translate_provider::build_provider(
             provider_id,
@@ -870,7 +871,10 @@ pub fn start_live_dubbing(
     let wmodel = wdir.join(&settings.whisper_model);
     if !wmodel.is_file() {
         DUB_RUNNING.store(false, Ordering::SeqCst);
-        return Err("Whisper speech model is required for live dubbing. Download it in Engines first.".to_string());
+        return Err(
+            "Whisper speech model is required for live dubbing. Download it in Engines first."
+                .to_string(),
+        );
     }
 
     let prov_str = translate_provider.unwrap_or_else(|| settings.translate_provider.clone());
@@ -905,7 +909,18 @@ pub fn start_live_dubbing(
         );
         #[cfg(not(windows))]
         let res: Result<(), String> = {
-            let _ = (wdir, wmodel, voice_onnx, voice_json, piper_bin, mode, target_pid, duck, rate, prov_id);
+            let _ = (
+                wdir,
+                wmodel,
+                voice_onnx,
+                voice_json,
+                piper_bin,
+                mode,
+                target_pid,
+                duck,
+                rate,
+                prov_id,
+            );
             Err("Live dubbing is supported on Windows 10/11 only.".to_string())
         };
 
@@ -944,7 +959,8 @@ pub async fn test_dubbing_voice(
     if !crate::ipc::is_privileged_window(window.label()) {
         return Err("Unauthorized window".to_string());
     }
-    let sample = text.unwrap_or_else(|| "سلام! موتور دوبله هوشمند نوکسورا آماده به کار است.".to_string());
+    let sample = text
+        .unwrap_or_else(|| "سلام! موتور دوبله هوشمند نوکسورا آماده به کار است.".to_string());
     let spec = voice_spec(voice_id.as_deref().unwrap_or("fa_IR-amir-medium"));
     let rate = speech_rate_pct.unwrap_or(105);
     let vdir = voice_dir(&app);
