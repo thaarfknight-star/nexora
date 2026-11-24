@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.21] - 2026-11-24
+
+### What's New
+- **Nexora-MT v2 Offline Model Shipped (`~50.8 MB`, Per-Row INT8)**: Upgraded the built-in offline English → Persian subtitle model to the newly trained **Nexora-MT v2** (`55M` params, 6-layer encoder / 4-layer decoder, `24k` BPE, 22 epochs, `Per-Row INT8` `.nxmt v2`) with SHA-256 verification and one-click download/update in Settings → Engines.
+- **Automatic Legacy v1 Cleanup**: Upgrading to or removing `Nexora-MT v2` automatically deletes the older `nexora-mt-en-fa-v1.nxmt` file to free disk space.
+
+### Bug Fixes
+- Hardened `RMSNorm` inside `nexora-mt/train_nexora_mt_v2_colab.ipynb` to accumulate variance in FP32 to prevent T4 FP16 overflow.
+
 ## [0.2.20] - 2026-11-22
 
 ### What's New

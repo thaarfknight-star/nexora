@@ -501,18 +501,17 @@ impl TranslateProvider for GeminiTranslateProvider {
     }
 }
 
-/// Reserved filename for custom offline translation model (Nexora-MT v1).
-/// `llama-server` / Qwen2.5 was intentionally removed in v0.2.13; no unverified
-/// third-party GGUF hashes are hardcoded here.
-pub const LOCAL_TRANSLATE_MODEL_FILENAME: &str = "nexora-mt-en-fa-v1.nxmt";
-/// TODO: Fill with the verified SHA-256 hex digest once `nexora-mt-en-fa-v1.nxmt`
-/// finishes training and is published to GitHub Releases.
+/// Filename for Nexora's custom offline translation model (Nexora-MT v2, Per-Row INT8).
+pub const LOCAL_TRANSLATE_MODEL_FILENAME: &str = "nexora-mt-en-fa-v2.nxmt";
+/// Legacy v1 filename cleaned up automatically on upgrade/removal.
+pub const LEGACY_LOCAL_TRANSLATE_MODEL_FILENAME: &str = "nexora-mt-en-fa-v1.nxmt";
+/// Verified SHA-256 hex digest for `nexora-mt-en-fa-v2.nxmt` (53,234,765 bytes).
 pub const LOCAL_TRANSLATE_MODEL_SHA256: &str =
-    "2f8f70c73e51a894a38f6470e41946994061cad196a58ba42d6b58aa36051f57";
+    "a9dd2b9ecbcbb5aa0204c2aafb4320c5e68fc3895dfcefc1410a59ed5b80fef9";
 
-/// Official release URL for the quantized Nexora-MT v1 offline model (~26.4 MB).
+/// Official release URL for the Per-Row INT8 quantized Nexora-MT v2 offline model (~50.8 MB).
 pub const LOCAL_TRANSLATE_MODEL_URL: &str =
-    "https://github.com/thaarfknight-star/nexora/releases/download/nexora-mt-v1/nexora-mt-en-fa-v1.nxmt";
+    "https://github.com/thaarfknight-star/nexora/releases/download/nexora-mt-v2/nexora-mt-en-fa-v2.nxmt";
 
 /// Pure-Rust offline translation provider powered by Nexora-MT v1 (`.nxmt`).
 pub struct LocalTranslateProvider {
@@ -533,12 +532,12 @@ impl TranslateProvider for LocalTranslateProvider {
     fn translate(&self, req: &TranslateRequest<'_>) -> Result<String, TranslateError> {
         let Some(ref path) = self.model_path else {
             return Err(TranslateError::Unsupported(
-                "Local Nexora-MT v1 model path is not configured".to_string(),
+                "Local Nexora-MT v2 model path is not configured".to_string(),
             ));
         };
         if !path.exists() {
             return Err(TranslateError::Unsupported(
-                "Local Nexora-MT v1 model (nexora-mt-en-fa-v1.nxmt) is not installed yet"
+                "Local Nexora-MT v2 model (nexora-mt-en-fa-v2.nxmt) is not installed yet"
                     .to_string(),
             ));
         }
