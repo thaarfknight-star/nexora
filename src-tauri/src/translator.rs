@@ -2391,7 +2391,7 @@ pub async fn download_local_translate_model(
             &part_path,
             5,
             95,
-            "Downloading Nexora-MT v1 offline model (~27 MB)...",
+            "Downloading Nexora-MT v2 offline model (~51 MB)...",
             &app_clone,
         )?;
         verify_file_sha256(
@@ -2400,6 +2400,10 @@ pub async fn download_local_translate_model(
         )?;
         fs::rename(&part_path, &final_path)
             .map_err(|e| format!("Failed finalizing Nexora-MT model: {e}"))?;
+        let legacy = dir.join(crate::translate_provider::LEGACY_LOCAL_TRANSLATE_MODEL_FILENAME);
+        if legacy.exists() {
+            let _ = fs::remove_file(&legacy);
+        }
         crate::nexora_mt::invalidate_cached_engine();
 
         let _ = app_clone.emit(
@@ -2437,10 +2441,15 @@ pub fn remove_local_translate_model(
     if !crate::ipc::is_privileged_window(window.label()) {
         return Err("Unauthorized window".to_string());
     }
-    let path = engine_dir(&app).join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME);
+    let dir = engine_dir(&app);
+    let path = dir.join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME);
     if path.exists() {
         fs::remove_file(&path).map_err(|e| format!("Failed removing local model: {e}"))?;
         crate::nexora_mt::invalidate_cached_engine();
+    }
+    let legacy = dir.join(crate::translate_provider::LEGACY_LOCAL_TRANSLATE_MODEL_FILENAME);
+    if legacy.exists() {
+        let _ = fs::remove_file(&legacy);
     }
     let st = build_status(&app);
     emit_status_changed(&app, &st);

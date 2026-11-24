@@ -2673,7 +2673,7 @@ function SettingsView() {
   };
 
   const handleDownloadLocalModel = () => {
-    setDownloadProgress({ percent: 5, stage: "Downloading Nexora-MT v1..." });
+    setDownloadProgress({ percent: 5, stage: "Downloading Nexora-MT v2..." });
     invoke<TranslateEngineStatus>("download_local_translate_model")
       .then((st) => {
         setTranslateStatus(st);

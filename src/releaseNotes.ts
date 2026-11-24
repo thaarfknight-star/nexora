@@ -17,6 +17,32 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.21",
+    date: "2026-11-24",
+    title: {
+      en: "Nexora-MT v2 Offline Model (~51 MB, Per-Row INT8)",
+      fa: "انتشار مدل آفلاین Nexora-MT v2 (حدود ۵۱ مگابایت، Per-Row INT8)",
+    },
+    features: {
+      en: [
+        "Shipped the newly trained Nexora-MT v2 offline English → Persian subtitle model (55M params, 6 enc / 4 dec, 24k BPE, Per-Row INT8, ~50.8 MB) with SHA-256 verification.",
+        "Added automatic cleanup of legacy nexora-mt-en-fa-v1.nxmt files when installing or removing v2.",
+      ],
+      fa: [
+        "انتشار مدل جدید و آموزش‌دیده Nexora-MT v2 برای ترجمه آفلاین انگلیسی به فارسی (۵۵ میلیون پارامتر، کوانتایزیشن سطری Per-Row INT8، حدود ۵۱ مگابایت) با تایید SHA-256.",
+        "پاک‌سازی خودکار فایل قدیمی nexora-mt-en-fa-v1.nxmt هنگام نصب یا حذف نسخه v2 برای آزادسازی فضای دیسک.",
+      ],
+    },
+    fixes: {
+      en: [
+        "Patched RMSNorm to compute variance in FP32 inside the Colab training notebook to prevent FP16 overflow on T4 GPUs.",
+      ],
+      fa: [
+        "اصلاح محاسبه واریانس RMSNorm به FP32 در نوت‌بوک آموزش Colab برای جلوگیری از خطای سرریز FP16 روی GPUهای T4.",
+      ],
+    },
+  },
+  {
     version: "0.2.20",
     date: "2026-11-22",
     title: {
