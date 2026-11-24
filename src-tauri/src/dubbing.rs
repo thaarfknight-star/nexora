@@ -335,10 +335,8 @@ mod win_audio {
                     if pid == 0 || pid == self_pid {
                         continue;
                     }
-                    if let Some(wanted) = target_pid {
-                        if pid != wanted {
-                            continue;
-                        }
+                    if target_pid.is_some_and(|wanted| pid != wanted) {
+                        continue;
                     }
                     let Ok(vol) = ctrl.cast::<ISimpleAudioVolume>() else {
                         continue;
@@ -406,6 +404,7 @@ mod win_audio {
 }
 
 #[cfg(windows)]
+#[allow(clippy::too_many_arguments)]
 fn run_dubbing_pipeline(
     app: AppHandle,
     whisper_dir: PathBuf,
