@@ -265,7 +265,11 @@ fn synthesize_piper_wav(
         .map_err(|e| format!("Piper wait failed: {e}"))?;
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Piper exited with {}: {}", output.status, err.trim()));
+        return Err(format!(
+            "Piper exited with {}: {}",
+            output.status,
+            err.trim()
+        ));
     }
     if !out_wav.is_file() {
         return Err("Piper did not produce output WAV".to_string());
@@ -523,12 +527,7 @@ fn run_dubbing_pipeline(
             .map(|n| n.get().clamp(2, 6))
             .unwrap_or(4);
         let server = server_bin.as_deref().and_then(|sb| {
-            crate::translator::ResidentWhisperServer::start(
-                sb,
-                &whisper_model_path,
-                "en",
-                threads,
-            )
+            crate::translator::ResidentWhisperServer::start(sb, &whisper_model_path, "en", threads)
         });
         let api_key = crate::translate_secrets::get_api_key(provider_id);
         let provider = crate::translate_provider::build_provider(
@@ -775,9 +774,9 @@ pub async fn download_dubbing_engine(
                 45,
                 92,
                 &format!(
-                "Downloading Persian voice {} (~{} MB)...",
-                spec.id, spec.approx_mb
-            ),
+                    "Downloading Persian voice {} (~{} MB)...",
+                    spec.id, spec.approx_mb
+                ),
                 &app_clone,
                 "dubbing-download-progress",
             )?;
@@ -927,15 +926,7 @@ pub fn start_live_dubbing(
         #[cfg(not(windows))]
         let res: Result<(), String> = {
             let _ = (
-                wdir,
-                wmodel,
-                voice_onnx,
-                voice_json,
-                piper_bin,
-                mode,
-                target_pid,
-                duck,
-                rate,
+                wdir, wmodel, voice_onnx, voice_json, piper_bin, mode, target_pid, duck, rate,
                 prov_id,
             );
             Err("Live dubbing is supported on Windows 10/11 only.".to_string())
@@ -976,8 +967,8 @@ pub async fn test_dubbing_voice(
     if !crate::ipc::is_privileged_window(window.label()) {
         return Err("Unauthorized window".to_string());
     }
-    let sample = text
-        .unwrap_or_else(|| "سلام! موتور دوبله هوشمند نوکسورا آماده به کار است.".to_string());
+    let sample =
+        text.unwrap_or_else(|| "سلام! موتور دوبله هوشمند نوکسورا آماده به کار است.".to_string());
     let spec = voice_spec(voice_id.as_deref().unwrap_or("fa_IR-amir-medium"));
     let rate = speech_rate_pct.unwrap_or(105);
     let vdir = voice_dir(&app);

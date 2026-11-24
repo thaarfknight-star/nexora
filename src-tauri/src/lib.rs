@@ -1,6 +1,7 @@
 use tauri::{AppHandle, Manager};
 
 pub mod diagnostics;
+pub mod dubbing;
 pub mod hotkey;
 pub mod ipc;
 pub mod island;
@@ -13,7 +14,6 @@ pub mod taskbar;
 pub mod taskbar_content;
 pub mod translate_provider;
 pub mod translate_secrets;
-pub mod dubbing;
 mod translator;
 pub mod tray;
 pub mod updater;

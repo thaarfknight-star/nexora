@@ -1110,7 +1110,12 @@ pub(crate) struct ResidentWhisperServer {
 
 #[cfg(target_os = "windows")]
 impl ResidentWhisperServer {
-    pub(crate) fn start(server_bin: &Path, model: &Path, source_lang: &str, threads: usize) -> Option<Self> {
+    pub(crate) fn start(
+        server_bin: &Path,
+        model: &Path,
+        source_lang: &str,
+        threads: usize,
+    ) -> Option<Self> {
         // Retry up to 3 times with fresh ephemeral ports to survive TOCTOU port collisions.
         // Note: whisper-server.exe (b5907) has no built-in auth/token flag; it binds to 127.0.0.1 only.
         for _attempt in 0..3 {
