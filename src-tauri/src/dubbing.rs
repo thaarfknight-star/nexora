@@ -434,10 +434,8 @@ fn run_dubbing_pipeline(
     } else {
         // Full system audio EXCLUDING Nexora's own process tree so our Persian
         // dubbed audio never feeds back into Whisper.
-        let mut client =
-            AudioClient::new_application_loopback_client(std::process::id(), false).map_err(
-                |e| format!("Failed initializing system loopback (excluding Nexora): {e}"),
-            )?;
+        let mut client = AudioClient::new_application_loopback_client(std::process::id(), false)
+            .map_err(|e| format!("Failed initializing system loopback (excluding Nexora): {e}"))?;
         let mode = StreamMode::EventsShared {
             autoconvert: true,
             buffer_duration_hns: 0,
@@ -483,7 +481,9 @@ fn run_dubbing_pipeline(
                 }
                 guard.0.pop_front()
             };
-            let Some(fa_text) = text else { continue };
+            let Some(fa_text) = text else {
+                continue;
+            };
             if synthesize_piper_wav(
                 &piper_bin,
                 &voice_onnx,
@@ -500,10 +500,12 @@ fn run_dubbing_pipeline(
                     prefs.last_spoken_fa = fa_text.clone();
                 }
                 emit_status_changed(&app_tts, &build_status(&app_tts));
-                let _ducker = win_audio::AudioDucker::engage(
-                    if capture_mode == "app" { target_pid } else { None },
-                    duck_percent,
-                );
+                let duck_pid = if capture_mode == "app" {
+                    target_pid
+                } else {
+                    None
+                };
+                let _ducker = win_audio::AudioDucker::engage(duck_pid, duck_percent);
                 let _ = win_audio::play_wav_blocking(&wav_out);
             }
         }
@@ -521,7 +523,12 @@ fn run_dubbing_pipeline(
             .map(|n| n.get().clamp(2, 6))
             .unwrap_or(4);
         let server = server_bin.as_deref().and_then(|sb| {
-            crate::translator::ResidentWhisperServer::start(sb, &whisper_model_path, "en", threads)
+            crate::translator::ResidentWhisperServer::start(
+                sb,
+                &whisper_model_path,
+                "en",
+                threads,
+            )
         });
         let api_key = crate::translate_secrets::get_api_key(provider_id);
         let provider = crate::translate_provider::build_provider(
@@ -542,7 +549,9 @@ fn run_dubbing_pipeline(
                 }
                 guard.0.take()
             };
-            let Some(pcm_bytes) = pcm_opt else { continue };
+            let Some(pcm_bytes) = pcm_opt else {
+                continue;
+            };
             let text_opt = server
                 .as_ref()
                 .and_then(|srv| srv.transcribe_pcm(&pcm_bytes))
@@ -556,7 +565,9 @@ fn run_dubbing_pipeline(
                         threads,
                     )
                 });
-            let Some(en_text) = text_opt else { continue };
+            let Some(en_text) = text_opt else {
+                continue;
+            };
             let en_trim = en_text.trim();
             if en_trim.is_empty() {
                 continue;
@@ -598,7 +609,10 @@ fn run_dubbing_pipeline(
             match capture_client.get_next_packet_size() {
                 Ok(Some(frames)) if frames > 0 => {
                     packet_buf.clear();
-                    if capture_client.read_from_device_to_deque(&mut packet_buf).is_err() {
+                    if capture_client
+                        .read_from_device_to_deque(&mut packet_buf)
+                        .is_err()
+                    {
                         break;
                     }
                     if packet_buf.is_empty() {
@@ -760,7 +774,10 @@ pub async fn download_dubbing_engine(
                 &part,
                 45,
                 92,
-                &format!("Downloading Persian voice {} (~{} MB)...", spec.id, spec.approx_mb),
+                &format!(
+                "Downloading Persian voice {} (~{} MB)...",
+                spec.id, spec.approx_mb
+            ),
                 &app_clone,
                 "dubbing-download-progress",
             )?;
