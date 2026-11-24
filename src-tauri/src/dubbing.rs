@@ -459,9 +459,10 @@ fn run_dubbing_pipeline(
         .start_stream()
         .map_err(|e| format!("Failed starting WASAPI capture stream: {e}"))?;
 
-    let phrase_slot: Arc<(Mutex<(Option<Vec<u8>>, bool)>, Condvar)> =
-        Arc::new((Mutex::new((None, false)), Condvar::new()));
-    let tts_queue: Arc<(Mutex<(VecDeque<String>, bool)>, Condvar)> = Arc::new((
+    type PhraseSlot = Arc<(Mutex<(Option<Vec<u8>>, bool)>, Condvar)>;
+    type TtsQueue = Arc<(Mutex<(VecDeque<String>, bool)>, Condvar)>;
+    let phrase_slot: PhraseSlot = Arc::new((Mutex::new((None, false)), Condvar::new()));
+    let tts_queue: TtsQueue = Arc::new((
         Mutex::new((VecDeque::with_capacity(MAX_TTS_QUEUE + 1), false)),
         Condvar::new(),
     ));

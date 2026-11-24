@@ -498,6 +498,7 @@ impl AdaptiveVadGate {
         self.in_speech = false;
     }
 
+    #[allow(dead_code)]
     pub fn noise_floor(&self) -> f32 {
         self.noise_floor
     }
@@ -727,10 +728,12 @@ impl TranslationCache {
         self.map.insert(key, translated);
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.map.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
