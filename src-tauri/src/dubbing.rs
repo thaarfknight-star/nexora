@@ -453,7 +453,7 @@ fn run_dubbing_pipeline(
         .set_get_eventhandle()
         .map_err(|e| format!("Failed acquiring WASAPI event handle: {e}"))?;
     let capture_client = audio_client
-        .get_audioclient_capture_client()
+        .get_audiocaptureclient()
         .map_err(|e| format!("Failed acquiring capture client: {e}"))?;
     audio_client
         .start_stream()
@@ -576,7 +576,7 @@ fn run_dubbing_pipeline(
                 en_trim.to_string()
             } else {
                 let ctx_vec: Vec<String> = rolling_ctx.iter().cloned().collect();
-                match crate::translate_provider::translate_with_provider(
+                match crate::translator::translate_with_provider(
                     provider_id,
                     api_key.as_deref(),
                     Some(local_model_path.as_path()),
