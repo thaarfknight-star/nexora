@@ -1,6 +1,6 @@
 [package]
 name = "nexora"
-version = "0.2.21"
+version = "0.2.22"
 description = "Floating Dynamic Island shell replacement for Windows 10/11"
 authors = ["Taha Arefi"]
 license = "MIT OR Apache-2.0"
@@ -58,7 +58,7 @@ sha2 = "0.10"
 # need WinAPI should extend this section's feature list (coordinated
 # through DEVagent) instead of adding a second `windows` dep.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = ["ApplicationModel", "Foundation", "Management_Deployment", "Media", "Media_Control", "Storage", "Storage_Search", "Storage_Streams", "Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Threading", "Win32_System_WinRT", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.61", features = ["ApplicationModel", "Foundation", "Management_Deployment", "Media", "Media_Control", "Storage", "Storage_Search", "Storage_Streams", "Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Media_Audio", "Win32_Media_Audio_Endpoints", "Win32_Media_Multimedia", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_System_Threading", "Win32_System_WinRT", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 # Direct dep (default features): windows 0.61 pulls windows-future with
 # default-features off, but awaiting IAsyncOperation needs its `std`
 # feature (the IntoFuture impls). Feature unification turns it on.

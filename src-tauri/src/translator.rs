@@ -218,7 +218,7 @@ fn emit_status_changed(app: &AppHandle, status: &TranslateEngineStatus) {
     let _ = app.emit("translate-status-changed", status);
 }
 
-fn engine_dir(app: &AppHandle) -> PathBuf {
+pub(crate) fn engine_dir(app: &AppHandle) -> PathBuf {
     app.path()
         .app_data_dir()
         .unwrap_or_else(|_| std::env::temp_dir().join("nexora"))
@@ -229,7 +229,7 @@ fn model_path(dir: &Path, model_filename: &str) -> PathBuf {
     dir.join(whisper_model_spec(model_filename).filename)
 }
 
-fn find_whisper_binary(dir: &Path) -> Option<PathBuf> {
+pub(crate) fn find_whisper_binary(dir: &Path) -> Option<PathBuf> {
     let candidates = [
         dir.join("whisper-cli.exe"),
         dir.join("main.exe"),
@@ -240,7 +240,7 @@ fn find_whisper_binary(dir: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "windows")]
-fn find_whisper_server(dir: &Path) -> Option<PathBuf> {
+pub(crate) fn find_whisper_server(dir: &Path) -> Option<PathBuf> {
     let candidates = [
         dir.join("whisper-server.exe"),
         dir.join("Release").join("whisper-server.exe"),
@@ -498,6 +498,7 @@ impl AdaptiveVadGate {
         self.in_speech = false;
     }
 
+    #[allow(dead_code)]
     pub fn noise_floor(&self) -> f32 {
         self.noise_floor
     }
@@ -727,10 +728,12 @@ impl TranslationCache {
         self.map.insert(key, translated);
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.map.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
@@ -800,7 +803,7 @@ pub fn translate_with_provider(
 
 /// Streams an HTTP file to disk natively via `reqwest`, emitting smooth progress percentages.
 #[allow(clippy::too_many_arguments)]
-fn download_file_streaming_event(
+pub(crate) fn download_file_streaming_event(
     client: &reqwest::blocking::Client,
     url: &str,
     dest: &Path,
@@ -861,7 +864,7 @@ fn download_file_streaming_event(
     Ok(())
 }
 
-fn download_file_streaming(
+pub(crate) fn download_file_streaming(
     client: &reqwest::blocking::Client,
     url: &str,
     dest: &Path,
@@ -1103,14 +1106,19 @@ fn list_windows_audio_targets() -> Vec<AudioAppTarget> {
 }
 
 #[cfg(target_os = "windows")]
-struct ResidentWhisperServer {
+pub(crate) struct ResidentWhisperServer {
     child: std::process::Child,
     endpoint: String,
 }
 
 #[cfg(target_os = "windows")]
 impl ResidentWhisperServer {
-    fn start(server_bin: &Path, model: &Path, source_lang: &str, threads: usize) -> Option<Self> {
+    pub(crate) fn start(
+        server_bin: &Path,
+        model: &Path,
+        source_lang: &str,
+        threads: usize,
+    ) -> Option<Self> {
         // Retry up to 3 times with fresh ephemeral ports to survive TOCTOU port collisions.
         // Note: whisper-server.exe (b5907) has no built-in auth/token flag; it binds to 127.0.0.1 only.
         for _attempt in 0..3 {
@@ -1180,7 +1188,7 @@ impl ResidentWhisperServer {
         None
     }
 
-    fn transcribe_pcm(&self, pcm_bytes: &[u8]) -> Option<String> {
+    pub(crate) fn transcribe_pcm(&self, pcm_bytes: &[u8]) -> Option<String> {
         let wav_bytes = encode_pcm16_mono_wav_bytes(pcm_bytes, CAPTURE_SAMPLE_RATE as u32);
         let boundary = "----NexoraWhisperBoundary9f8e7d";
         let body = build_whisper_multipart_body(&wav_bytes, boundary);
@@ -1211,7 +1219,7 @@ impl Drop for ResidentWhisperServer {
 }
 
 #[cfg(target_os = "windows")]
-fn transcribe_cli_fallback(
+pub(crate) fn transcribe_cli_fallback(
     bin: &Path,
     model: &Path,
     wav_path: &Path,

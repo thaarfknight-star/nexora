@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.22] - 2026-11-24
+
+### What's New
+- **Nexora-Voice v1 Offline Persian Live Dubbing Engine (Foundation)**: Added `src-tauri/src/dubbing.rs` with one-click SHA-256 verified Piper TTS (`2023.11.14-2`) + Persian neural voices (`fa_IR-amir-medium` & `fa_IR-gyro-medium`), support for both **Specific Window/App** and **Full System Audio** (excluding Nexora's own PID to prevent feedback), automatic Windows `ISimpleAudioVolume` audio ducking, and Settings → Engines + Dynamic Island `Engines` tab controls.
+- **Word-by-Word Incremental Subtitles**: Upgraded `SubtitleOverlay` to preserve common word prefixes and reveal newly spoken/translated words smoothly word-by-word instead of rewriting sentences from scratch.
+- **4-Second Silence Auto-Fade**: Subtitles now smoothly fade out after 4 seconds of silence (when video/audio stops or pauses) and reappear immediately on new speech.
+- **Custom Subtitle CSS**: Added a live **Custom Subtitle CSS** editor in Settings → Engines (`subtitle_custom_css`) so users can style `.subtitle-box`, `.subtitle-original`, and `.subtitle-translated` in real time.
+
+### Bug Fixes
+- Fixed the Dynamic Island not auto-collapsing when idle by attaching hover listeners strictly to `.island-stage` (not the full transparent `.island-shell`), allowing `auto-close-timeout` to step down from `compact` to `hidden`, and arming auto-close on window `blur`.
+
 ## [0.2.21] - 2026-11-24
 
 ### What's New

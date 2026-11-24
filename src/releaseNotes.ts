@@ -17,6 +17,36 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.22",
+    date: "2026-11-24",
+    title: {
+      en: "Nexora-Voice v1 Dubbing Foundation, Word-by-Word Subtitles & Custom CSS",
+      fa: "پایه موتور دوبله Nexora-Voice v1، زیرنویس کلمه‌به‌کلمه و CSS سفارشی",
+    },
+    features: {
+      en: [
+        "Started Nexora-Voice v1: offline Persian live dubbing engine with Piper ONNX neural voices (Amir & Gyro), System/App audio capture, self-echo exclusion, and automatic ISimpleAudioVolume audio ducking.",
+        "Upgraded live subtitles to reveal sentences smoothly word-by-word instead of rewriting from the start.",
+        "Added 4-second silence auto-fade so subtitles disappear cleanly when playback pauses or ends.",
+        "Added live Custom Subtitle CSS customization in Settings → Engines.",
+      ],
+      fa: [
+        "شروع ساخت موتور دوبله آفلاین Nexora-Voice v1 با صداهای طبیعی فارسی (امیر و گیرو)، انتخاب پنجره یا کل سیستم، حذف اکوی خودکار و کاهش خودکار صدای اصلی.",
+        "بهبود نمایش زیرنویس به‌صورت کلمه‌به‌کلمه و پیوسته به جای بازنویسی از ابتدا.",
+        "محو شدن خودکار زیرنویس پس از ۴ ثانیه سکوت هنگام توقف یا پایان ویدیو.",
+        "افزودن قابلیت شخصی‌سازی زنده ظاهر زیرنویس با CSS سفارشی در تنظیمات.",
+      ],
+    },
+    fixes: {
+      en: [
+        "Fixed the Dynamic Island staying open when idle by scoping hover detection to the pill and stepping down from compact to hidden on timeout or focus loss.",
+      ],
+      fa: [
+        "رفع مشکل جمع نشدن داینامیک آیلند در زمان بیکاری با محدود کردن هاور به خود کپسول و جمع شدن خودکار پس از خروج یا از دست دادن فوکوس.",
+      ],
+    },
+  },
+  {
     version: "0.2.21",
     date: "2026-11-24",
     title: {

@@ -69,6 +69,8 @@ interface NexoraSettings {
   translate_source_lang?: string;
   translate_target_lang?: string;
   whisper_model?: string;
+  /** Custom CSS injected inside the floating subtitle overlay window. */
+  subtitle_custom_css?: string;
   /** Percent style: "with" (24%) or "without" (24). */
   stats_percent_style: string;
   /** UI language: "en" (default) or "fa". */
@@ -484,6 +486,22 @@ interface SubtitlePayload {
   translation_status?: "ok" | "pending" | "failed" | "offline" | string;
 }
 
+interface DubbingStatus {
+  piper_installed: boolean;
+  voice_installed: boolean;
+  ready: boolean;
+  downloading: boolean;
+  running: boolean;
+  voice_id: string;
+  capture_mode: string;
+  target_pid: number | null;
+  target_app_name: string | null;
+  duck_percent: number;
+  speech_rate_pct: number;
+  last_spoken_fa: string;
+  last_error: string | null;
+}
+
 interface ApiKeyStatus {
   google_cloud: boolean;
   gemini: boolean;
@@ -714,7 +732,7 @@ function IslandApp() {
     }
     autoCloseTimer.current = window.setTimeout(() => {
       const current = visibleRef.current;
-      if (current !== "expanded") {
+      if (current === "hidden") {
         return;
       }
       const next = nextVisible(
@@ -752,6 +770,34 @@ function IslandApp() {
       .catch(() => {});
     return () => {
       unlisten?.();
+    };
+  }, []);
+
+  const [islandDubbingStatus, setIslandDubbingStatus] =
+    useState<DubbingStatus | null>(null);
+
+  useEffect(() => {
+    invoke<DubbingStatus>("get_dubbing_status")
+      .then(setIslandDubbingStatus)
+      .catch(() => {});
+    let unlisten: (() => void) | undefined;
+    listen<DubbingStatus>("dubbing-status-changed", (ev) => {
+      setIslandDubbingStatus(ev.payload);
+    })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {});
+    const onBlur = () => {
+      hoveringRef.current = false;
+      if (visibleRef.current !== "hidden") {
+        armAutoClose();
+      }
+    };
+    window.addEventListener("blur", onBlur);
+    return () => {
+      unlisten?.();
+      window.removeEventListener("blur", onBlur);
     };
   }, []);
 
@@ -1351,7 +1397,9 @@ function IslandApp() {
     }
   }
   const hasDownloadedEngine = Boolean(
-    islandTranslateStatus?.installed || islandTranslateStatus?.local_model_installed,
+    islandTranslateStatus?.installed ||
+      islandTranslateStatus?.local_model_installed ||
+      islandDubbingStatus?.ready,
   );
   const tabs: { id: IslandTab; label: string }[] = [
     { id: "apps", label: t(language, "tabApps") },
@@ -1365,13 +1413,13 @@ function IslandApp() {
   return (
     <main
       className="island-shell"
-      onMouseEnter={onShellMouseEnter}
-      onMouseLeave={onShellMouseLeave}
       onPointerDown={() => { if (!hoveringRef.current && visibleRef.current !== "hidden") armAutoClose(); }}
       onClick={onShellClick}
     >
       <div
         className={`island-stage ${visible}`}
+        onMouseEnter={onShellMouseEnter}
+        onMouseLeave={onShellMouseLeave}
         style={{
           transitionDuration: `${stageMs}ms`,
           transitionTimingFunction: stageEasing,
@@ -2296,6 +2344,43 @@ function IslandApp() {
                     </div>
                   </div>
                 )}
+                {islandDubbingStatus?.ready && (
+                  <div className="panel-line">
+                    <span className="panel-title">{t(language, "dubbingEngineTitle")}</span>
+                    <div className="panel-controls">
+                      <button
+                        type="button"
+                        className={`mini-btn${islandDubbingStatus.running ? " danger-btn" : " primary-btn"}`}
+                        onClick={() => {
+                          if (islandDubbingStatus.running) {
+                            invoke<DubbingStatus>("stop_live_dubbing")
+                              .then(setIslandDubbingStatus)
+                              .catch(() => {});
+                          } else {
+                            const savedMode = window.localStorage.getItem("nexora-translate-capture-mode") || "system";
+                            const savedPidRaw = window.localStorage.getItem("nexora-translate-target-pid");
+                            const savedPid = savedPidRaw ? Number(savedPidRaw) : islandDubbingStatus.target_pid;
+                            const savedAppName = window.localStorage.getItem("nexora-translate-target-app") || islandDubbingStatus.target_app_name;
+                            invoke<DubbingStatus>("start_live_dubbing", {
+                              captureMode: savedMode,
+                              targetPid: savedMode === "app" && savedPid ? savedPid : null,
+                              targetAppName: savedMode === "app" ? savedAppName : null,
+                              voiceId: islandDubbingStatus.voice_id,
+                              duckPercent: islandDubbingStatus.duck_percent,
+                              speechRatePct: islandDubbingStatus.speech_rate_pct,
+                            })
+                              .then(setIslandDubbingStatus)
+                              .catch(() => {});
+                          }
+                        }}
+                      >
+                        {islandDubbingStatus.running
+                          ? t(language, "stopDubbingBtn")
+                          : t(language, "startDubbingBtn")}
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div className="quick-actions">
                   <button type="button" className="mini-btn" onClick={openSettings}>
                     {t(language, "openEngineSettingsBtn")}
@@ -2511,7 +2596,36 @@ function SettingsView() {
   const [apiKeyMsg, setApiKeyMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [testingProvider, setTestingProvider] = useState(false);
 
-  const [openEngineCard, setOpenEngineCard] = useState<"local" | "online" | null>(null);
+  const [openEngineCard, setOpenEngineCard] = useState<"local" | "online" | "dubbing" | null>(null);
+  const [dubbingStatus, setDubbingStatus] = useState<DubbingStatus | null>(null);
+  const [dubbingProgress, setDubbingProgress] = useState<DownloadProgressPayload | null>(null);
+  const [dubVoiceId, setDubVoiceId] = useState("fa_IR-amir-medium");
+  const [dubDuckPercent, setDubDuckPercent] = useState(25);
+  const [dubRatePct, setDubRatePct] = useState(105);
+  const [dubTesting, setDubTesting] = useState(false);
+
+  useEffect(() => {
+    invoke<DubbingStatus>("get_dubbing_status")
+      .then((st) => {
+        setDubbingStatus(st);
+        if (st.voice_id) setDubVoiceId(st.voice_id);
+        setDubDuckPercent(st.duck_percent);
+        setDubRatePct(st.speech_rate_pct);
+      })
+      .catch(() => {});
+    let unSt: (() => void) | undefined;
+    let unPr: (() => void) | undefined;
+    listen<DubbingStatus>("dubbing-status-changed", (ev) => {
+      setDubbingStatus(ev.payload);
+    }).then((fn) => { unSt = fn; }).catch(() => {});
+    listen<DownloadProgressPayload>("dubbing-download-progress", (ev) => {
+      setDubbingProgress(ev.payload);
+    }).then((fn) => { unPr = fn; }).catch(() => {});
+    return () => {
+      unSt?.();
+      unPr?.();
+    };
+  }, []);
   const [onlineProviderChoice, setOnlineProviderChoice] = useState<string>(() => {
     try {
       return window.localStorage.getItem("nexora-online-provider") || "google_free";
@@ -4134,6 +4248,192 @@ function SettingsView() {
             </div>
           )}
         </div>
+
+        <div className="engine-card">
+          <button
+            type="button"
+            className="engine-card-toggle"
+            aria-expanded={openEngineCard === "dubbing"}
+            onClick={() => setOpenEngineCard((c) => (c === "dubbing" ? null : "dubbing"))}
+          >
+            <div>
+              <div className="engine-card-title">{t(language, "dubbingEngineTitle")}</div>
+              <div className="settings-row-desc">{t(language, "dubbingEngineDesc")}</div>
+            </div>
+            <span className="engine-card-chevron">{openEngineCard === "dubbing" ? "▾" : "▸"}</span>
+          </button>
+          {openEngineCard === "dubbing" && (
+            <div className="engine-card-body">
+              <div className="settings-row">
+                <span className="settings-row-text">
+                  <span>{t(language, "dubbingVoiceLabel")}</span>
+                  <span className="audio-mode-hint">
+                    {dubbingStatus?.ready
+                      ? t(language, "dubbingInstalled")
+                      : t(language, "dubbingNotInstalled")}
+                  </span>
+                </span>
+                <select
+                  className="translate-select"
+                  value={dubVoiceId}
+                  onChange={(e) => setDubVoiceId(e.target.value)}
+                >
+                  <option value="fa_IR-amir-medium">Amir (Persian Natural, 22 kHz)</option>
+                  <option value="fa_IR-gyro-medium">Gyro (Persian Expressive, 22 kHz)</option>
+                </select>
+              </div>
+              {!translateStatus?.installed && (
+                <div className="audio-mode-hint">{t(language, "dubbingNeedsWhisper")}</div>
+              )}
+              <div className="settings-row">
+                <span>{t(language, "dubbingDuckLabel")} ({dubDuckPercent}%)</span>
+                <input
+                  type="range"
+                  min={5}
+                  max={100}
+                  step={5}
+                  value={dubDuckPercent}
+                  onChange={(e) => setDubDuckPercent(Number(e.target.value))}
+                />
+              </div>
+              <div className="settings-row">
+                <span>{t(language, "dubbingRateLabel")} ({(dubRatePct / 100).toFixed(2)}x)</span>
+                <input
+                  type="range"
+                  min={75}
+                  max={140}
+                  step={5}
+                  value={dubRatePct}
+                  onChange={(e) => setDubRatePct(Number(e.target.value))}
+                />
+              </div>
+              <div className="settings-row">
+                <div className="translate-btn-group">
+                  <button
+                    type="button"
+                    className="mini-btn primary-btn"
+                    disabled={dubbingStatus?.downloading}
+                    onClick={() => {
+                      setDubbingProgress({ percent: 2, stage: "Starting..." });
+                      invoke<DubbingStatus>("download_dubbing_engine", { voiceId: dubVoiceId })
+                        .then(setDubbingStatus)
+                        .catch(() => {});
+                    }}
+                  >
+                    {t(language, "downloadDubbingBtn")}
+                  </button>
+                  {dubbingStatus?.ready && (
+                    <>
+                      <button
+                        type="button"
+                        className="mini-btn"
+                        disabled={dubTesting}
+                        onClick={() => {
+                          setDubTesting(true);
+                          invoke<string>("test_dubbing_voice", {
+                            voiceId: dubVoiceId,
+                            speechRatePct: dubRatePct,
+                          })
+                            .finally(() => setDubTesting(false));
+                        }}
+                      >
+                        {t(language, "testDubbingBtn")}
+                      </button>
+                      <button
+                        type="button"
+                        className={`mini-btn${dubbingStatus.running ? " danger-btn" : " primary-btn"}`}
+                        onClick={() => {
+                          if (dubbingStatus.running) {
+                            invoke<DubbingStatus>("stop_live_dubbing")
+                              .then(setDubbingStatus)
+                              .catch(() => {});
+                          } else {
+                            invoke<DubbingStatus>("start_live_dubbing", {
+                              captureMode,
+                              targetPid: captureMode === "app" ? targetPid : null,
+                              targetAppName: captureMode === "app" ? targetAppName : null,
+                              voiceId: dubVoiceId,
+                              duckPercent: dubDuckPercent,
+                              speechRatePct: dubRatePct,
+                              translateProvider: settings?.translate_provider ?? "local",
+                            })
+                              .then(setDubbingStatus)
+                              .catch(() => {});
+                          }
+                        }}
+                      >
+                        {dubbingStatus.running ? t(language, "stopDubbingBtn") : t(language, "startDubbingBtn")}
+                      </button>
+                    </>
+                  )}
+                  {(dubbingStatus?.piper_installed || dubbingStatus?.voice_installed) && (
+                    <button
+                      type="button"
+                      className="mini-btn danger-btn"
+                      onClick={() => {
+                        invoke<DubbingStatus>("remove_dubbing_engine")
+                          .then(setDubbingStatus)
+                          .catch(() => {});
+                      }}
+                    >
+                      {t(language, "removeDubbingBtn")}
+                    </button>
+                  )}
+                </div>
+              </div>
+              {dubbingStatus?.downloading && dubbingProgress && (
+                <div className="translate-progress-box">
+                  <div className="translate-progress-label">
+                    <span>{dubbingProgress.stage}</span>
+                    <span>{dubbingProgress.percent}%</span>
+                  </div>
+                  <div className="translate-progress-track">
+                    <div
+                      className="translate-progress-fill"
+                      style={{ width: `${dubbingProgress.percent}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+              {dubbingStatus?.last_error && (
+                <div className="translate-error">{dubbingStatus.last_error}</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="engine-card">
+          <div className="engine-card-body">
+            <div className="settings-row">
+              <span className="settings-row-text">
+                <span>{t(language, "subtitleCustomCssLabel")}</span>
+                <span className="audio-mode-hint">{t(language, "subtitleCustomCssDesc")}</span>
+              </span>
+              <div className="translate-btn-group">
+                <button
+                  type="button"
+                  className="mini-btn"
+                  onClick={() => persistTranslateSettings({ subtitle_custom_css: "" })}
+                >
+                  {t(language, "subtitleCustomCssReset")}
+                </button>
+                <button
+                  type="button"
+                  className="mini-btn primary-btn"
+                  onClick={handleTestSubtitle}
+                >
+                  {t(language, "testSubtitleBtn")}
+                </button>
+              </div>
+            </div>
+            <textarea
+              className="subtitle-css-textarea"
+              value={settings?.subtitle_custom_css ?? ""}
+              placeholder={t(language, "subtitleCustomCssPlaceholder")}
+              onChange={(e) => persistTranslateSettings({ subtitle_custom_css: e.target.value })}
+            />
+          </div>
+        </div>
       </div>
         </>
       )}
@@ -4286,7 +4586,19 @@ function SettingsView() {
   );
 }
 
+function commonWordPrefixLen(a: string[], b: string[]): number {
+  const n = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < n && a[i].toLowerCase() === b[i].toLowerCase()) {
+    i += 1;
+  }
+  return i;
+}
+
 function SubtitleOverlay() {
+  const SUBTITLE_SILENCE_FADE_MS = 4000;
+  const FADE_ANIM_MS = 450;
+
   const [payload, setPayload] = useState<SubtitlePayload>({
     original: "",
     translated: "",
@@ -4294,38 +4606,186 @@ function SubtitleOverlay() {
     active: false,
     translation_status: "ok",
   });
+  const [fadingOut, setFadingOut] = useState(false);
+  const [customCss, setCustomCss] = useState("");
+  const [origWords, setOrigWords] = useState<string[]>([]);
+  const [transWords, setTransWords] = useState<string[]>([]);
+  const [origRevealed, setOrigRevealed] = useState(0);
+  const [transRevealed, setTransRevealed] = useState(0);
+
+  const prevOrigRef = useRef<string[]>([]);
+  const prevTransRef = useRef<string[]>([]);
+  const origRevealedRef = useRef(0);
+  const transRevealedRef = useRef(0);
+  const lastSigRef = useRef("");
+  const fadingRef = useRef(false);
+  const silenceTimerRef = useRef<number | undefined>(undefined);
+  const hideTimerRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
+    invoke<NexoraSettings>("get_settings")
+      .then((s) => setCustomCss(s.subtitle_custom_css ?? ""))
+      .catch(() => {});
+    let unlistenSet: (() => void) | undefined;
+    listen<NexoraSettings>("settings-changed", (ev) => {
+      setCustomCss(ev.payload.subtitle_custom_css ?? "");
+    })
+      .then((fn) => {
+        unlistenSet = fn;
+      })
+      .catch(() => {});
+    return () => {
+      unlistenSet?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    const clearTimers = () => {
+      if (silenceTimerRef.current !== undefined) {
+        window.clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = undefined;
+      }
+      if (hideTimerRef.current !== undefined) {
+        window.clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = undefined;
+      }
+    };
+
     let unlisten: (() => void) | undefined;
     listen<SubtitlePayload>("subtitle-update", (ev) => {
-      setPayload(ev.payload);
+      const next = ev.payload;
+      if (!next.active || (!next.original && !next.translated)) {
+        clearTimers();
+        lastSigRef.current = "";
+        prevOrigRef.current = [];
+        prevTransRef.current = [];
+        origRevealedRef.current = 0;
+        transRevealedRef.current = 0;
+        setOrigWords([]);
+        setTransWords([]);
+        setOrigRevealed(0);
+        setTransRevealed(0);
+        fadingRef.current = false;
+        setFadingOut(false);
+        setPayload(next);
+        return;
+      }
+
+      const nextOrigWords = next.original.trim() ? next.original.trim().split(/\s+/) : [];
+      const nextTransWords = next.translated.trim() ? next.translated.trim().split(/\s+/) : [];
+
+      const origPrefix = commonWordPrefixLen(prevOrigRef.current, nextOrigWords);
+      const nextOrigRev =
+        origPrefix > 0
+          ? Math.min(Math.max(origRevealedRef.current, origPrefix), nextOrigWords.length)
+          : Math.min(1, nextOrigWords.length);
+
+      const transPrefix = commonWordPrefixLen(prevTransRef.current, nextTransWords);
+      const nextTransRev =
+        transPrefix > 0
+          ? Math.min(Math.max(transRevealedRef.current, transPrefix), nextTransWords.length)
+          : Math.min(1, nextTransWords.length);
+
+      prevOrigRef.current = nextOrigWords;
+      prevTransRef.current = nextTransWords;
+      origRevealedRef.current = nextOrigRev;
+      transRevealedRef.current = nextTransRev;
+
+      setOrigWords(nextOrigWords);
+      setTransWords(nextTransWords);
+      setOrigRevealed(nextOrigRev);
+      setTransRevealed(nextTransRev);
+      setPayload(next);
+
+      const sig = `${next.original}\0${next.translated}`;
+      if (sig !== lastSigRef.current || fadingRef.current) {
+        lastSigRef.current = sig;
+        clearTimers();
+        fadingRef.current = false;
+        setFadingOut(false);
+        silenceTimerRef.current = window.setTimeout(() => {
+          fadingRef.current = true;
+          setFadingOut(true);
+          hideTimerRef.current = window.setTimeout(() => {
+            lastSigRef.current = "";
+            prevOrigRef.current = [];
+            prevTransRef.current = [];
+            origRevealedRef.current = 0;
+            transRevealedRef.current = 0;
+            setOrigWords([]);
+            setTransWords([]);
+            setOrigRevealed(0);
+            setTransRevealed(0);
+            fadingRef.current = false;
+            setFadingOut(false);
+            setPayload((cur) => ({ ...cur, original: "", translated: "", active: false }));
+          }, FADE_ANIM_MS);
+        }, SUBTITLE_SILENCE_FADE_MS);
+      }
     })
       .then((fn) => {
         unlisten = fn;
       })
       .catch(() => {});
+
     return () => {
+      clearTimers();
       unlisten?.();
     };
   }, []);
 
+  useEffect(() => {
+    if (origRevealed >= origWords.length && transRevealed >= transWords.length) {
+      return;
+    }
+    const id = window.setInterval(() => {
+      if (origRevealedRef.current < origWords.length) {
+        const step = origWords.length - origRevealedRef.current > 6 ? 2 : 1;
+        origRevealedRef.current = Math.min(origWords.length, origRevealedRef.current + step);
+        setOrigRevealed(origRevealedRef.current);
+      }
+      if (transRevealedRef.current < transWords.length) {
+        const step = transWords.length - transRevealedRef.current > 6 ? 2 : 1;
+        transRevealedRef.current = Math.min(transWords.length, transRevealedRef.current + step);
+        setTransRevealed(transRevealedRef.current);
+      }
+    }, 42);
+    return () => window.clearInterval(id);
+  }, [origWords.length, transWords.length, origRevealed, transRevealed]);
+
   if (!payload.active || (!payload.translated && !payload.original)) {
-    return null;
+    return customCss ? <style id="nexora-subtitle-custom-css">{customCss}</style> : null;
   }
 
   const isRtl = payload.target_lang === "fa" || payload.target_lang === "ar";
   const uiLang: Language = isRtl ? "fa" : "en";
   const status = payload.translation_status ?? "ok";
+  const shownOrig = origWords.slice(0, origRevealed);
+  const shownTrans = transWords.slice(0, transRevealed);
+
   return (
     <div className="subtitle-overlay-root" dir={isRtl ? "rtl" : "ltr"}>
-      <div className="subtitle-box">
-        {payload.original && (
+      {customCss && <style id="nexora-subtitle-custom-css">{customCss}</style>}
+      <div className={`subtitle-box${fadingOut ? " subtitle-box--fading" : ""}`}>
+        {shownOrig.length > 0 && (
           <div className="subtitle-original" dir="auto">
-            {payload.original}
+            {shownOrig.map((w, idx) => (
+              <span key={`o-${idx}-${w}`} className="sub-word">
+                {idx > 0 ? " " : ""}
+                {w}
+              </span>
+            ))}
           </div>
         )}
-        {payload.translated && (
-          <div className="subtitle-translated">{payload.translated}</div>
+        {shownTrans.length > 0 && (
+          <div className="subtitle-translated">
+            {shownTrans.map((w, idx) => (
+              <span key={`t-${idx}-${w}`} className="sub-word">
+                {idx > 0 ? " " : ""}
+                {w}
+              </span>
+            ))}
+          </div>
         )}
         {status === "pending" && !payload.translated && (
           <div className="subtitle-status-badge pending">
