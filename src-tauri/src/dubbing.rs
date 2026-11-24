@@ -342,7 +342,7 @@ mod win_audio {
                         continue;
                     };
                     if let Ok(prev_level) = vol.GetMasterVolume() {
-                        let new_level = (prev_level * ratio).clamp(0.02, prev_level);
+                        let new_level = (prev_level * ratio).clamp(0.02, prev_level.max(0.02));
                         if vol.SetMasterVolume(new_level, std::ptr::null()).is_ok() {
                             saved.push(SavedSession { vol, prev_level });
                         }
@@ -728,8 +728,8 @@ pub async fn download_dubbing_engine(
                 5,
                 40,
                 "Downloading Piper TTS engine (~22 MB)...",
-                &app_clone,
                 "dubbing-download-progress",
+                &app_clone,
             )?;
             crate::translator::verify_file_sha256(&zip_part, PIPER_ARCHIVE_SHA256)?;
             fs::rename(&zip_part, &zip_path)
@@ -776,8 +776,8 @@ pub async fn download_dubbing_engine(
                     "Downloading Persian voice {} (~{} MB)...",
                     spec.id, spec.approx_mb
                 ),
-                &app_clone,
                 "dubbing-download-progress",
+                &app_clone,
             )?;
             crate::translator::verify_file_sha256(&part, spec.onnx_sha256)?;
             fs::rename(&part, &onnx_dest)
@@ -792,8 +792,8 @@ pub async fn download_dubbing_engine(
                 92,
                 99,
                 "Downloading voice config...",
-                &app_clone,
                 "dubbing-download-progress",
+                &app_clone,
             )?;
             fs::rename(&part, &json_dest)
                 .map_err(|e| format!("Failed finalizing voice config: {e}"))?;
