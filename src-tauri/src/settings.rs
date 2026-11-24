@@ -328,6 +328,7 @@ mod tests {
             translate_source_lang: "en".into(),
             translate_target_lang: "fa".into(),
             whisper_model: "ggml-base.en.bin".into(),
+            subtitle_custom_css: String::new(),
             language: "fa".into(),
             island_hotkey: "Ctrl+Alt+N".into(),
         };
