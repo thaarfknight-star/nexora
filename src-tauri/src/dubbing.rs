@@ -528,12 +528,14 @@ fn run_dubbing_pipeline(
         let server = server_bin.as_deref().and_then(|sb| {
             crate::translator::ResidentWhisperServer::start(sb, &whisper_model_path, "en", threads)
         });
-        let api_key = crate::translate_secrets::get_api_key(provider_id);
-        let provider = crate::translate_provider::build_provider(
-            provider_id,
-            api_key,
-            Some(whisper_dir.join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME)),
-        );
+        let api_key = if provider_id.requires_api_key() {
+            crate::translate_secrets::get_api_key(provider_id)
+        } else {
+            None
+        };
+        let local_model_path =
+            whisper_dir.join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME);
+        let mut rolling_ctx: VecDeque<String> = VecDeque::with_capacity(4);
 
         let (lock, cvar) = &*phrase_rx;
         loop {
@@ -573,13 +575,23 @@ fn run_dubbing_pipeline(
             let fa_text = if provider_id == crate::translate_provider::TranslateProviderId::None {
                 en_trim.to_string()
             } else {
-                let req = crate::translate_provider::TranslateRequest {
-                    text: en_trim,
-                    source_lang: "en",
-                    target_lang: "fa",
-                };
-                match provider.translate(&req) {
-                    Ok(t) if !t.trim().is_empty() => t,
+                let ctx_vec: Vec<String> = rolling_ctx.iter().cloned().collect();
+                match crate::translate_provider::translate_with_provider(
+                    provider_id,
+                    api_key.as_deref(),
+                    Some(local_model_path.as_path()),
+                    en_trim,
+                    "en",
+                    "fa",
+                    &ctx_vec,
+                ) {
+                    Ok(tr) if !tr.trim().is_empty() => {
+                        if rolling_ctx.len() >= 3 {
+                            rolling_ctx.pop_front();
+                        }
+                        rolling_ctx.push_back(en_trim.to_string());
+                        tr
+                    }
                     _ => continue,
                 }
             };
