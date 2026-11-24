@@ -370,6 +370,7 @@ mod tests {
                 translate_source_lang: "en".into(),
                 translate_target_lang: "fa".into(),
                 whisper_model: "ggml-tiny.bin".into(),
+                subtitle_custom_css: String::new(),
                 language: "en".into(),
                 island_hotkey: "Alt+Space".into(),
             }
@@ -406,6 +407,7 @@ mod tests {
             translate_source_lang: "en".into(),
             translate_target_lang: "fa".into(),
             whisper_model: "ggml-tiny.bin".into(),
+            subtitle_custom_css: String::new(),
             language: "en".into(),
             island_hotkey: "Alt+Space".into(),
         };
@@ -435,6 +437,7 @@ mod tests {
             translate_source_lang: "en".into(),
             translate_target_lang: "fa".into(),
             whisper_model: "ggml-tiny.bin".into(),
+            subtitle_custom_css: String::new(),
             island_hotkey: "not-a-key".into(),
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
@@ -462,6 +465,7 @@ mod tests {
             translate_source_lang: "en".into(),
             translate_target_lang: "fa".into(),
             whisper_model: "ggml-tiny.bin".into(),
+            subtitle_custom_css: String::new(),
             language: "de".into(),
             island_hotkey: "Alt+Space".into(),
         };
