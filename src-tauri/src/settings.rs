@@ -64,6 +64,12 @@ fn default_whisper_model() -> String {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubtitleCssPreset {
+    pub name: String,
+    pub css: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NexoraSettings {
     #[serde(default = "default_auto_hide_taskbar")]
     pub auto_hide_taskbar: bool,
@@ -123,6 +129,12 @@ pub struct NexoraSettings {
     /// User-defined custom CSS applied inside the floating subtitle overlay window.
     #[serde(default)]
     pub subtitle_custom_css: String,
+    /// Saved named custom CSS presets for the floating subtitle overlay.
+    #[serde(default)]
+    pub subtitle_css_presets: Vec<SubtitleCssPreset>,
+    /// Name of the currently selected subtitle CSS preset (empty = default/custom).
+    #[serde(default)]
+    pub active_subtitle_css_preset: String,
 }
 
 impl Default for NexoraSettings {
@@ -152,6 +164,8 @@ pub fn defaults() -> NexoraSettings {
         translate_target_lang: default_translate_target_lang(),
         whisper_model: default_whisper_model(),
         subtitle_custom_css: String::new(),
+        subtitle_css_presets: Vec::new(),
+        active_subtitle_css_preset: String::new(),
     }
 }
 
@@ -206,6 +220,18 @@ impl NexoraSettings {
         if self.subtitle_custom_css.len() > 8192 {
             self.subtitle_custom_css.truncate(8192);
         }
+        self.subtitle_css_presets
+            .retain(|p| !p.name.trim().is_empty());
+        if self.subtitle_css_presets.len() > 30 {
+            self.subtitle_css_presets.truncate(30);
+        }
+        for preset in &mut self.subtitle_css_presets {
+            preset.name = preset.name.trim().chars().take(48).collect();
+            if preset.css.len() > 8192 {
+                preset.css.truncate(8192);
+            }
+        }
+        self.active_subtitle_css_preset = self.active_subtitle_css_preset.trim().to_string();
         self
     }
 }
@@ -329,6 +355,8 @@ mod tests {
             translate_target_lang: "fa".into(),
             whisper_model: "ggml-base.en.bin".into(),
             subtitle_custom_css: String::new(),
+            subtitle_css_presets: Vec::new(),
+            active_subtitle_css_preset: String::new(),
             language: "fa".into(),
             island_hotkey: "Ctrl+Alt+N".into(),
         };
@@ -372,6 +400,8 @@ mod tests {
                 translate_target_lang: "fa".into(),
                 whisper_model: "ggml-tiny.bin".into(),
                 subtitle_custom_css: String::new(),
+                subtitle_css_presets: Vec::new(),
+                active_subtitle_css_preset: String::new(),
                 language: "en".into(),
                 island_hotkey: "Alt+Space".into(),
             }
@@ -409,6 +439,8 @@ mod tests {
             translate_target_lang: "fa".into(),
             whisper_model: "ggml-tiny.bin".into(),
             subtitle_custom_css: String::new(),
+            subtitle_css_presets: Vec::new(),
+            active_subtitle_css_preset: String::new(),
             language: "en".into(),
             island_hotkey: "Alt+Space".into(),
         };
@@ -439,6 +471,8 @@ mod tests {
             translate_target_lang: "fa".into(),
             whisper_model: "ggml-tiny.bin".into(),
             subtitle_custom_css: String::new(),
+            subtitle_css_presets: Vec::new(),
+            active_subtitle_css_preset: String::new(),
             island_hotkey: "not-a-key".into(),
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
@@ -467,6 +501,8 @@ mod tests {
             translate_target_lang: "fa".into(),
             whisper_model: "ggml-tiny.bin".into(),
             subtitle_custom_css: String::new(),
+            subtitle_css_presets: Vec::new(),
+            active_subtitle_css_preset: String::new(),
             language: "de".into(),
             island_hotkey: "Alt+Space".into(),
         };

@@ -17,6 +17,34 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.24",
+    date: "2026-11-25",
+    title: {
+      en: "Stacked 2-Line Subtitles, Saved CSS Presets, Dubbing Fix & Accurate Update Notes",
+      fa: "زیرنویس دوخطی استریم/گیم، پریست‌های CSS سفارشی، رفع کرش دوبله و اصلاح پنجره تغییرات آپدیت",
+    },
+    features: {
+      en: [
+        "Redesigned live subtitles into a clean 2-tier stacked pill: previous line slides up into a dimmer top pill while the active line completes word-by-word below.",
+        "Added named Custom Subtitle CSS Presets so you can save, switch, and delete your own subtitle styles anytime.",
+      ],
+      fa: [
+        "بازطراحی زیرنویس به سبک دوخطی گیم/استریم: جمله قبلی به کپسول کم‌رنگ بالایی می‌رود و جمله جدید کلمه‌به‌کلمه در کپسول اصلی پایین کامل می‌شود.",
+        "افزودن قابلیت ذخیره CSS سفارشی با نام دلخواه (پریست) برای انتخاب سریع یا حذف در هر زمان.",
+      ],
+    },
+    fixes: {
+      en: [
+        "Fixed Piper TTS crashing on the Persian Amir voice by automatically sanitizing multi-codepoint phoneme keys in .onnx.json.",
+        "Fixed the What's New modal showing the current/previous version when an update is available — it now shows the new version's actual changelog.",
+      ],
+      fa: [
+        "رفع کامل کرش موتور دوبله روی صدای فارسی امیر (خطای aɪ is not a single codepoint) با پاک‌سازی خودکار فایل کانفیگ صوتی.",
+        "رفع نمایش تغییرات نسخه قبلی/فعلی هنگام آپدیت؛ پنجره تغییرات حالا دقیقاً تغییرات نسخه جدید آماده نصب را نمایش می‌دهد.",
+      ],
+    },
+  },
+  {
     version: "0.2.23",
     date: "2026-11-25",
     title: {

@@ -225,6 +225,40 @@ pub fn speech_rate_to_length_scale(speech_rate_pct: u16) -> f32 {
     100.0 / clamped
 }
 
+/// Strips multi-codepoint keys (e.g. `"aɪ"`, `"eɪ"`, `"oʊ"`) from Piper's
+/// `phoneme_id_map` in `.onnx.json`. The Windows `piper.exe` (2023.11.14-2)
+/// binary expects single-codepoint keys (`char32_t`) and aborts with
+/// `"aɪ" is not a single codepoint` on `fa_IR-amir-medium.onnx.json` unless
+/// these unused English diphthong entries are removed.
+pub fn sanitize_piper_voice_json(json_path: &Path) -> Result<usize, String> {
+    let raw = fs::read_to_string(json_path)
+        .map_err(|e| format!("Failed reading voice config {}: {e}", json_path.display()))?;
+    let mut val: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid voice config JSON: {e}"))?;
+    let mut removed = 0usize;
+    if let Some(map) = val
+        .get_mut("phoneme_id_map")
+        .and_then(|v| v.as_object_mut())
+    {
+        let bad_keys: Vec<String> = map
+            .keys()
+            .filter(|k| k.chars().count() > 1)
+            .cloned()
+            .collect();
+        removed = bad_keys.len();
+        for k in bad_keys {
+            map.remove(&k);
+        }
+    }
+    if removed > 0 {
+        let updated = serde_json::to_string_pretty(&val)
+            .map_err(|e| format!("Failed serializing sanitized voice config: {e}"))?;
+        fs::write(json_path, updated)
+            .map_err(|e| format!("Failed writing sanitized voice config: {e}"))?;
+    }
+    Ok(removed)
+}
+
 fn synthesize_piper_wav(
     piper_bin: &Path,
     onnx_path: &Path,
@@ -233,6 +267,7 @@ fn synthesize_piper_wav(
     out_wav: &Path,
     speech_rate_pct: u16,
 ) -> Result<(), String> {
+    let _ = sanitize_piper_voice_json(json_path);
     let clean = prepare_persian_tts_text(text);
     if clean.is_empty() {
         return Err("Empty Persian text".to_string());
@@ -862,6 +897,7 @@ pub async fn download_dubbing_engine(
             fs::rename(&part, &json_dest)
                 .map_err(|e| format!("Failed finalizing voice config: {e}"))?;
         }
+        let _ = sanitize_piper_voice_json(&json_dest);
         let _ = app_clone.emit(
             "dubbing-download-progress",
             DubbingProgressPayload {
@@ -1084,5 +1120,24 @@ mod tests {
     fn voice_spec_falls_back_to_amir() {
         assert_eq!(voice_spec("fa_IR-gyro-medium").id, "fa_IR-gyro-medium");
         assert_eq!(voice_spec("unknown").id, "fa_IR-amir-medium");
+    }
+
+    #[test]
+    fn sanitize_piper_voice_json_strips_multi_codepoint_keys() {
+        let dir = std::env::temp_dir().join("nexora_piper_sanitize_test");
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("test.onnx.json");
+        fs::write(
+            &path,
+            r#"{"phoneme_id_map":{"a":[14],"aɪ":[161],"eɪ":[164],"ʃ":[39]}}"#,
+        )
+        .expect("write");
+        let removed = sanitize_piper_voice_json(&path).expect("sanitize");
+        assert_eq!(removed, 2);
+        let after = fs::read_to_string(&path).expect("read");
+        assert!(!after.contains("aɪ"));
+        assert!(!after.contains("eɪ"));
+        assert!(after.contains("ʃ"));
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -71,6 +71,10 @@ interface NexoraSettings {
   whisper_model?: string;
   /** Custom CSS injected inside the floating subtitle overlay window. */
   subtitle_custom_css?: string;
+  /** Saved named custom CSS presets for the subtitle overlay. */
+  subtitle_css_presets?: { name: string; css: string }[];
+  /** Currently selected subtitle CSS preset name. */
+  active_subtitle_css_preset?: string;
   /** Percent style: "with" (24%) or "without" (24). */
   stats_percent_style: string;
   /** UI language: "en" (default) or "fa". */
@@ -2672,6 +2676,75 @@ function SettingsView() {
     }, 350);
   };
 
+  const [presetNameInput, setPresetNameInput] = useState("");
+  const cssPresets = settings?.subtitle_css_presets ?? [];
+  const activeCssPreset = settings?.active_subtitle_css_preset ?? "";
+
+  const handleSelectCssPreset = (presetName: string) => {
+    if (!settings) return;
+    if (!presetName) {
+      setSubtitleCssDraft("");
+      invoke<NexoraSettings>("set_settings", {
+        settings: {
+          ...settings,
+          subtitle_custom_css: "",
+          active_subtitle_css_preset: "",
+        },
+      })
+        .then(setSettings)
+        .catch(() => {});
+      return;
+    }
+    const found = cssPresets.find((p) => p.name === presetName);
+    if (!found) return;
+    setSubtitleCssDraft(found.css);
+    setPresetNameInput(found.name);
+    invoke<NexoraSettings>("set_settings", {
+      settings: {
+        ...settings,
+        subtitle_custom_css: found.css,
+        active_subtitle_css_preset: found.name,
+      },
+    })
+      .then(setSettings)
+      .catch(() => {});
+  };
+
+  const handleSaveCssPreset = () => {
+    if (!settings) return;
+    const name = presetNameInput.trim();
+    if (!name) return;
+    const nextPresets = [
+      ...cssPresets.filter((p) => p.name !== name),
+      { name, css: subtitleCssDraft },
+    ];
+    invoke<NexoraSettings>("set_settings", {
+      settings: {
+        ...settings,
+        subtitle_custom_css: subtitleCssDraft,
+        subtitle_css_presets: nextPresets,
+        active_subtitle_css_preset: name,
+      },
+    })
+      .then(setSettings)
+      .catch(() => {});
+  };
+
+  const handleDeleteCssPreset = () => {
+    if (!settings || !activeCssPreset) return;
+    const nextPresets = cssPresets.filter((p) => p.name !== activeCssPreset);
+    setPresetNameInput("");
+    invoke<NexoraSettings>("set_settings", {
+      settings: {
+        ...settings,
+        subtitle_css_presets: nextPresets,
+        active_subtitle_css_preset: "",
+      },
+    })
+      .then(setSettings)
+      .catch(() => {});
+  };
+
   useEffect(() => {
     invoke<DubbingStatus>("get_dubbing_status")
       .then((st) => {
@@ -4563,12 +4636,55 @@ function SettingsView() {
                 </button>
               </div>
             </div>
+            <div className="settings-row">
+              <span>{t(language, "subtitleCssPresetLabel")}</span>
+              <div className="translate-btn-group">
+                <select
+                  className="translate-select"
+                  value={activeCssPreset}
+                  onChange={(e) => handleSelectCssPreset(e.target.value)}
+                >
+                  <option value="">{t(language, "subtitleCssPresetDefault")}</option>
+                  {cssPresets.map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+                {activeCssPreset && (
+                  <button
+                    type="button"
+                    className="mini-btn danger-btn"
+                    onClick={handleDeleteCssPreset}
+                  >
+                    {t(language, "subtitleCssDeletePresetBtn")}
+                  </button>
+                )}
+              </div>
+            </div>
             <textarea
               className="subtitle-css-textarea"
               value={subtitleCssDraft}
               placeholder={t(language, "subtitleCustomCssPlaceholder")}
               onChange={(e) => handleSubtitleCssChange(e.target.value)}
             />
+            <div className="subtitle-preset-bar">
+              <input
+                type="text"
+                className="subtitle-preset-input"
+                value={presetNameInput}
+                placeholder={t(language, "subtitleCssPresetNamePlaceholder")}
+                onChange={(e) => setPresetNameInput(e.target.value)}
+              />
+              <button
+                type="button"
+                className="mini-btn primary-btn"
+                disabled={!presetNameInput.trim()}
+                onClick={handleSaveCssPreset}
+              >
+                {t(language, "subtitleCssSavePresetBtn")}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -4665,7 +4781,17 @@ function SettingsView() {
       </div>
       </div>
       {showWhatsNew && (() => {
+        const hasPendingUpdate = Boolean(
+          updateInfo?.update_available && updateInfo.available_version,
+        );
         const release = latestReleaseNote(updateInfo?.current_version);
+        const remoteLines = (updateInfo?.notes ?? "")
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0 && !l.startsWith("#"));
+        const cleanRemoteBullets = remoteLines
+          .map((l) => l.replace(/^[-*•]\s+/, "").replace(/\*\*/g, ""))
+          .filter(Boolean);
         return (
           <div
             className="whats-new-backdrop"
@@ -4678,42 +4804,89 @@ function SettingsView() {
             >
               <div className="whats-new-header">
                 <div>
-                  <div className="whats-new-kicker">{t(language, "whatsNewTitle")}</div>
-                  <h3 className="whats-new-title">{release.title[language]}</h3>
+                  <div className="whats-new-kicker">
+                    {hasPendingUpdate
+                      ? t(language, "whatsNewAvailableTitle")
+                      : t(language, "whatsNewTitle")}
+                  </div>
+                  <h3 className="whats-new-title">
+                    {hasPendingUpdate
+                      ? `Nexora v${updateInfo?.available_version}`
+                      : release.title[language]}
+                  </h3>
                 </div>
-                <span className="whats-new-badge">v{release.version}</span>
+                <span className="whats-new-badge">
+                  v{hasPendingUpdate ? updateInfo?.available_version : release.version}
+                </span>
               </div>
               <div className="whats-new-body">
-                <div className="whats-new-group">
-                  <div className="whats-new-group-title features">
-                    ✦ {t(language, "whatsNewFeatures")}
+                {hasPendingUpdate ? (
+                  <div className="whats-new-group">
+                    <div className="whats-new-group-title features">
+                      ✦ {t(language, "whatsNewFeatures")}
+                    </div>
+                    <ul className="whats-new-list">
+                      {(cleanRemoteBullets.length > 0
+                        ? cleanRemoteBullets
+                        : [`Nexora v${updateInfo?.available_version}`]
+                      ).map((item, idx) => (
+                        <li key={idx}>{item}</li>
+                      ))}
+                    </ul>
                   </div>
-                  <ul className="whats-new-list">
-                    {release.features[language].map((item, idx) => (
-                      <li key={idx}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="whats-new-group">
-                  <div className="whats-new-group-title fixes">
-                    ✓ {t(language, "whatsNewFixes")}
-                  </div>
-                  <ul className="whats-new-list">
-                    {release.fixes[language].map((item, idx) => (
-                      <li key={idx}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
+                ) : (
+                  <>
+                    <div className="whats-new-group">
+                      <div className="whats-new-group-title features">
+                        ✦ {t(language, "whatsNewFeatures")}
+                      </div>
+                      <ul className="whats-new-list">
+                        {release.features[language].map((item, idx) => (
+                          <li key={idx}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="whats-new-group">
+                      <div className="whats-new-group-title fixes">
+                        ✓ {t(language, "whatsNewFixes")}
+                      </div>
+                      <ul className="whats-new-list">
+                        {release.fixes[language].map((item, idx) => (
+                          <li key={idx}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </>
+                )}
               </div>
               <div className="whats-new-footer">
-                <span className="whats-new-date">{release.date}</span>
-                <button
-                  type="button"
-                  className="mini-btn primary-btn"
-                  onClick={() => setShowWhatsNew(false)}
-                >
-                  {t(language, "whatsNewGotIt")}
-                </button>
+                <span className="whats-new-date">
+                  {hasPendingUpdate
+                    ? `v${updateInfo?.current_version} → v${updateInfo?.available_version}`
+                    : release.date}
+                </span>
+                <div className="translate-btn-group">
+                  {hasPendingUpdate && (
+                    <button
+                      type="button"
+                      className="mini-btn primary-btn"
+                      disabled={installingUpdate}
+                      onClick={() => {
+                        setShowWhatsNew(false);
+                        installAvailableUpdate();
+                      }}
+                    >
+                      {t(language, "downloadAndInstall")}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className={`mini-btn${hasPendingUpdate ? "" : " primary-btn"}`}
+                    onClick={() => setShowWhatsNew(false)}
+                  >
+                    {t(language, "whatsNewGotIt")}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -4761,18 +4934,14 @@ function SubtitleOverlay() {
   });
   const [fadingOut, setFadingOut] = useState(false);
   const [customCss, setCustomCss] = useState("");
-  const [origWords, setOrigWords] = useState<string[]>([]);
-  const [transWords, setTransWords] = useState<string[]>([]);
-  const [origRevealed, setOrigRevealed] = useState(0);
-  const [transRevealed, setTransRevealed] = useState(0);
-  const [origSettled, setOrigSettled] = useState(0);
-  const [transSettled, setTransSettled] = useState(0);
+  const [prevLine, setPrevLine] = useState("");
+  const [activeWords, setActiveWords] = useState<string[]>([]);
+  const [activeRevealed, setActiveRevealed] = useState(0);
+  const [activeSettled, setActiveSettled] = useState(0);
 
-  const prevOrigRef = useRef<string[]>([]);
-  const prevTransRef = useRef<string[]>([]);
-  const origRevealedRef = useRef(0);
-  const transRevealedRef = useRef(0);
-  const lastSigRef = useRef("");
+  const prevWordsRef = useRef<string[]>([]);
+  const activeRevealedRef = useRef(0);
+  const lastActiveTextRef = useRef("");
   const fadingRef = useRef(false);
   const silenceTimerRef = useRef<number | undefined>(undefined);
   const hideTimerRef = useRef<number | undefined>(undefined);
@@ -4807,17 +4976,13 @@ function SubtitleOverlay() {
     };
 
     const resetOverlay = () => {
-      lastSigRef.current = "";
-      prevOrigRef.current = [];
-      prevTransRef.current = [];
-      origRevealedRef.current = 0;
-      transRevealedRef.current = 0;
-      setOrigWords([]);
-      setTransWords([]);
-      setOrigRevealed(0);
-      setTransRevealed(0);
-      setOrigSettled(0);
-      setTransSettled(0);
+      lastActiveTextRef.current = "";
+      prevWordsRef.current = [];
+      activeRevealedRef.current = 0;
+      setPrevLine("");
+      setActiveWords([]);
+      setActiveRevealed(0);
+      setActiveSettled(0);
       fadingRef.current = false;
       setFadingOut(false);
       setPayload((cur) => ({ ...cur, original: "", translated: "", active: false }));
@@ -4825,7 +4990,7 @@ function SubtitleOverlay() {
 
     const triggerSmoothFadeOut = () => {
       clearTimers();
-      if (!lastSigRef.current) {
+      if (!lastActiveTextRef.current) {
         resetOverlay();
         return;
       }
@@ -4842,43 +5007,38 @@ function SubtitleOverlay() {
         return;
       }
 
-      const nextOrigWords = next.original.trim() ? next.original.trim().split(/\s+/) : [];
-      const nextTransWords = next.translated.trim() ? next.translated.trim().split(/\s+/) : [];
+      // Game/stream style: show clean translated line (or original only when no translation exists yet)
+      const displayText = (next.translated || next.original).trim();
+      if (!displayText) {
+        return;
+      }
 
-      // Keep already-shown words rock solid when a sentence grows or gets slightly refined;
-      // only animate newly appended trailing words.
-      const origPrefix = commonWordPrefixLen(prevOrigRef.current, nextOrigWords);
-      const origSameSentence =
-        origPrefix > 0 || wordOverlapRatio(prevOrigRef.current, nextOrigWords) >= 0.4;
-      const origBase = origSameSentence
-        ? Math.min(Math.max(origRevealedRef.current, origPrefix, prevOrigRef.current.length), nextOrigWords.length)
+      const nextWords = displayText.split(/\s+/);
+      const prefix = commonWordPrefixLen(prevWordsRef.current, nextWords);
+      const sameSentence =
+        prevWordsRef.current.length > 0 &&
+        (prefix > 0 || wordOverlapRatio(prevWordsRef.current, nextWords) >= 0.38);
+
+      // When a genuinely new sentence starts, promote the previous finalized sentence
+      // into the dimmer top history pill (.subtitle-prev), just like broadcast/game subtitles.
+      if (!sameSentence && lastActiveTextRef.current && lastActiveTextRef.current !== displayText) {
+        setPrevLine(lastActiveTextRef.current);
+      }
+
+      const settled = sameSentence
+        ? Math.min(Math.max(activeRevealedRef.current, prefix, prevWordsRef.current.length), nextWords.length)
         : 0;
-      const nextOrigRev = origSameSentence ? origBase : Math.min(1, nextOrigWords.length);
+      const nextRev = sameSentence ? settled : Math.min(1, nextWords.length);
 
-      const transPrefix = commonWordPrefixLen(prevTransRef.current, nextTransWords);
-      const transSameSentence =
-        transPrefix > 0 || wordOverlapRatio(prevTransRef.current, nextTransWords) >= 0.4;
-      const transBase = transSameSentence
-        ? Math.min(Math.max(transRevealedRef.current, transPrefix, prevTransRef.current.length), nextTransWords.length)
-        : 0;
-      const nextTransRev = transSameSentence ? transBase : Math.min(1, nextTransWords.length);
-
-      prevOrigRef.current = nextOrigWords;
-      prevTransRef.current = nextTransWords;
-      origRevealedRef.current = nextOrigRev;
-      transRevealedRef.current = nextTransRev;
-
-      setOrigWords(nextOrigWords);
-      setTransWords(nextTransWords);
-      setOrigSettled(origBase);
-      setTransSettled(transBase);
-      setOrigRevealed(nextOrigRev);
-      setTransRevealed(nextTransRev);
+      prevWordsRef.current = nextWords;
+      activeRevealedRef.current = nextRev;
+      setActiveWords(nextWords);
+      setActiveSettled(settled);
+      setActiveRevealed(nextRev);
       setPayload(next);
 
-      const sig = `${next.original}\0${next.translated}`;
-      if (sig !== lastSigRef.current || fadingRef.current) {
-        lastSigRef.current = sig;
+      if (displayText !== lastActiveTextRef.current || fadingRef.current) {
+        lastActiveTextRef.current = displayText;
         clearTimers();
         fadingRef.current = false;
         setFadingOut(false);
@@ -4900,79 +5060,60 @@ function SubtitleOverlay() {
   }, []);
 
   useEffect(() => {
-    if (origRevealed >= origWords.length && transRevealed >= transWords.length) {
+    if (activeRevealed >= activeWords.length) {
       return;
     }
     const id = window.setInterval(() => {
-      if (origRevealedRef.current < origWords.length) {
-        const step = origWords.length - origRevealedRef.current > 6 ? 2 : 1;
-        origRevealedRef.current = Math.min(origWords.length, origRevealedRef.current + step);
-        setOrigRevealed(origRevealedRef.current);
+      if (activeRevealedRef.current < activeWords.length) {
+        const step = activeWords.length - activeRevealedRef.current > 6 ? 2 : 1;
+        activeRevealedRef.current = Math.min(activeWords.length, activeRevealedRef.current + step);
+        setActiveRevealed(activeRevealedRef.current);
       }
-      if (transRevealedRef.current < transWords.length) {
-        const step = transWords.length - transRevealedRef.current > 6 ? 2 : 1;
-        transRevealedRef.current = Math.min(transWords.length, transRevealedRef.current + step);
-        setTransRevealed(transRevealedRef.current);
-      }
-    }, 40);
+    }, 38);
     return () => window.clearInterval(id);
-  }, [origWords.length, transWords.length, origRevealed, transRevealed]);
+  }, [activeWords.length, activeRevealed]);
 
-  if (!payload.active || (!payload.translated && !payload.original)) {
+  if (!payload.active || activeWords.length === 0) {
     return customCss ? <style id="nexora-subtitle-custom-css">{customCss}</style> : null;
   }
 
   const isRtl = payload.target_lang === "fa" || payload.target_lang === "ar";
   const uiLang: Language = isRtl ? "fa" : "en";
   const status = payload.translation_status ?? "ok";
-  const shownOrig = origWords.slice(0, origRevealed);
-  const shownTrans = transWords.slice(0, transRevealed);
+  const shownWords = activeWords.slice(0, activeRevealed);
 
   return (
     <div className="subtitle-overlay-root" dir={isRtl ? "rtl" : "ltr"}>
       {customCss && <style id="nexora-subtitle-custom-css">{customCss}</style>}
-      <div className={`subtitle-box${fadingOut ? " subtitle-box--fading" : ""}`}>
-        {shownOrig.length > 0 && (
-          <div className="subtitle-original" dir="auto">
-            {shownOrig.map((w, idx) => (
-              <span
-                key={`o-${idx}`}
-                className={idx >= origSettled ? "sub-word sub-word--new" : "sub-word"}
-              >
-                {idx > 0 ? " " : ""}
-                {w}
-              </span>
-            ))}
+      <div className={`subtitle-stack${fadingOut ? " subtitle-stack--fading" : ""}`}>
+        {prevLine && (
+          <div key={prevLine} className="subtitle-prev">
+            {prevLine}
           </div>
         )}
-        {shownTrans.length > 0 && (
+        <div className="subtitle-box">
           <div className="subtitle-translated">
-            {shownTrans.map((w, idx) => (
+            {shownWords.map((w, idx) => (
               <span
-                key={`t-${idx}`}
-                className={idx >= transSettled ? "sub-word sub-word--new" : "sub-word"}
+                key={`w-${idx}`}
+                className={idx >= activeSettled ? "sub-word sub-word--new" : "sub-word"}
               >
                 {idx > 0 ? " " : ""}
                 {w}
               </span>
             ))}
           </div>
-        )}
-        {status === "pending" && !payload.translated && (
-          <div className="subtitle-status-badge pending">
-            {t(uiLang, "subtitleStatusPending")}
-          </div>
-        )}
-        {status === "offline" && (
-          <div className="subtitle-status-badge offline">
-            {t(uiLang, "subtitleStatusOffline")}
-          </div>
-        )}
-        {status === "failed" && (
-          <div className="subtitle-status-badge failed">
-            {t(uiLang, "subtitleStatusFailed")}
-          </div>
-        )}
+          {status === "offline" && (
+            <div className="subtitle-status-badge offline">
+              {t(uiLang, "subtitleStatusOffline")}
+            </div>
+          )}
+          {status === "failed" && (
+            <div className="subtitle-status-badge failed">
+              {t(uiLang, "subtitleStatusFailed")}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
