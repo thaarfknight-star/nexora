@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.24] - 2026-11-25
+
+### What's New
+- **2-Tier Stacked Game/Stream Subtitles**: Redesigned the subtitle overlay to match broadcast/game subtitles — the previous completed Persian line slides up into a dimmer top pill (`.subtitle-prev`) while the active line builds smoothly word-by-word in the main pill below (`.subtitle-box`), fading cleanly after 4 seconds of silence.
+- **Named Custom Subtitle CSS Presets**: Users can now save any custom subtitle CSS under their own preset name, switch between saved presets anytime, or delete presets in Settings → Engines.
+
+### Bug Fixes
+- **Fixed Nexora-Voice v1 Piper Crash on `Amir` Voice**: Automatically strips multi-codepoint English diphthong keys (`aɪ`, `aʊ`, `ɔɪ`, `eɪ`, `oʊ`) from Piper's `phoneme_id_map` in `.onnx.json` so Windows `piper.exe` never aborts with `"aɪ" is not a single codepoint (ids=161,)`.
+- **Fixed Update Changelog Modal**: When a newer version is available, the **What's New** modal now displays the **new available version** (`updateInfo.available_version`) and its actual release notes from the update feed (plus a direct Download & Install button) instead of showing the already-installed version's notes.
+
 ## [0.2.23] - 2026-11-25
 
 ### Bug Fixes & Hardening
