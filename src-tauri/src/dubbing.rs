@@ -105,7 +105,7 @@ pub fn detect_speaker_gender(pcm_bytes: &[u8], prev: SpeakerGender) -> SpeakerGe
     let hp_alpha = 0.958f32; // ~110 Hz high-pass at 16 kHz
     let lp_alpha = 0.57f32; // ~3.4 kHz low-pass at 16 kHz
 
-    for chunk in pcm_bytes.chunks_exact(2) {
+    for chunk in pcm_bytes.as_chunks::<2>().0 {
         let s = i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / 32768.0;
         let hp = hp_alpha * (hp_prev_out + s - hp_prev_in);
         hp_prev_in = s;
