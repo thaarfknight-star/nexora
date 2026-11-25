@@ -17,6 +17,28 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.26",
+    date: "2026-11-25",
+    title: {
+      en: "Custom Persian Pronunciation (G2P / Ezafe) & Offline Male/Female Voice Cloning",
+      fa: "موتور تلفظ اختصاصی فارسی (کسره اضافه و اعداد) و تقلید صدای آفلاین مرد و زن",
+    },
+    features: {
+      en: [
+        "Added a custom pure-Rust Persian pronunciation engine (Ezafe hints, natural number/currency/percentage expansion, and YouTube/gaming/tech transliteration) before TTS.",
+        "Added Offline Voice Cloning Studio with separate Male and Female 6-second microphone recording, acoustic pitch/timbre extraction, Test Voice, and automatic dual-voice series dubbing.",
+      ],
+      fa: [
+        "افزودن موتور اختصاصی تلفظ فارسی در Rust (کسره اضافه هوشمند، تبدیل اعداد و مبالغ دلاری/درصدی به حروف و تلفظ صحیح اصطلاحات یوتیوب و گیمینگ).",
+        "افزودن استودیوی تقلید صدای آفلاین با ضبط ۶ ثانیه‌ای جداگانه برای صدای مرد و زن، استخراج فرکانس و رنگ صدا، تست فوری و استفاده در دوبله خودکار سریال‌ها.",
+      ],
+    },
+    fixes: {
+      en: [],
+      fa: [],
+    },
+  },
+  {
     version: "0.2.25",
     date: "2026-11-25",
     title: {

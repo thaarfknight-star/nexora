@@ -212,6 +212,286 @@ pub fn scale_wav_header_pitch(wav_path: &Path, factor: f32) -> Result<(), String
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoiceCloneProfile {
+    pub slot: String,
+    pub target_f0_hz: f32,
+    pub warmth_gain: f32,
+    pub brightness_gain: f32,
+    pub target_rms: f32,
+}
+
+fn clones_dir(app: &AppHandle) -> PathBuf {
+    voice_dir(app).join("clones")
+}
+
+fn clone_profile_path(app: &AppHandle, slot: &str) -> PathBuf {
+    let clean = if slot.eq_ignore_ascii_case("female") {
+        "female"
+    } else {
+        "male"
+    };
+    clones_dir(app).join(format!("{clean}_profile.json"))
+}
+
+fn load_clone_profile(app: &AppHandle, slot: &str) -> Option<VoiceCloneProfile> {
+    let raw = fs::read_to_string(clone_profile_path(app, slot)).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// Estimates median fundamental frequency (`F0`, Hz) on voiced frames using YIN.
+pub fn estimate_median_f0_hz(pcm_bytes: &[u8]) -> Option<f32> {
+    let n_samples = pcm_bytes.len() / 2;
+    if n_samples < 640 {
+        return None;
+    }
+    let mut x = Vec::with_capacity(n_samples);
+    let mut hp_prev_in = 0.0f32;
+    let mut hp_prev_out = 0.0f32;
+    for chunk in pcm_bytes.as_chunks::<2>().0 {
+        let s = i16::from_le_bytes(*chunk) as f32 / 32768.0;
+        let hp = 0.958 * (hp_prev_out + s - hp_prev_in);
+        hp_prev_in = s;
+        hp_prev_out = hp;
+        x.push(hp);
+    }
+
+    let sr = CAPTURE_SAMPLE_RATE as f32;
+    let frame_len = 480usize;
+    let hop = 240usize;
+    let min_lag = 45usize;
+    let max_lag = 210usize;
+    let mut votes = Vec::new();
+    let mut start = 0usize;
+    let mut cmndf = vec![0.0f32; max_lag + 1];
+
+    while start + frame_len + max_lag <= x.len() {
+        let energy: f32 = x[start..start + frame_len]
+            .iter()
+            .map(|v| v * v)
+            .sum::<f32>()
+            / frame_len as f32;
+        if energy.sqrt() < 0.012 {
+            start += hop;
+            continue;
+        }
+        cmndf[0] = 1.0;
+        let mut rsum = 0.0f32;
+        for tau in 1..=max_lag {
+            let mut sum = 0.0f32;
+            for j in 0..frame_len {
+                let d = x[start + j] - x[start + j + tau];
+                sum += d * d;
+            }
+            rsum += sum;
+            cmndf[tau] = if rsum > 1e-9 {
+                sum * (tau as f32) / rsum
+            } else {
+                1.0
+            };
+        }
+        let mut best_tau = 0usize;
+        let mut best_val = 1.0f32;
+        for tau in min_lag..max_lag {
+            if cmndf[tau] < 0.28 && cmndf[tau] <= cmndf[tau - 1] && cmndf[tau] <= cmndf[tau + 1] {
+                best_tau = tau;
+                best_val = cmndf[tau];
+                break;
+            }
+            if cmndf[tau] < best_val {
+                best_val = cmndf[tau];
+                best_tau = tau;
+            }
+        }
+        if best_tau >= min_lag && best_val < 0.28 {
+            votes.push(sr / best_tau as f32);
+        }
+        start += hop;
+    }
+    if votes.len() < 3 {
+        return None;
+    }
+    votes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    Some(votes[votes.len() / 2])
+}
+
+/// Extracts an offline acoustic voice fingerprint (F0 pitch + warmth/brightness timbre + RMS).
+pub fn extract_voice_profile(pcm_bytes: &[u8], slot: &str) -> Result<VoiceCloneProfile, String> {
+    let clean_slot = if slot.eq_ignore_ascii_case("female") {
+        "female"
+    } else {
+        "male"
+    };
+    if pcm_bytes.len() < 16_000 {
+        return Err("Recording is too short — speak clearly for a few seconds.".to_string());
+    }
+    let default_f0 = if clean_slot == "female" { 205.0 } else { 120.0 };
+    let target_f0_hz = estimate_median_f0_hz(pcm_bytes)
+        .unwrap_or(default_f0)
+        .clamp(80.0, 310.0);
+
+    let mut low_e = 0.0f64;
+    let mut high_e = 0.0f64;
+    let mut total_e = 0.0f64;
+    let mut lp = 0.0f32;
+    let mut n = 0usize;
+    for chunk in pcm_bytes.as_chunks::<2>().0 {
+        let s = i16::from_le_bytes(*chunk) as f32 / 32768.0;
+        lp += 0.16 * (s - lp);
+        let hi = s - lp;
+        low_e += (lp as f64) * (lp as f64);
+        high_e += (hi as f64) * (hi as f64);
+        total_e += (s as f64) * (s as f64);
+        n += 1;
+    }
+    let rms = (total_e / n.max(1) as f64).sqrt() as f32;
+    if rms < 0.006 {
+        return Err("No clear speech detected in microphone recording.".to_string());
+    }
+    let ratio = ((low_e + 1e-9) / (high_e + 1e-9)).sqrt() as f32;
+    let warmth_gain = (0.85 + (ratio * 0.25)).clamp(0.75, 1.35);
+    let brightness_gain = (1.18 - (ratio * 0.18)).clamp(0.75, 1.35);
+
+    Ok(VoiceCloneProfile {
+        slot: clean_slot.to_string(),
+        target_f0_hz,
+        warmth_gain,
+        brightness_gain,
+        target_rms: rms.clamp(0.06, 0.22),
+    })
+}
+
+/// Applies the cloned voice's warmth/brightness timbre EQ and loudness normalization.
+pub fn apply_voice_clone_timbre(
+    wav_path: &Path,
+    profile: &VoiceCloneProfile,
+) -> Result<(), String> {
+    let bytes = fs::read(wav_path).map_err(|e| format!("Failed reading WAV: {e}"))?;
+    if bytes.len() < 46 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return Err("Invalid PCM WAV file".to_string());
+    }
+    let mut samples: Vec<f32> = bytes[44..]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| i16::from_le_bytes(*c) as f32 / 32768.0)
+        .collect();
+    if samples.is_empty() {
+        return Ok(());
+    }
+
+    let mut lp = 0.0f32;
+    let mut sum_sq = 0.0f64;
+    for s in &mut samples {
+        lp += 0.14 * (*s - lp);
+        let hi = *s - lp;
+        let shaped = lp * profile.warmth_gain + hi * profile.brightness_gain;
+        *s = shaped;
+        sum_sq += (shaped as f64) * (shaped as f64);
+    }
+    let cur_rms = (sum_sq / samples.len() as f64).sqrt() as f32;
+    let norm_gain = if cur_rms > 0.005 {
+        (profile.target_rms / cur_rms).clamp(0.65, 1.55)
+    } else {
+        1.0
+    };
+
+    let mut out_pcm = Vec::with_capacity(samples.len() * 2);
+    for s in samples {
+        let q = ((s * norm_gain).clamp(-0.98, 0.98) * 32767.0) as i16;
+        out_pcm.extend_from_slice(&q.to_le_bytes());
+    }
+    let mut out_wav = bytes[..44].to_vec();
+    out_wav.extend_from_slice(&out_pcm);
+    let data_len = out_pcm.len() as u32;
+    let riff_len = 36 + data_len;
+    out_wav[4..8].copy_from_slice(&riff_len.to_le_bytes());
+    out_wav[40..44].copy_from_slice(&data_len.to_le_bytes());
+    fs::write(wav_path, out_wav).map_err(|e| format!("Failed writing cloned WAV: {e}"))
+}
+
+fn write_pcm16_wav(path: &Path, pcm: &[u8], sample_rate: u32) -> Result<(), String> {
+    let data_len = pcm.len() as u32;
+    let riff_len = 36 + data_len;
+    let byte_rate = sample_rate * 2;
+    let mut hdr = Vec::with_capacity(44 + pcm.len());
+    hdr.extend_from_slice(b"RIFF");
+    hdr.extend_from_slice(&riff_len.to_le_bytes());
+    hdr.extend_from_slice(b"WAVEfmt ");
+    hdr.extend_from_slice(&16u32.to_le_bytes());
+    hdr.extend_from_slice(&1u16.to_le_bytes());
+    hdr.extend_from_slice(&1u16.to_le_bytes());
+    hdr.extend_from_slice(&sample_rate.to_le_bytes());
+    hdr.extend_from_slice(&byte_rate.to_le_bytes());
+    hdr.extend_from_slice(&2u16.to_le_bytes());
+    hdr.extend_from_slice(&16u16.to_le_bytes());
+    hdr.extend_from_slice(b"data");
+    hdr.extend_from_slice(&data_len.to_le_bytes());
+    hdr.extend_from_slice(pcm);
+    fs::write(path, hdr).map_err(|e| format!("Failed writing WAV: {e}"))
+}
+
+#[cfg(windows)]
+fn record_mic_pcm_blocking(duration_secs: u8) -> Result<Vec<u8>, String> {
+    use wasapi::{initialize_mta, DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat};
+
+    let _ = initialize_mta();
+    let enumerator =
+        DeviceEnumerator::new().map_err(|e| format!("WASAPI enumerator failed: {e}"))?;
+    let device = enumerator
+        .get_default_device(Direction::Capture)
+        .map_err(|e| format!("No default microphone found: {e}"))?;
+    let mut client = device
+        .get_iaudioclient()
+        .map_err(|e| format!("Failed opening microphone client: {e}"))?;
+    let fmt = WaveFormat::new(16, 16, SampleType::Int, CAPTURE_SAMPLE_RATE, 1, None);
+    let mode = StreamMode::EventsShared {
+        autoconvert: true,
+        buffer_duration_hns: 0,
+    };
+    client
+        .initialize_client(&fmt, Direction::Capture, mode, None)
+        .map_err(|e| format!("Failed initializing microphone stream: {e}"))?;
+    let h_event = client
+        .set_get_eventhandle()
+        .map_err(|e| format!("Failed getting mic event handle: {e}"))?;
+    let capture = client
+        .get_audiocaptureclient()
+        .map_err(|e| format!("Failed getting mic capture client: {e}"))?;
+    client
+        .start_stream()
+        .map_err(|e| format!("Failed starting microphone recording: {e}"))?;
+
+    let target_dur = Duration::from_secs(duration_secs.clamp(3, 12) as u64);
+    let start = Instant::now();
+    let mut out: Vec<u8> =
+        Vec::with_capacity(CAPTURE_SAMPLE_RATE * 2 * (duration_secs as usize + 1));
+    let mut pkt: VecDeque<u8> = VecDeque::with_capacity(8192);
+
+    while start.elapsed() < target_dur {
+        let _ = h_event.wait_for_event(50);
+        loop {
+            match capture.get_next_packet_size() {
+                Ok(Some(frames)) if frames > 0 => {
+                    pkt.clear();
+                    if capture.read_from_device_to_deque(&mut pkt).is_err() {
+                        break;
+                    }
+                    out.extend(pkt.drain(..));
+                }
+                _ => break,
+            }
+        }
+    }
+    let _ = client.stop_stream();
+    Ok(out)
+}
+
+#[cfg(not(windows))]
+fn record_mic_pcm_blocking(_duration_secs: u8) -> Result<Vec<u8>, String> {
+    Err("Microphone voice cloning recording is only supported on Windows.".to_string())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DubbingStatus {
     pub piper_installed: bool,
     pub voice_installed: bool,
@@ -228,6 +508,8 @@ pub struct DubbingStatus {
     pub auto_gender_voice: bool,
     pub female_voice_id: String,
     pub last_detected_gender: String,
+    pub male_clone_f0_hz: Option<f32>,
+    pub female_clone_f0_hz: Option<f32>,
     pub last_spoken_fa: String,
     pub last_error: Option<String>,
 }
@@ -322,6 +604,8 @@ fn build_status(app: &AppHandle) -> DubbingStatus {
         auto_gender_voice: prefs.auto_gender_voice,
         female_voice_id: prefs.female_voice_id,
         last_detected_gender: prefs.last_detected_gender,
+        male_clone_f0_hz: load_clone_profile(app, "male").map(|p| p.target_f0_hz),
+        female_clone_f0_hz: load_clone_profile(app, "female").map(|p| p.target_f0_hz),
         last_spoken_fa: prefs.last_spoken_fa,
         last_error: prefs.last_error,
     }
@@ -334,37 +618,7 @@ fn emit_status_changed(app: &AppHandle, st: &DubbingStatus) {
 /// Normalizes Persian text before Piper phonemization so Arabic variants and
 /// noisy characters never degrade speech quality.
 pub fn prepare_persian_tts_text(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len() + 8);
-    let mut prev_space = true;
-    for ch in raw.chars() {
-        let mapped = match ch {
-            'ي' | 'ى' => 'ی',
-            'ك' => 'ک',
-            'ة' => 'ه',
-            'أ' | 'إ' => 'ا',
-            '\u{200b}' | '\u{feff}' => continue, // zero-width space / BOM
-            '[' | ']' | '(' | ')' | '"' | '«' | '»' | '*' | '#' => ' ',
-            _ => ch,
-        };
-        if mapped.is_whitespace() {
-            if !prev_space {
-                out.push(' ');
-                prev_space = true;
-            }
-        } else {
-            out.push(mapped);
-            prev_space = false;
-        }
-    }
-    let trimmed = out.trim().to_string();
-    if trimmed.is_empty() {
-        return trimmed;
-    }
-    if !matches!(trimmed.chars().last(), Some('.' | '!' | '?' | '؟' | '،')) {
-        format!("{trimmed}.")
-    } else {
-        trimmed
-    }
+    crate::persian_g2p::enhance_persian_for_tts(raw)
 }
 
 /// Converts UI speech rate percentage (70..=150) to Piper's `--length_scale`
@@ -714,40 +968,75 @@ fn run_dubbing_pipeline(
             let wav_out = voice_dir_path.join(format!("_nexora_dub_out_{}.wav", slot_idx % 2));
             slot_idx = slot_idx.wrapping_add(1);
             let use_female_profile = auto_gender_voice && gender == SpeakerGender::Female;
-            let (sel_onnx, sel_json, eff_rate, apply_female_pitch) = if use_female_profile {
-                if female_voice_id != "auto_female" {
+            let clone_prof: Option<VoiceCloneProfile> =
+                if use_female_profile && female_voice_id == "clone_female" {
+                    load_clone_profile(&app_tts, "female")
+                } else if !use_female_profile {
+                    let prefs_vid = DUB_PREFS
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .voice_id
+                        .clone();
+                    if prefs_vid == "clone_male" {
+                        load_clone_profile(&app_tts, "male")
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+            let (sel_onnx, sel_json, eff_rate, pitch_factor) = if let Some(ref prof) = clone_prof {
+                let pf = (prof.target_f0_hz / 124.0).clamp(0.78, 1.38);
+                let comp_rate = ((speech_rate_pct as f32) / pf).round().clamp(70.0, 150.0) as u16;
+                (voice_onnx.clone(), voice_json.clone(), comp_rate, Some(pf))
+            } else if use_female_profile {
+                if female_voice_id != "auto_female" && female_voice_id != "clone_female" {
                     let fspec = voice_spec(&female_voice_id);
                     let fonnx = voice_dir_path.join(fspec.onnx_filename);
                     let fjson = voice_dir_path.join(fspec.json_filename);
                     if fonnx.is_file() && fjson.is_file() {
-                        (fonnx, fjson, speech_rate_pct, false)
+                        (fonnx, fjson, speech_rate_pct, None)
                     } else {
                         let slow_rate =
                             ((speech_rate_pct as f32) / 1.18).round().clamp(70.0, 150.0) as u16;
-                        (voice_onnx.clone(), voice_json.clone(), slow_rate, true)
+                        (
+                            voice_onnx.clone(),
+                            voice_json.clone(),
+                            slow_rate,
+                            Some(1.20),
+                        )
                     }
                 } else {
                     let slow_rate =
                         ((speech_rate_pct as f32) / 1.18).round().clamp(70.0, 150.0) as u16;
-                    (voice_onnx.clone(), voice_json.clone(), slow_rate, true)
+                    (
+                        voice_onnx.clone(),
+                        voice_json.clone(),
+                        slow_rate,
+                        Some(1.20),
+                    )
                 }
             } else {
                 (
                     voice_onnx.clone(),
                     voice_json.clone(),
                     speech_rate_pct,
-                    false,
+                    None,
                 )
             };
+
             let synth_res = synthesize_piper_wav(
                 &piper_bin, &sel_onnx, &sel_json, &fa_text, &wav_out, eff_rate,
             )
             .and_then(|()| {
-                if apply_female_pitch {
-                    scale_wav_header_pitch(&wav_out, 1.20)
-                } else {
-                    Ok(())
+                if let Some(pf) = pitch_factor {
+                    scale_wav_header_pitch(&wav_out, pf)?;
                 }
+                if let Some(ref prof) = clone_prof {
+                    apply_voice_clone_timbre(&wav_out, prof)?;
+                }
+                Ok(())
             });
             match synth_res {
                 Ok(()) if DUB_RUNNING.load(Ordering::SeqCst) => {
@@ -990,7 +1279,11 @@ pub async fn download_dubbing_engine(
     let spec = voice_spec(&selected);
     {
         let mut prefs = DUB_PREFS.lock().unwrap_or_else(|e| e.into_inner());
-        prefs.voice_id = spec.id.to_string();
+        prefs.voice_id = if voice_id.as_deref() == Some("clone_male") {
+            "clone_male".to_string()
+        } else {
+            spec.id.to_string()
+        };
         prefs.last_error = None;
     }
 
@@ -1156,141 +1449,19 @@ pub fn start_live_dubbing(
     let mode = capture_mode
         .unwrap_or_else(|| "system".to_string())
         .to_ascii_lowercase();
-    let spec = voice_spec(voice_id.as_deref().unwrap_or("fa_IR-amir-medium"));
-    let duck = duck_percent.unwrap_or(25).clamp(5, 100);
-    let rate = speech_rate_pct.unwrap_or(105).clamp(70, 150);
-    let auto_gender = auto_gender_voice.unwrap_or(true);
-    let fem_voice = female_voice_id.unwrap_or_else(|| "auto_female".to_string());
-
-    let vdir = voice_dir(&app);
-    let Some(piper_bin) = find_piper_binary(&vdir) else {
-        DUB_RUNNING.store(false, Ordering::SeqCst);
-        return Err("Nexora-Voice v1 engine is not downloaded yet.".to_string());
-    };
-    let voice_onnx = vdir.join(spec.onnx_filename);
-    let voice_json = vdir.join(spec.json_filename);
-    if !voice_onnx.is_file() || !voice_json.is_file() {
-        DUB_RUNNING.store(false, Ordering::SeqCst);
-        return Err("Selected Persian voice model is not downloaded yet.".to_string());
-    }
-
-    let wdir = crate::translator::engine_dir(&app);
-    let settings = crate::settings::load(&app);
-    let wmodel = wdir.join(&settings.whisper_model);
-    if !wmodel.is_file() {
-        DUB_RUNNING.store(false, Ordering::SeqCst);
-        return Err(
-            "Whisper speech model is required for live dubbing. Download it in Engines first."
-                .to_string(),
-        );
-    }
-
-    let prov_str = translate_provider.unwrap_or_else(|| settings.translate_provider.clone());
-    let parsed_prov = crate::translate_provider::TranslateProviderId::parse_id(&prov_str);
-    let prov_id = if parsed_prov == crate::translate_provider::TranslateProviderId::None {
-        let local_mt = wdir.join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME);
-        if local_mt.is_file() {
-            crate::translate_provider::TranslateProviderId::Local
-        } else {
-            crate::translate_provider::TranslateProviderId::GoogleFree
-        }
+    let req_vid = voice_id.as_deref().unwrap_or("fa_IR-amir-medium");
+    let clone_prof = if req_vid == "clone_male" {
+        load_clone_profile(&app, "male")
+    } else if req_vid == "clone_female" {
+        load_clone_profile(&app, "female")
     } else {
-        parsed_prov
+        None
     };
-
-    {
-        let mut prefs = DUB_PREFS.lock().unwrap_or_else(|e| e.into_inner());
-        prefs.voice_id = spec.id.to_string();
-        prefs.capture_mode = mode.clone();
-        prefs.target_pid = target_pid;
-        prefs.target_app_name = target_app_name;
-        prefs.duck_percent = duck;
-        prefs.speech_rate_pct = rate;
-        prefs.auto_gender_voice = auto_gender;
-        prefs.female_voice_id = fem_voice.clone();
-        prefs.last_detected_gender = "unknown".to_string();
-        prefs.last_error = None;
-    }
-
-    let app_clone = app.clone();
-    std::thread::spawn(move || {
-        #[cfg(windows)]
-        let res = run_dubbing_pipeline(
-            app_clone.clone(),
-            wdir,
-            wmodel,
-            voice_onnx,
-            voice_json,
-            piper_bin,
-            mode,
-            target_pid,
-            duck,
-            rate,
-            auto_gender,
-            fem_voice,
-            prov_id,
-        );
-        #[cfg(not(windows))]
-        let res: Result<(), String> = {
-            let _ = (
-                wdir,
-                wmodel,
-                voice_onnx,
-                voice_json,
-                piper_bin,
-                mode,
-                target_pid,
-                duck,
-                rate,
-                auto_gender,
-                fem_voice,
-                prov_id,
-            );
-            Err("Live dubbing is supported on Windows 10/11 only.".to_string())
-        };
-
-        DUB_RUNNING.store(false, Ordering::SeqCst);
-        if let Err(err) = res {
-            let mut prefs = DUB_PREFS.lock().unwrap_or_else(|e| e.into_inner());
-            prefs.last_error = Some(err);
-        }
-        emit_status_changed(&app_clone, &build_status(&app_clone));
-    });
-
-    let st = build_status(&app);
-    emit_status_changed(&app, &st);
-    Ok(st)
-}
-
-#[tauri::command]
-pub fn stop_live_dubbing(window: tauri::Window, app: AppHandle) -> Result<DubbingStatus, String> {
-    if !crate::ipc::is_privileged_window(window.label()) {
-        return Err("Unauthorized window".to_string());
-    }
-    DUB_RUNNING.store(false, Ordering::SeqCst);
-    let st = build_status(&app);
-    emit_status_changed(&app, &st);
-    Ok(st)
-}
-
-#[tauri::command]
-pub async fn test_dubbing_voice(
-    window: tauri::Window,
-    app: AppHandle,
-    text: Option<String>,
-    voice_id: Option<String>,
-    speech_rate_pct: Option<u16>,
-) -> Result<String, String> {
-    if !crate::ipc::is_privileged_window(window.label()) {
-        return Err("Unauthorized window".to_string());
-    }
-    let sample =
-        text.unwrap_or_else(|| "سلام! موتور دوبله هوشمند نوکسورا آماده به کار است.".to_string());
-    let spec = voice_spec(voice_id.as_deref().unwrap_or("fa_IR-amir-medium"));
+    let spec = voice_spec(req_vid);
     let rate = speech_rate_pct.unwrap_or(105);
     let vdir = voice_dir(&app);
     let piper_bin = find_piper_binary(&vdir)
-        .ok_or_else(|| "Nexora-Voice v1 engine is not downloaded yet.".to_string())?;
+        .ok_or_else(|| "Nexora-Voice engine is not downloaded yet.".to_string())?;
     let onnx = vdir.join(spec.onnx_filename);
     let json = vdir.join(spec.json_filename);
     if !onnx.is_file() || !json.is_file() {
@@ -1299,12 +1470,95 @@ pub async fn test_dubbing_voice(
     let wav = vdir.join("_nexora_dub_test.wav");
 
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
-        synthesize_piper_wav(&piper_bin, &onnx, &json, &sample, &wav, rate)?;
+        let (eff_rate, pitch_opt) = if let Some(ref prof) = clone_prof {
+            let pf = (prof.target_f0_hz / 124.0).clamp(0.78, 1.38);
+            (
+                ((rate as f32) / pf).round().clamp(70.0, 150.0) as u16,
+                Some(pf),
+            )
+        } else {
+            (rate, None)
+        };
+        synthesize_piper_wav(&piper_bin, &onnx, &json, &sample, &wav, eff_rate)?;
+        if let Some(pf) = pitch_opt {
+            scale_wav_header_pitch(&wav, pf)?;
+        }
+        if let Some(ref prof) = clone_prof {
+            apply_voice_clone_timbre(&wav, prof)?;
+        }
         win_audio::play_wav_blocking(&wav)?;
         Ok(prepare_persian_tts_text(&sample))
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn record_voice_clone_sample(
+    window: tauri::Window,
+    app: AppHandle,
+    slot: String,
+    duration_secs: Option<u8>,
+) -> Result<DubbingStatus, String> {
+    if !crate::ipc::is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
+    let clean_slot = if slot.eq_ignore_ascii_case("female") {
+        "female".to_string()
+    } else {
+        "male".to_string()
+    };
+    let secs = duration_secs.unwrap_or(6).clamp(3, 12);
+    let cdir = clones_dir(&app);
+    let ref_wav = cdir.join(format!("{clean_slot}_ref.wav"));
+    let prof_path = clone_profile_path(&app, &clean_slot);
+    let slot_bg = clean_slot.clone();
+
+    let res = tauri::async_runtime::spawn_blocking(move || -> Result<VoiceCloneProfile, String> {
+        fs::create_dir_all(&cdir).map_err(|e| format!("Failed creating clones dir: {e}"))?;
+        let pcm = record_mic_pcm_blocking(secs)?;
+        let profile = extract_voice_profile(&pcm, &slot_bg)?;
+        write_pcm16_wav(&ref_wav, &pcm, CAPTURE_SAMPLE_RATE as u32)?;
+        let json = serde_json::to_string_pretty(&profile)
+            .map_err(|e| format!("Failed serializing voice clone profile: {e}"))?;
+        fs::write(&prof_path, json).map_err(|e| format!("Failed saving voice profile: {e}"))?;
+        Ok(profile)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if let Err(ref err) = res {
+        let mut prefs = DUB_PREFS.lock().unwrap_or_else(|e| e.into_inner());
+        prefs.last_error = Some(err.clone());
+    } else {
+        let mut prefs = DUB_PREFS.lock().unwrap_or_else(|e| e.into_inner());
+        prefs.last_error = None;
+    }
+    res?;
+    let st = build_status(&app);
+    emit_status_changed(&app, &st);
+    Ok(st)
+}
+
+#[tauri::command]
+pub fn delete_voice_clone_sample(
+    window: tauri::Window,
+    app: AppHandle,
+    slot: String,
+) -> Result<DubbingStatus, String> {
+    if !crate::ipc::is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
+    let clean_slot = if slot.eq_ignore_ascii_case("female") {
+        "female"
+    } else {
+        "male"
+    };
+    let _ = fs::remove_file(clone_profile_path(&app, clean_slot));
+    let _ = fs::remove_file(clones_dir(&app).join(format!("{clean_slot}_ref.wav")));
+    let st = build_status(&app);
+    emit_status_changed(&app, &st);
+    Ok(st)
 }
 
 #[cfg(test)]
@@ -1390,5 +1644,18 @@ mod tests {
             detect_speaker_gender(&pcm, SpeakerGender::Female),
             SpeakerGender::Female
         );
+    }
+
+    #[test]
+    fn extract_voice_profile_captures_pitch_and_timbre() {
+        let male_pcm = synth_tone_pcm16(115.0, None, 1.2);
+        let mp = extract_voice_profile(&male_pcm, "male").expect("male profile");
+        assert_eq!(mp.slot, "male");
+        assert!(mp.target_f0_hz > 100.0 && mp.target_f0_hz < 135.0);
+
+        let female_pcm = synth_tone_pcm16(215.0, None, 1.2);
+        let fp = extract_voice_profile(&female_pcm, "female").expect("female profile");
+        assert_eq!(fp.slot, "female");
+        assert!(fp.target_f0_hz > 195.0 && fp.target_f0_hz < 235.0);
     }
 }
