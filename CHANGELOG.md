@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.23] - 2026-11-25
+
+### Bug Fixes & Hardening
+- **Nexora-Voice v1 Windows Fixes**: Fixed Piper TTS launching on Windows by setting `current_dir` to the Piper folder and passing `--espeak_data`, surfaced Piper/playback errors in UI instead of swallowing them, defaulted `"none"` translation provider to `Nexora-MT v2` (or Google Free) so English is never fed to Persian voices, added fallback to default render loopback on older Windows 10 builds, used alternating WAV slots to avoid `PlaySoundW` locks, and added a dedicated System/Window audio source picker + per-voice install check inside the Dubbing card.
+- **Flicker-Free Word-by-Word Subtitles**: Normalized punctuation and added word-overlap tracking with stable positional React keys so Whisper revisions update in place without ever rewriting sentences from word 1.
+- **Dual-Layer 4-Second Silence Auto-Fade**: Added backend 4-second silence auto-clear in `translator.rs` (clearing stale cached translations after pauses) paired with smooth frontend fade-out.
+- **Reliable Dynamic Island Idle Auto-Collapse**: Re-arms auto-close when leaving the top hot-zone, adds a 1.5s inactivity watchdog + `document` `mouseleave` handler so the island reliably collapses even if Windows drops hover events.
+- **Debounced Custom Subtitle CSS**: Replaced per-keystroke settings writes with a 350ms debounced draft and immediate Apply & Preview.
+
 ## [0.2.22] - 2026-11-24
 
 ### What's New
