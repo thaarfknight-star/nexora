@@ -17,6 +17,30 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.25",
+    date: "2026-11-25",
+    title: {
+      en: "Auto Male/Female Series Dubbing & Long-Sentence Clause Splitting",
+      fa: "تشخیص خودکار صدای زن و مرد در دوبله (سریال و یوتیوب) و تقسیم هوشمند جملات بلند",
+    },
+    features: {
+      en: [
+        "Added offline music-resilient Male/Female speaker detection (voice-band YIN F0 + hysteresis) for automatic dual-voice dubbing in TV series, YouTube, and games.",
+        "Added separate Male and Female voice selectors and live detected-speaker badge inside Settings → Engines → Live Dubbing.",
+        "Upgraded Nexora-MT to split long multi-sentence lecture and YouTube utterances on sentence boundaries without truncating.",
+      ],
+      fa: [
+        "افزودن تشخیص آفلاین و مقاوم به موسیقی متن برای صدای زن و مرد در دوبله زنده سریال‌ها، ویدیوهای یوتیوب و بازی‌ها.",
+        "افزودن انتخاب جداگانه صدای مرد و زن و نمایش زنده جنسیت گوینده در کارت موتور دوبله.",
+        "ارتقای Nexora-MT برای تقسیم خودکار جملات بلند سخنرانی و یوتیوب بدون قطع شدن وسط جمله.",
+      ],
+    },
+    fixes: {
+      en: [],
+      fa: [],
+    },
+  },
+  {
     version: "0.2.24",
     date: "2026-11-25",
     title: {

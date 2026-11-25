@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.25] - 2026-11-25
+
+### What's New
+- **Offline Male / Female Speaker Detection (Music-Resilient)**: Added a pure-Rust voice-band pre-filtered YIN pitch (F0) gender detector with aperiodicity gating and hysteresis inside `src-tauri/src/dubbing.rs` so TV series, YouTube videos, and games automatically switch between Male and Female Persian dubbing voices even over background music.
+- **Dual Male & Female Dubbing Voice Profiles**: Added an **Auto Male / Female Voice** toggle and separate Male/Female voice selectors in Settings → Engines → Live Dubbing, including a built-in artifact-free female vocal register profile alongside Piper Persian voices.
+- **Smart Multi-Sentence Clause Splitting in `Nexora-MT`**: Upgraded `src-tauri/src/nexora_mt.rs` to split long YouTube/TED/lecture utterances on sentence boundaries (`. ! ? ;`) and translate each sentence cleanly without mid-sentence truncation.
+
 ## [0.2.24] - 2026-11-25
 
 ### What's New
