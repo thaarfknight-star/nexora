@@ -7,6 +7,10 @@ use tauri::{AppHandle, Manager};
 /// File name of the persisted settings inside the app data dir.
 pub const SETTINGS_FILE_NAME: &str = "settings.json";
 
+fn default_true() -> bool {
+    true
+}
+
 fn default_always_on_top() -> bool {
     true
 }
@@ -135,6 +139,36 @@ pub struct NexoraSettings {
     /// Name of the currently selected subtitle CSS preset (empty = default/custom).
     #[serde(default)]
     pub active_subtitle_css_preset: String,
+    /// Dynamic Island customization: show Start menu button.
+    #[serde(default = "default_true")]
+    pub island_show_start: bool,
+    /// Dynamic Island customization: show open apps carousel (Taskbar + System Tray).
+    #[serde(default = "default_true")]
+    pub island_show_apps: bool,
+    /// Dynamic Island customization: show system stats (CPU / RAM / GPU).
+    #[serde(default = "default_true")]
+    pub island_show_stats: bool,
+    /// Dynamic Island customization: show GPU icon & percentage alongside CPU/RAM.
+    #[serde(default = "default_true")]
+    pub island_show_gpu: bool,
+    /// Dynamic Island customization: show media playback controls.
+    #[serde(default = "default_true")]
+    pub island_show_media: bool,
+    /// Dynamic Island customization: show clock.
+    #[serde(default = "default_true")]
+    pub island_show_clock: bool,
+    /// Dynamic Island customization: show notifications bell button.
+    #[serde(default = "default_true")]
+    pub island_show_notifications: bool,
+    /// Dynamic Island customization: show Local (Offline Subtitles / Nexora-MT) engine quick button.
+    #[serde(default = "default_true")]
+    pub island_show_engine_local: bool,
+    /// Dynamic Island customization: show Online Translation engine quick button.
+    #[serde(default = "default_true")]
+    pub island_show_engine_online: bool,
+    /// Dynamic Island customization: show Live Dubbing (Nexora-Voice) engine quick button.
+    #[serde(default = "default_true")]
+    pub island_show_engine_dubbing: bool,
 }
 
 impl Default for NexoraSettings {
@@ -166,6 +200,16 @@ pub fn defaults() -> NexoraSettings {
         subtitle_custom_css: String::new(),
         subtitle_css_presets: Vec::new(),
         active_subtitle_css_preset: String::new(),
+        island_show_start: true,
+        island_show_apps: true,
+        island_show_stats: true,
+        island_show_gpu: true,
+        island_show_media: true,
+        island_show_clock: true,
+        island_show_notifications: true,
+        island_show_engine_local: true,
+        island_show_engine_online: true,
+        island_show_engine_dubbing: true,
     }
 }
 
@@ -357,6 +401,16 @@ mod tests {
             subtitle_custom_css: String::new(),
             subtitle_css_presets: Vec::new(),
             active_subtitle_css_preset: String::new(),
+            island_show_start: false,
+            island_show_apps: true,
+            island_show_stats: true,
+            island_show_gpu: false,
+            island_show_media: true,
+            island_show_clock: true,
+            island_show_notifications: false,
+            island_show_engine_local: true,
+            island_show_engine_online: false,
+            island_show_engine_dubbing: true,
             language: "fa".into(),
             island_hotkey: "Ctrl+Alt+N".into(),
         };
@@ -402,6 +456,16 @@ mod tests {
                 subtitle_custom_css: String::new(),
                 subtitle_css_presets: Vec::new(),
                 active_subtitle_css_preset: String::new(),
+                island_show_start: true,
+                island_show_apps: true,
+                island_show_stats: true,
+                island_show_gpu: true,
+                island_show_media: true,
+                island_show_clock: true,
+                island_show_notifications: true,
+                island_show_engine_local: true,
+                island_show_engine_online: true,
+                island_show_engine_dubbing: true,
                 language: "en".into(),
                 island_hotkey: "Alt+Space".into(),
             }
@@ -441,6 +505,16 @@ mod tests {
             subtitle_custom_css: String::new(),
             subtitle_css_presets: Vec::new(),
             active_subtitle_css_preset: String::new(),
+            island_show_start: true,
+            island_show_apps: true,
+            island_show_stats: true,
+            island_show_gpu: true,
+            island_show_media: true,
+            island_show_clock: true,
+            island_show_notifications: true,
+            island_show_engine_local: true,
+            island_show_engine_online: true,
+            island_show_engine_dubbing: true,
             language: "en".into(),
             island_hotkey: "Alt+Space".into(),
         };
@@ -473,6 +547,16 @@ mod tests {
             subtitle_custom_css: String::new(),
             subtitle_css_presets: Vec::new(),
             active_subtitle_css_preset: String::new(),
+            island_show_start: true,
+            island_show_apps: true,
+            island_show_stats: true,
+            island_show_gpu: true,
+            island_show_media: true,
+            island_show_clock: true,
+            island_show_notifications: true,
+            island_show_engine_local: true,
+            island_show_engine_online: true,
+            island_show_engine_dubbing: true,
             island_hotkey: "not-a-key".into(),
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
@@ -503,6 +587,16 @@ mod tests {
             subtitle_custom_css: String::new(),
             subtitle_css_presets: Vec::new(),
             active_subtitle_css_preset: String::new(),
+            island_show_start: true,
+            island_show_apps: true,
+            island_show_stats: true,
+            island_show_gpu: true,
+            island_show_media: true,
+            island_show_clock: true,
+            island_show_notifications: true,
+            island_show_engine_local: true,
+            island_show_engine_online: true,
+            island_show_engine_dubbing: true,
             language: "de".into(),
             island_hotkey: "Alt+Space".into(),
         };

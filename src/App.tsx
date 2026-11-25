@@ -1,6 +1,6 @@
 import { check as checkPluginUpdate } from "@tauri-apps/plugin-updater";
 import { latestReleaseNote } from "./releaseNotes";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -79,6 +79,17 @@ interface NexoraSettings {
   stats_percent_style: string;
   /** UI language: "en" (default) or "fa". */
   language: string;
+  /** Dynamic Island customization toggles (default true). */
+  island_show_start?: boolean;
+  island_show_apps?: boolean;
+  island_show_stats?: boolean;
+  island_show_gpu?: boolean;
+  island_show_media?: boolean;
+  island_show_clock?: boolean;
+  island_show_notifications?: boolean;
+  island_show_engine_local?: boolean;
+  island_show_engine_online?: boolean;
+  island_show_engine_dubbing?: boolean;
 }
 
 interface SystemStats {
@@ -112,6 +123,7 @@ interface TaskbarWindow {
   active: boolean;
   icon_size: number;
   icon_rgba_base64: string;
+  in_tray?: boolean;
 }
 
 /** One app pinned to the user's taskbar. Same icon format. */
@@ -458,6 +470,71 @@ function SvgSubtitle({ size = 15 }: { size?: number }) {
   );
 }
 
+function SvgCpu({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+      <rect x="9.5" y="9.5" width="5" height="5" rx="0.8" />
+      <path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4" />
+    </svg>
+  );
+}
+
+function SvgRam({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="6" width="20" height="10" rx="2" />
+      <path d="M6 10v2M10 10v2M14 10v2M18 10v2" />
+      <path d="M6 16v3M10 16v3M14 16v3M18 16v3" />
+    </svg>
+  );
+}
+
+function SvgGpu({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="5" width="20" height="12" rx="2" />
+      <circle cx="8.5" cy="11" r="2.7" />
+      <circle cx="16" cy="11" r="2.7" />
+      <path d="M5 17v3M9 17v2M13 17v2" />
+    </svg>
+  );
+}
+
+function SvgGlobe({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+    </svg>
+  );
+}
+
+function SvgDubbing({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 10a7 7 0 0 0 14 0M12 17v4M8 21h8" />
+    </svg>
+  );
+}
+
+function SvgChevronLeft({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M15 18l-6-6 6-6" />
+    </svg>
+  );
+}
+
+function SvgChevronRight({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 18l6-6-6-6" />
+    </svg>
+  );
+}
+
 interface AudioAppTarget {
   pid: number;
   title: string;
@@ -759,7 +836,7 @@ function IslandApp() {
   const [liveSubActive, setLiveSubActive] = useState(false);
   const [islandTranslateStatus, setIslandTranslateStatus] =
     useState<TranslateEngineStatus | null>(null);
-  const [translateInstalled, setTranslateInstalled] = useState(false);
+  const [, setTranslateInstalled] = useState(false);
 
   useEffect(() => {
     invoke<TranslateEngineStatus>("get_translate_status")
@@ -836,40 +913,121 @@ function IslandApp() {
     };
   }, []);
 
-  const toggleLiveSubtitles = () => {
-    if (liveSubActive) {
-      invoke<TranslateEngineStatus>("stop_live_translate")
-        .then((st) => setLiveSubActive(st.running))
-        .catch(() => setLiveSubActive(false));
-    } else {
-      invoke<TranslateEngineStatus>("get_translate_status")
-        .then((st) => {
-          if (!st.installed) {
-            openSettings();
-            return;
-          }
-          const savedMode = window.localStorage.getItem("nexora-translate-capture-mode") || st.capture_mode || "system";
-          const savedPidRaw = window.localStorage.getItem("nexora-translate-target-pid");
-          const savedPid = savedPidRaw ? Number(savedPidRaw) : st.target_pid;
-          const savedAppName = window.localStorage.getItem("nexora-translate-target-app") || st.target_app_name;
-          invoke<TranslateEngineStatus>("start_live_translate", {
-            sourceLang: st.source_lang || "en",
-            targetLang: st.target_lang || "fa",
-            captureMode: savedMode,
-            onlineTranslation: st.translate_provider !== "none",
-            translateProvider: st.translate_provider || "none",
-            targetPid: savedMode === "app" && savedPid ? savedPid : null,
-            targetAppName: savedMode === "app" ? savedAppName : null,
-          })
-            .then((next) => setLiveSubActive(next.running))
-            .catch(() => {});
-        })
-        .catch(() => openSettings());
+  const [activeTranslateMode, setActiveTranslateMode] = useState<"local" | "online" | null>(null);
+  const taskbarTrackRef = useRef<HTMLDivElement | null>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const updateCarouselArrows = useCallback(() => {
+    const el = taskbarTrackRef.current;
+    if (!el) {
+      setCanScrollLeft(false);
+      setCanScrollRight(false);
+      return;
     }
+    setCanScrollLeft(el.scrollLeft > 2);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 2);
+  }, []);
+
+  const scrollAppsCarousel = (direction: -1 | 1) => {
+    const el = taskbarTrackRef.current;
+    if (!el) return;
+    el.scrollBy({ left: direction * 136, behavior: "smooth" });
+  };
+
+  const toggleEngineTranslate = (mode: "local" | "online") => {
+    if (liveSubActive && activeTranslateMode === mode) {
+      invoke<TranslateEngineStatus>("stop_live_translate")
+        .then((st) => {
+          setLiveSubActive(st.running);
+          if (!st.running) setActiveTranslateMode(null);
+        })
+        .catch(() => {
+          setLiveSubActive(false);
+          setActiveTranslateMode(null);
+        });
+      return;
+    }
+    invoke<TranslateEngineStatus>("get_translate_status")
+      .then((st) => {
+        if (!st.installed) {
+          openSettings();
+          return;
+        }
+        const savedMode = window.localStorage.getItem("nexora-translate-capture-mode") || st.capture_mode || "system";
+        const savedPidRaw = window.localStorage.getItem("nexora-translate-target-pid");
+        const savedPid = savedPidRaw ? Number(savedPidRaw) : st.target_pid;
+        const savedAppName = window.localStorage.getItem("nexora-translate-target-app") || st.target_app_name;
+        const provider =
+          mode === "local"
+            ? st.local_model_installed
+              ? "local"
+              : "none"
+            : st.translate_provider === "google_cloud" || st.translate_provider === "gemini"
+              ? st.translate_provider
+              : "google_free";
+        invoke<TranslateEngineStatus>("start_live_translate", {
+          sourceLang: st.source_lang || "en",
+          targetLang: st.target_lang || "fa",
+          captureMode: savedMode,
+          onlineTranslation: mode === "online",
+          translateProvider: provider,
+          targetPid: savedMode === "app" && savedPid ? savedPid : null,
+          targetAppName: savedMode === "app" ? savedAppName : null,
+        })
+          .then((next) => {
+            setLiveSubActive(next.running);
+            setActiveTranslateMode(next.running ? mode : null);
+          })
+          .catch(() => {});
+      })
+      .catch(() => openSettings());
+  };
+
+  const toggleLiveDubbingQuick = () => {
+    if (islandDubbingStatus?.running) {
+      invoke<DubbingStatus>("stop_live_dubbing")
+        .then(setIslandDubbingStatus)
+        .catch(() => {});
+      return;
+    }
+    invoke<DubbingStatus>("get_dubbing_status")
+      .then((st) => {
+        if (!st.ready) {
+          openSettings();
+          return;
+        }
+        const savedVoice = window.localStorage.getItem("nexora-dubbing-voice") || st.voice_id || "fa_IR-amir-medium";
+        const savedDuck = Number(window.localStorage.getItem("nexora-dubbing-duck") || st.duck_percent || 80);
+        const savedRate = Number(window.localStorage.getItem("nexora-dubbing-rate") || st.speech_rate_pct || 100);
+        const savedAutoGender = window.localStorage.getItem("nexora-dubbing-auto-gender") === "1" || st.auto_gender_voice;
+        const savedFemaleVoice = window.localStorage.getItem("nexora-dubbing-female-voice") || st.female_voice_id || "auto_female";
+        const savedMode = window.localStorage.getItem("nexora-dubbing-capture-mode") || st.capture_mode || "system";
+        const savedPidRaw = window.localStorage.getItem("nexora-dubbing-target-pid");
+        const savedPid = savedPidRaw ? Number(savedPidRaw) : st.target_pid;
+        const savedAppName = window.localStorage.getItem("nexora-dubbing-target-app") || st.target_app_name;
+        invoke<DubbingStatus>("start_live_dubbing", {
+          voiceId: savedVoice,
+          duckPercent: savedDuck,
+          speechRatePct: savedRate,
+          autoGenderVoice: savedAutoGender,
+          femaleVoiceId: savedFemaleVoice,
+          captureMode: savedMode,
+          targetPid: savedMode === "app" && savedPid ? savedPid : null,
+          targetAppName: savedMode === "app" ? savedAppName : null,
+        })
+          .then(setIslandDubbingStatus)
+          .catch(() => {});
+      })
+      .catch(() => openSettings());
   };
   const [seenIds, setSeenIds] = useState<string[]>([]);
-  // Compact bar's taskbar zone: open windows + pinned apps.
+  // Compact bar's taskbar zone: open windows (Taskbar + System Tray).
   const [taskbarWindows, setTaskbarWindows] = useState<TaskbarWindow[]>([]);
+  useEffect(() => {
+    const id = window.requestAnimationFrame(updateCarouselArrows);
+    return () => window.cancelAnimationFrame(id);
+  }, [taskbarWindows, visible, updateCarouselArrows]);
   const [pinnedApps, setPinnedApps] = useState<PinnedApp[]>([]);
   const [density, setDensity] = useState<"comfortable" | "compact">(
     "comfortable",
@@ -1532,11 +1690,11 @@ function IslandApp() {
           <div
             className="island-brand"
             onClick={toggleExpand}
-            title={
+            title={`Nexora — ${
               visible === "expanded"
                 ? t(language, "collapse")
                 : t(language, "expand")
-            }
+            }`}
           >
             <img
               className="island-emblem"
@@ -1545,101 +1703,169 @@ function IslandApp() {
               width={28}
               height={28}
             />
-            <div>
-              <div className="island-title">{state.title}</div>
-              <div className="island-sub">{currentTheme.name}</div>
-            </div>
           </div>
-          <span className="island-divider" aria-hidden="true" />
-          <div
-            className="taskbar-zone"
-            role="group"
-            aria-label={t(language, "taskbarLabel")}
-          >
-            <button
-              type="button"
-              className="taskbar-start"
-              onClick={openStartMenu}
-              title={t(language, "startMenu")}
-              aria-label={t(language, "startMenu")}
-            >
-              <SvgStart />
-            </button>
-            {pinnedApps.map((app) => (
-              <button
-                key={app.target}
-                type="button"
-                className="taskbar-app pinned"
-                onClick={() => launchPinnedApp(app.target)}
-                title={app.name}
-                aria-label={app.name}
+          {((settings?.island_show_start ?? true) ||
+            (settings?.island_show_apps ?? true)) && (
+            <>
+              <span className="island-divider" aria-hidden="true" />
+              <div
+                className="taskbar-zone"
+                role="group"
+                aria-label={t(language, "taskbarLabel")}
               >
-                <RgbaIcon
-                  rgbaBase64={app.icon_rgba_base64}
-                  size={app.icon_size}
-                  title={app.name}
-                />
-              </button>
-            ))}
-            {taskbarWindows.map((win) => (
-              <button
-                key={win.id}
-                type="button"
-                className={`taskbar-app${win.active ? " active" : ""}${
-                  win.minimized ? " minimized" : ""
-                }`}
-                onClick={() => activateTaskbarWindow(win.id)}
-                title={win.title}
-                aria-label={win.title}
-              >
-                <RgbaIcon
-                  rgbaBase64={win.icon_rgba_base64}
-                  size={win.icon_size}
-                  title={win.title}
-                />
-              </button>
-            ))}
-          </div>
-          <span className="island-divider" aria-hidden="true" />
-          <div className="compact-stats">
-            <span
-              className="compact-stat"
-              title={
-                stats
-                  ? tf(language, "cpuUsageValue", {
-                      v: stats.cpu_percent.toFixed(1),
-                    })
-                  : t(language, "cpuUsageEmpty")
-              }
-            >
-              <span className="compact-stat-label">CPU</span>
-              {stats
-                ? formatPercent(
-                    stats.cpu_percent,
-                    displaySettings.percentStyle,
-                  )
-                : "—"}
-            </span>
-            <span
-              className="compact-stat"
-              title={
-                stats
-                  ? tf(language, "ramUsageValue", {
-                      v: stats.memory_percent.toFixed(1),
-                    })
-                  : t(language, "ramUsageEmpty")
-              }
-            >
-              <span className="compact-stat-label">RAM</span>
-              {stats
-                ? formatPercent(
-                    stats.memory_percent,
-                    displaySettings.percentStyle,
-                  )
-                : "—"}
-            </span>
-          </div>
-          {media && (
+                {(settings?.island_show_start ?? true) && (
+                  <button
+                    type="button"
+                    className="taskbar-start"
+                    onClick={openStartMenu}
+                    title={t(language, "startMenu")}
+                    aria-label={t(language, "startMenu")}
+                  >
+                    <SvgStart />
+                  </button>
+                )}
+                {(settings?.island_show_apps ?? true) && (
+                  <div className="taskbar-carousel">
+                    {(canScrollLeft || canScrollRight) && (
+                      <button
+                        type="button"
+                        className="carousel-arrow"
+                        disabled={!canScrollLeft}
+                        onClick={() => scrollAppsCarousel(-1)}
+                        title={t(language, "carouselPrev")}
+                        aria-label={t(language, "carouselPrev")}
+                      >
+                        <SvgChevronLeft size={13} />
+                      </button>
+                    )}
+                    <div
+                      ref={taskbarTrackRef}
+                      className="taskbar-track"
+                      onScroll={updateCarouselArrows}
+                      onWheel={(e) => {
+                        const el = taskbarTrackRef.current;
+                        if (!el || el.scrollWidth <= el.clientWidth) return;
+                        if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+                          e.preventDefault();
+                          el.scrollLeft += e.deltaY;
+                          updateCarouselArrows();
+                        }
+                      }}
+                    >
+                      {taskbarWindows.map((win) => (
+                        <button
+                          key={win.id}
+                          type="button"
+                          className={`taskbar-app${win.active ? " active" : ""}${
+                            win.minimized ? " minimized" : ""
+                          }${win.in_tray ? " in-tray" : ""}`}
+                          onClick={() => activateTaskbarWindow(win.id)}
+                          title={
+                            win.in_tray
+                              ? `${win.title} (${t(language, "trayAppBadge")})`
+                              : win.title
+                          }
+                          aria-label={
+                            win.in_tray
+                              ? `${win.title} (${t(language, "trayAppBadge")})`
+                              : win.title
+                          }
+                        >
+                          <RgbaIcon
+                            rgbaBase64={win.icon_rgba_base64}
+                            size={win.icon_size}
+                            title={win.title}
+                          />
+                        </button>
+                      ))}
+                    </div>
+                    {(canScrollLeft || canScrollRight) && (
+                      <button
+                        type="button"
+                        className="carousel-arrow"
+                        disabled={!canScrollRight}
+                        onClick={() => scrollAppsCarousel(1)}
+                        title={t(language, "carouselNext")}
+                        aria-label={t(language, "carouselNext")}
+                      >
+                        <SvgChevronRight size={13} />
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+          {(settings?.island_show_stats ?? true) && (
+            <>
+              <span className="island-divider" aria-hidden="true" />
+              <div className="compact-stats">
+                <span
+                  className="compact-stat"
+                  title={
+                    stats
+                      ? tf(language, "cpuUsageValue", {
+                          v: stats.cpu_percent.toFixed(1),
+                        })
+                      : t(language, "cpuUsageEmpty")
+                  }
+                >
+                  <span className="stat-icon">
+                    <SvgCpu size={13} />
+                  </span>
+                  {stats
+                    ? formatPercent(
+                        stats.cpu_percent,
+                        displaySettings.percentStyle,
+                      )
+                    : "—"}
+                </span>
+                <span
+                  className="compact-stat"
+                  title={
+                    stats
+                      ? tf(language, "ramUsageValue", {
+                          v: stats.memory_percent.toFixed(1),
+                        })
+                      : t(language, "ramUsageEmpty")
+                  }
+                >
+                  <span className="stat-icon">
+                    <SvgRam size={13} />
+                  </span>
+                  {stats
+                    ? formatPercent(
+                        stats.memory_percent,
+                        displaySettings.percentStyle,
+                      )
+                    : "—"}
+                </span>
+                {(settings?.island_show_gpu ?? true) && (
+                  <span
+                    className="compact-stat"
+                    title={
+                      stats?.gpu_percent != null
+                        ? tf(language, "gpuUsageValue", {
+                            v: stats.gpu_percent.toFixed(1),
+                          })
+                        : t(language, "gpuUsageEmpty")
+                    }
+                  >
+                    <span className="stat-icon">
+                      <SvgGpu size={13} />
+                    </span>
+                    {stats?.gpu_percent != null
+                      ? formatPercent(
+                          stats.gpu_percent,
+                          displaySettings.percentStyle,
+                        )
+                      : "—"}
+                  </span>
+                )}
+              </div>
+            </>
+          )}
+          {media && (settings?.island_show_media ?? true) && (
             <>
               <span className="island-divider" aria-hidden="true" />
               <div className="compact-media">
@@ -1683,63 +1909,99 @@ function IslandApp() {
               </div>
             </>
           )}
-          <span className="island-divider" aria-hidden="true" />
-          <button
-            type="button"
-            className="island-clock"
-            onClick={toggleExpand}
-            title={
-              visible === "expanded"
-                ? t(language, "collapse")
-                : t(language, "expand")
-            }
-            aria-label={
-              visible === "expanded"
-                ? t(language, "collapse")
-                : t(language, "expand")
-            }
-          >
-            <div className="island-clock-time">
-              {clockTime(
-                now,
-                displaySettings.clock24h,
-                displaySettings.showSeconds,
-              )}
-            </div>
-            {visible === "expanded" && (
-              <div className="island-clock-date">
-                <span dir="ltr">{clockParts.gregorian}</span>
-                {" · "}
-                <span dir="rtl">{clockParts.jalali}</span>
-              </div>
-            )}
-          </button>
-          {translateInstalled && (
+          {(settings?.island_show_clock ?? true) && (
+            <>
+              <span className="island-divider" aria-hidden="true" />
+              <button
+                type="button"
+                className="island-clock"
+                onClick={toggleExpand}
+                title={
+                  visible === "expanded"
+                    ? t(language, "collapse")
+                    : t(language, "expand")
+                }
+                aria-label={
+                  visible === "expanded"
+                    ? t(language, "collapse")
+                    : t(language, "expand")
+                }
+              >
+                <div className="island-clock-time">
+                  {clockTime(
+                    now,
+                    displaySettings.clock24h,
+                    displaySettings.showSeconds,
+                  )}
+                </div>
+                {visible === "expanded" && (
+                  <div className="island-clock-date">
+                    <span dir="ltr">{clockParts.gregorian}</span>
+                    {" · "}
+                    <span dir="rtl">{clockParts.jalali}</span>
+                  </div>
+                )}
+              </button>
+            </>
+          )}
+          {(settings?.island_show_engine_local ?? true) && (
             <button
               type="button"
-              className={`theme-icon-btn${liveSubActive ? " active" : ""}`}
-              onClick={toggleLiveSubtitles}
-              title={t(language, "liveSubtitlesTooltip")}
-              aria-label={t(language, "liveSubtitlesTooltip")}
+              className={`theme-icon-btn engine-quick-btn${
+                liveSubActive && activeTranslateMode !== "online" ? " active" : ""
+              }`}
+              onClick={() => toggleEngineTranslate("local")}
+              title={t(language, "engineLocalTooltip")}
+              aria-label={t(language, "engineLocalTooltip")}
             >
               <SvgSubtitle size={15} />
             </button>
           )}
-          <button
-            type="button"
-            className="bell-btn theme-icon-btn"
-            onClick={openNotificationsTab}
-            title={t(language, "notifications")}
-            aria-label={t(language, "notifications")}
-            aria-expanded={visible === "expanded" && tab === "notifications"}
-          >
-            <SvgBell size={15} />
-            {unreadCount > 0 && (
-              <span className="bell-badge">
-                {unreadCount > 9 ? "9+" : unreadCount}
-              </span>
-            )}
-          </button>
+          {(settings?.island_show_engine_online ?? true) && (
+            <button
+              type="button"
+              className={`theme-icon-btn engine-quick-btn${
+                liveSubActive && activeTranslateMode === "online"
+                  ? " active active-online"
+                  : ""
+              }`}
+              onClick={() => toggleEngineTranslate("online")}
+              title={t(language, "engineOnlineTooltip")}
+              aria-label={t(language, "engineOnlineTooltip")}
+            >
+              <SvgGlobe size={15} />
+            </button>
+          )}
+          {(settings?.island_show_engine_dubbing ?? true) && (
+            <button
+              type="button"
+              className={`theme-icon-btn engine-quick-btn${
+                islandDubbingStatus?.running ? " active active-dubbing" : ""
+              }`}
+              onClick={toggleLiveDubbingQuick}
+              title={t(language, "engineDubbingTooltip")}
+              aria-label={t(language, "engineDubbingTooltip")}
+            >
+              <SvgDubbing size={15} />
+            </button>
+          )}
+          {(settings?.island_show_notifications ?? true) && (
+            <button
+              type="button"
+              className="bell-btn theme-icon-btn"
+              onClick={openNotificationsTab}
+              title={t(language, "notifications")}
+              aria-label={t(language, "notifications")}
+              aria-expanded={visible === "expanded" && tab === "notifications"}
+            >
+              <SvgBell size={15} />
+              {unreadCount > 0 && (
+                <span className="bell-badge">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </button>
+          )}
           <button
             type="button"
             className="gear-btn theme-icon-btn"
@@ -2203,7 +2465,7 @@ function IslandApp() {
                         : t(language, "cpuUsageEmpty")
                     }
                   >
-                    <span className="stat-chip-label">CPU</span>
+                    <span className="stat-chip-head"><span className="stat-icon"><SvgCpu size={14} /></span><span className="stat-chip-label">CPU</span></span>
                     <span className="stat-chip-value">
                       {stats
                         ? formatPercent(
@@ -2223,7 +2485,7 @@ function IslandApp() {
                         : t(language, "ramUsageEmpty")
                     }
                   >
-                    <span className="stat-chip-label">RAM</span>
+                    <span className="stat-chip-head"><span className="stat-icon"><SvgRam size={14} /></span><span className="stat-chip-label">RAM</span></span>
                     <span className="stat-chip-value">
                       {stats
                         ? formatPercent(
@@ -2243,7 +2505,7 @@ function IslandApp() {
                         : t(language, "gpuUsageEmpty")
                     }
                   >
-                    <span className="stat-chip-label">GPU</span>
+                    <span className="stat-chip-head"><span className="stat-icon"><SvgGpu size={14} /></span><span className="stat-chip-label">GPU</span></span>
                     <span className="stat-chip-value">
                       {stats?.gpu_percent != null
                         ? formatPercent(
@@ -3112,12 +3374,25 @@ function SettingsView() {
       | "auto_hide_taskbar"
       | "always_on_top"
       | "clock_24h"
-      | "show_seconds",
+      | "show_seconds"
+      | "island_show_start"
+      | "island_show_apps"
+      | "island_show_stats"
+      | "island_show_gpu"
+      | "island_show_media"
+      | "island_show_clock"
+      | "island_show_notifications"
+      | "island_show_engine_local"
+      | "island_show_engine_online"
+      | "island_show_engine_dubbing",
   ) => {
     if (!settings) {
       return;
     }
-    saveSettings({ ...settings, [key]: !settings[key] });
+    const currentVal = key.startsWith("island_show_")
+      ? (settings[key] ?? true)
+      : Boolean(settings[key]);
+    saveSettings({ ...settings, [key]: !currentVal });
   };
 
   const cycleDateFormat = () => {
@@ -3227,6 +3502,16 @@ function SettingsView() {
         stats_speed_unit: "auto",
         stats_percent_style: "with",
         language: "en",
+        island_show_start: true,
+        island_show_apps: true,
+        island_show_stats: true,
+        island_show_gpu: true,
+        island_show_media: true,
+        island_show_clock: true,
+        island_show_notifications: true,
+        island_show_engine_local: true,
+        island_show_engine_online: true,
+        island_show_engine_dubbing: true,
       });
     }
   };
@@ -3802,6 +4087,44 @@ function SettingsView() {
       {hotkeyError && (
         <p className="settings-error">{t(language, "hotkeyError")}</p>
       )}
+
+      <div className="island-style-divider" />
+
+      <h2 className="settings-section-title">
+        {t(language, "sectionIslandWidgets")}
+      </h2>
+      <p className="settings-section-desc">
+        {t(language, "islandWidgetsDesc")}
+      </p>
+      {(
+        [
+          ["island_show_start", "widgetStartBtn", "widgetStartBtnDesc"],
+          ["island_show_apps", "widgetOpenApps", "widgetOpenAppsDesc"],
+          ["island_show_stats", "widgetStats", "widgetStatsDesc"],
+          ["island_show_gpu", "widgetGpuStat", "widgetGpuStatDesc"],
+          ["island_show_media", "widgetMedia", "widgetMediaDesc"],
+          ["island_show_clock", "widgetClock", "widgetClockDesc"],
+          ["island_show_notifications", "widgetNotifications", "widgetNotificationsDesc"],
+          ["island_show_engine_local", "widgetEngineLocal", "widgetEngineLocalDesc"],
+          ["island_show_engine_online", "widgetEngineOnline", "widgetEngineOnlineDesc"],
+          ["island_show_engine_dubbing", "widgetEngineDubbing", "widgetEngineDubbingDesc"],
+        ] as const
+      ).map(([key, labelKey, descKey]) => (
+        <div className="settings-row" key={key}>
+          <span className="settings-row-text">
+            <span>{t(language, labelKey)}</span>
+            <span className="settings-row-desc">{t(language, descKey)}</span>
+          </span>
+          <button
+            type="button"
+            className="mini-btn"
+            disabled={!settings}
+            onClick={() => toggleSetting(key)}
+          >
+            {settings ? onOff(settings[key] ?? true, language) : "—"}
+          </button>
+        </div>
+      ))}
         </>
       )}
       {section === "clock" && (

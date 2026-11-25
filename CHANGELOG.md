@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.27] - 2026-11-25
+
+### What's New
+- **Minimal Logo-Only Dynamic Island Brand**: Removed the app title and theme subtitle text from the Dynamic Island brand area, leaving a clean Nexora emblem only.
+- **Open Apps Carousel (Taskbar + System Tray)**: The Dynamic Island apps strip now displays only currently open applications (visible Taskbar windows plus running System Tray GUI apps, with a subtle indicator dot for tray apps and click-to-restore) inside a smooth left/right scrollable carousel with chevron arrows and mouse-wheel scrolling.
+- **Customizable Dynamic Island Buttons & Per-Engine Toggles**: Added a dedicated **Dynamic Island Buttons & Widgets** section in Settings → Island Style so users can individually show or hide Start Menu, Open Apps Carousel, System Stats, GPU Stat, Media Controls, Clock, Notifications, and each engine button separately (**Local Engine**, **Online Translation Engine**, and **Live Dubbing Engine**).
+- **CPU, RAM, and GPU Icons**: Replaced plain text stat labels with custom SVG hardware logos for CPU, RAM, and GPU in both the compact Dynamic Island and the expanded Stats panel.
+
+
 ## [0.2.26] - 2026-11-25
 
 ### What's New
