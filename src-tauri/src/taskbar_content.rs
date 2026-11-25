@@ -914,14 +914,29 @@ mod tests {
     fn tray_filter_accepts_hidden_user_gui_app_and_rejects_system_or_helper_windows() {
         let mut p = normal_props();
         p.visible = false;
-        assert!(should_list_tray_window(p, r"C:\Users\taha\AppData\Local\Discord\app\Discord.exe"));
-        assert!(!should_list_tray_window(p, r"C:\Windows\System32\ctfmon.exe"));
-        assert!(!should_list_tray_window(p, r"C:\Program Files\Nexora\nexora.exe"));
+        assert!(should_list_tray_window(
+            p,
+            r"C:\Users\taha\AppData\Local\Discord\app\Discord.exe"
+        ));
+        assert!(!should_list_tray_window(
+            p,
+            r"C:\Windows\System32\ctfmon.exe"
+        ));
+        assert!(!should_list_tray_window(
+            p,
+            r"C:\Program Files\Nexora\nexora.exe"
+        ));
         p.has_app_chrome = false;
-        assert!(!should_list_tray_window(p, r"C:\Users\taha\AppData\Local\Discord\app\Discord.exe"));
+        assert!(!should_list_tray_window(
+            p,
+            r"C:\Users\taha\AppData\Local\Discord\app\Discord.exe"
+        ));
         p.has_app_chrome = true;
         p.is_own_process = true;
-        assert!(!should_list_tray_window(p, r"C:\Users\taha\AppData\Local\Discord\app\Discord.exe"));
+        assert!(!should_list_tray_window(
+            p,
+            r"C:\Users\taha\AppData\Local\Discord\app\Discord.exe"
+        ));
     }
 
     #[test]
