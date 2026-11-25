@@ -1678,7 +1678,7 @@ fn run_wasapi_loopback_worker(
                     guard.clear();
                 }
                 emit_subtitle(
-                    &app,
+                    app,
                     &SubtitlePayload {
                         original: String::new(),
                         translated: String::new(),
