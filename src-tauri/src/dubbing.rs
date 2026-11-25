@@ -155,6 +155,7 @@ fn build_status(app: &AppHandle) -> DubbingStatus {
         .map(|v| v.id.to_string())
         .collect();
     let voice_installed = installed_voices.iter().any(|id| id == spec.id);
+    let any_voice_installed = !installed_voices.is_empty();
     let whisper_ready = {
         let t_dir = crate::translator::engine_dir(app);
         crate::translator::find_whisper_binary(&t_dir).is_some()
@@ -163,7 +164,7 @@ fn build_status(app: &AppHandle) -> DubbingStatus {
         piper_installed,
         voice_installed,
         installed_voices,
-        ready: piper_installed && !installed_voices.is_empty() && whisper_ready,
+        ready: piper_installed && any_voice_installed && whisper_ready,
         downloading: DUB_DOWNLOADING.load(Ordering::SeqCst),
         running: DUB_RUNNING.load(Ordering::SeqCst),
         voice_id: spec.id.to_string(),
@@ -468,7 +469,7 @@ fn run_dubbing_pipeline(
                 let enumerator = DeviceEnumerator::new()
                     .map_err(|e| format!("Failed creating WASAPI enumerator: {e}"))?;
                 let device = enumerator
-                    .get_default_device(&Direction::Render)
+                    .get_default_device(Direction::Render)
                     .map_err(|e| format!("Failed getting default render device: {e}"))?;
                 let mut client = device
                     .get_iaudioclient()
