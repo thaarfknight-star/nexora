@@ -728,6 +728,21 @@ impl NexoraMtEngine {
         if clean.is_empty() {
             return String::new();
         }
+        let parts = split_sentences_for_mt(clean);
+        if parts.len() <= 1 {
+            return self.translate_single(clean, max_new_tokens);
+        }
+        let mut out_parts = Vec::with_capacity(parts.len());
+        for part in parts {
+            let tr = self.translate_single(part, max_new_tokens);
+            if !tr.is_empty() {
+                out_parts.push(tr);
+            }
+        }
+        out_parts.join(" ")
+    }
+
+    fn translate_single(&self, clean: &str, max_new_tokens: usize) -> String {
         let mut src_ids = Vec::with_capacity(self.cfg.max_len);
         src_ids.push(self.cfg.bos_id);
         for id in self
@@ -975,6 +990,53 @@ pub fn invalidate_cached_engine() {
         if let Ok(mut guard) = slot.lock() {
             *guard = None;
         }
+    }
+}
+
+/// Splits long multi-sentence utterances (e.g. TED Talks or fast YouTube commentary)
+/// on sentence boundaries so each clause fits cleanly inside the model's context window
+/// without truncating mid-thought.
+pub fn split_sentences_for_mt(text: &str) -> Vec<&str> {
+    let trimmed = text.trim();
+    if trimmed.len() <= 75 {
+        return if trimmed.is_empty() {
+            Vec::new()
+        } else {
+            vec![trimmed]
+        };
+    }
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let bytes = trimmed.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        let is_end = matches!(b, b'.' | b'!' | b'?' | b';');
+        let next_is_space = i + 1 < bytes.len() && bytes[i + 1].is_ascii_whitespace();
+        if is_end && next_is_space && (i + 1 - start) >= 14 {
+            let chunk = trimmed[start..=i].trim();
+            if !chunk.is_empty() {
+                out.push(chunk);
+            }
+            start = i + 1;
+            while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+                start += 1;
+            }
+            i = start;
+            continue;
+        }
+        i += 1;
+    }
+    if start < bytes.len() {
+        let tail = trimmed[start..].trim();
+        if !tail.is_empty() {
+            out.push(tail);
+        }
+    }
+    if out.is_empty() {
+        vec![trimmed]
+    } else {
+        out
     }
 }
 
@@ -1286,5 +1348,17 @@ mod tests {
 
         let engine = NexoraMtEngine::from_bytes(&file_bytes).expect("synthetic .nxmt v2 loads");
         let _out = engine.translate("Hello Nexora", 6);
+    }
+
+    #[test]
+    fn split_sentences_for_mt_handles_long_lectures() {
+        let short = "No way! Are you serious?";
+        assert_eq!(split_sentences_for_mt(short), vec![short]);
+
+        let long = "This is called the matching principle in psychology. When two people have different conversations, they cannot connect! Asking deep questions fixes that.";
+        let parts = split_sentences_for_mt(long);
+        assert_eq!(parts.len(), 3);
+        assert!(parts[0].starts_with("This is called"));
+        assert!(parts[2].starts_with("Asking deep questions"));
     }
 }

@@ -503,6 +503,9 @@ interface DubbingStatus {
   target_app_name: string | null;
   duck_percent: number;
   speech_rate_pct: number;
+  auto_gender_voice: boolean;
+  female_voice_id: string;
+  last_detected_gender: string;
   last_spoken_fa: string;
   last_error: string | null;
 }
@@ -2408,6 +2411,8 @@ function IslandApp() {
                               voiceId: islandDubbingStatus.voice_id,
                               duckPercent: islandDubbingStatus.duck_percent,
                               speechRatePct: islandDubbingStatus.speech_rate_pct,
+                              autoGenderVoice: islandDubbingStatus.auto_gender_voice,
+                              femaleVoiceId: islandDubbingStatus.female_voice_id,
                             })
                               .then(setIslandDubbingStatus)
                               .catch(() => {});
@@ -2640,6 +2645,8 @@ function SettingsView() {
   const [dubbingStatus, setDubbingStatus] = useState<DubbingStatus | null>(null);
   const [dubbingProgress, setDubbingProgress] = useState<DownloadProgressPayload | null>(null);
   const [dubVoiceId, setDubVoiceId] = useState("fa_IR-amir-medium");
+  const [dubAutoGender, setDubAutoGender] = useState(true);
+  const [dubFemaleVoiceId, setDubFemaleVoiceId] = useState("auto_female");
   const [dubDuckPercent, setDubDuckPercent] = useState(25);
   const [dubRatePct, setDubRatePct] = useState(105);
   const [dubTesting, setDubTesting] = useState(false);
@@ -2750,6 +2757,8 @@ function SettingsView() {
       .then((st) => {
         setDubbingStatus(st);
         if (st.voice_id) setDubVoiceId(st.voice_id);
+        setDubAutoGender(st.auto_gender_voice);
+        if (st.female_voice_id) setDubFemaleVoiceId(st.female_voice_id);
         setDubDuckPercent(st.duck_percent);
         setDubRatePct(st.speech_rate_pct);
       })
@@ -4428,6 +4437,37 @@ function SettingsView() {
               )}
               <div className="settings-row">
                 <span className="settings-row-text">
+                  <span>{t(language, "dubbingAutoGenderLabel")}</span>
+                  <span className="audio-mode-hint">{t(language, "dubbingAutoGenderDesc")}</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={dubAutoGender}
+                  onChange={(e) => setDubAutoGender(e.target.checked)}
+                />
+              </div>
+              {dubAutoGender && (
+                <div className="settings-row">
+                  <span>{t(language, "dubbingFemaleVoiceLabel")}</span>
+                  <select
+                    className="translate-select"
+                    value={dubFemaleVoiceId}
+                    onChange={(e) => setDubFemaleVoiceId(e.target.value)}
+                  >
+                    <option value="auto_female">{t(language, "dubbingFemaleAutoOption")}</option>
+                    <option value="fa_IR-gyro-medium">Gyro (Persian Expressive, 22 kHz)</option>
+                    <option value="fa_IR-amir-medium">Amir (Persian Natural, 22 kHz)</option>
+                  </select>
+                </div>
+              )}
+              {dubbingStatus?.running && dubbingStatus.last_detected_gender !== "unknown" && (
+                <div className="audio-mode-hint">
+                  {t(language, "dubbingLastGenderLabel")}:{" "}
+                  <strong>{dubbingStatus.last_detected_gender === "female" ? "Female / زن" : "Male / مرد"}</strong>
+                </div>
+              )}
+              <div className="settings-row">
+                <span className="settings-row-text">
                   <span>{t(language, "audioSourceLabel")}</span>
                   <span className="audio-mode-hint">{t(language, "audioSourceNoMicHint")}</span>
                 </span>
@@ -4559,6 +4599,8 @@ function SettingsView() {
                               voiceId: dubVoiceId,
                               duckPercent: dubDuckPercent,
                               speechRatePct: dubRatePct,
+                              autoGenderVoice: dubAutoGender,
+                              femaleVoiceId: dubFemaleVoiceId,
                               translateProvider: settings?.translate_provider ?? "local",
                             })
                               .then(setDubbingStatus)

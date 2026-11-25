@@ -74,6 +74,143 @@ pub fn voice_spec(id: &str) -> &'static NexoraVoiceSpec {
         .unwrap_or(&PERSIAN_VOICES[0])
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpeakerGender {
+    Male,
+    Female,
+    Unknown,
+}
+
+impl SpeakerGender {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Male => "male",
+            Self::Female => "female",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// Music-resilient offline Male/Female speaker gender detector on 16 kHz mono 16-bit PCM.
+pub fn detect_speaker_gender(pcm_bytes: &[u8], prev: SpeakerGender) -> SpeakerGender {
+    let n_samples = pcm_bytes.len() / 2;
+    if n_samples < 640 {
+        return prev;
+    }
+
+    let mut x = Vec::with_capacity(n_samples);
+    let mut hp_prev_in = 0.0f32;
+    let mut hp_prev_out = 0.0f32;
+    let mut lp_prev_out = 0.0f32;
+    let hp_alpha = 0.958f32; // ~110 Hz high-pass at 16 kHz
+    let lp_alpha = 0.57f32; // ~3.4 kHz low-pass at 16 kHz
+
+    for chunk in pcm_bytes.chunks_exact(2) {
+        let s = i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / 32768.0;
+        let hp = hp_alpha * (hp_prev_out + s - hp_prev_in);
+        hp_prev_in = s;
+        hp_prev_out = hp;
+        let lp = lp_prev_out + lp_alpha * (hp - lp_prev_out);
+        lp_prev_out = lp;
+        x.push(lp);
+    }
+
+    let sr = CAPTURE_SAMPLE_RATE as f32;
+    let frame_len = 480usize;
+    let hop = 240usize;
+    let min_lag = 50usize;
+    let max_lag = 200usize;
+    let yin_thresh = 0.28f32;
+
+    let mut f0_votes: Vec<f32> = Vec::new();
+    let mut start = 0usize;
+    let mut diff = vec![0.0f32; max_lag + 1];
+    let mut cmndf = vec![0.0f32; max_lag + 1];
+
+    while start + frame_len + max_lag <= x.len() {
+        let frame = &x[start..start + frame_len];
+        let energy: f32 = frame.iter().map(|v| v * v).sum::<f32>() / frame_len as f32;
+        if energy.sqrt() < 0.012 {
+            start += hop;
+            continue;
+        }
+
+        diff[0] = 0.0;
+        cmndf[0] = 1.0;
+        let mut running_sum = 0.0f32;
+        for tau in 1..=max_lag {
+            let mut sum = 0.0f32;
+            for j in 0..frame_len {
+                let d = x[start + j] - x[start + j + tau];
+                sum += d * d;
+            }
+            diff[tau] = sum;
+            running_sum += sum;
+            cmndf[tau] = if running_sum > 1e-9 {
+                sum * (tau as f32) / running_sum
+            } else {
+                1.0
+            };
+        }
+
+        let mut best_tau = 0usize;
+        let mut best_val = 1.0f32;
+        for tau in min_lag..max_lag {
+            if cmndf[tau] < yin_thresh
+                && cmndf[tau] <= cmndf[tau - 1]
+                && cmndf[tau] <= cmndf[tau + 1]
+            {
+                best_tau = tau;
+                best_val = cmndf[tau];
+                break;
+            }
+            if cmndf[tau] < best_val {
+                best_val = cmndf[tau];
+                best_tau = tau;
+            }
+        }
+
+        if best_tau >= min_lag && best_val < yin_thresh {
+            f0_votes.push(sr / (best_tau as f32));
+        }
+        start += hop;
+    }
+
+    if f0_votes.len() < 3 {
+        return prev;
+    }
+    f0_votes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median_f0 = f0_votes[f0_votes.len() / 2];
+
+    if median_f0 >= 166.0 {
+        SpeakerGender::Female
+    } else if median_f0 <= 156.0 {
+        SpeakerGender::Male
+    } else if prev != SpeakerGender::Unknown {
+        prev
+    } else if median_f0 >= 161.0 {
+        SpeakerGender::Female
+    } else {
+        SpeakerGender::Male
+    }
+}
+
+/// Adjusts a standard 44-byte PCM WAV header's sample rate & byte rate by `factor`.
+pub fn scale_wav_header_pitch(wav_path: &Path, factor: f32) -> Result<(), String> {
+    let mut bytes = fs::read(wav_path).map_err(|e| format!("Failed reading WAV: {e}"))?;
+    if bytes.len() < 44 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return Err("Invalid PCM WAV header".to_string());
+    }
+    let sr = u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]);
+    let channels = u16::from_le_bytes([bytes[22], bytes[23]]) as u32;
+    let bits = u16::from_le_bytes([bytes[34], bytes[35]]) as u32;
+    let new_sr = ((sr as f32) * factor).round().clamp(8_000.0, 48_000.0) as u32;
+    let new_byte_rate = new_sr * channels * (bits / 8);
+    bytes[24..28].copy_from_slice(&new_sr.to_le_bytes());
+    bytes[28..32].copy_from_slice(&new_byte_rate.to_le_bytes());
+    fs::write(wav_path, bytes).map_err(|e| format!("Failed writing pitched WAV: {e}"))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DubbingStatus {
     pub piper_installed: bool,
@@ -88,6 +225,9 @@ pub struct DubbingStatus {
     pub target_app_name: Option<String>,
     pub duck_percent: u8,
     pub speech_rate_pct: u16,
+    pub auto_gender_voice: bool,
+    pub female_voice_id: String,
+    pub last_detected_gender: String,
     pub last_spoken_fa: String,
     pub last_error: Option<String>,
 }
@@ -106,6 +246,9 @@ struct DubbingPrefs {
     target_app_name: Option<String>,
     duck_percent: u8,
     speech_rate_pct: u16,
+    auto_gender_voice: bool,
+    female_voice_id: String,
+    last_detected_gender: String,
     last_spoken_fa: String,
     last_error: Option<String>,
 }
@@ -119,6 +262,9 @@ impl Default for DubbingPrefs {
             target_app_name: None,
             duck_percent: 25,
             speech_rate_pct: 105,
+            auto_gender_voice: true,
+            female_voice_id: "auto_female".to_string(),
+            last_detected_gender: "unknown".to_string(),
             last_spoken_fa: String::new(),
             last_error: None,
         }
@@ -173,6 +319,9 @@ fn build_status(app: &AppHandle) -> DubbingStatus {
         target_app_name: prefs.target_app_name,
         duck_percent: prefs.duck_percent,
         speech_rate_pct: prefs.speech_rate_pct,
+        auto_gender_voice: prefs.auto_gender_voice,
+        female_voice_id: prefs.female_voice_id,
+        last_detected_gender: prefs.last_detected_gender,
         last_spoken_fa: prefs.last_spoken_fa,
         last_error: prefs.last_error,
     }
@@ -465,6 +614,8 @@ fn run_dubbing_pipeline(
     target_pid: Option<u32>,
     duck_percent: u8,
     speech_rate_pct: u16,
+    auto_gender_voice: bool,
+    female_voice_id: String,
     provider_id: crate::translate_provider::TranslateProviderId,
 ) -> Result<(), String> {
     use wasapi::{
@@ -532,7 +683,7 @@ fn run_dubbing_pipeline(
         .map_err(|e| format!("Failed starting WASAPI capture stream: {e}"))?;
 
     type PhraseSlot = Arc<(Mutex<(Option<Vec<u8>>, bool)>, Condvar)>;
-    type TtsQueue = Arc<(Mutex<(VecDeque<String>, bool)>, Condvar)>;
+    type TtsQueue = Arc<(Mutex<(VecDeque<(String, SpeakerGender)>, bool)>, Condvar)>;
     let phrase_slot: PhraseSlot = Arc::new((Mutex::new((None, false)), Condvar::new()));
     let tts_queue: TtsQueue = Arc::new((
         Mutex::new((VecDeque::with_capacity(MAX_TTS_QUEUE + 1), false)),
@@ -557,23 +708,53 @@ fn run_dubbing_pipeline(
                 }
                 guard.0.pop_front()
             };
-            let Some(fa_text) = text else {
+            let Some((fa_text, gender)) = text else {
                 continue;
             };
             let wav_out = voice_dir_path.join(format!("_nexora_dub_out_{}.wav", slot_idx % 2));
             slot_idx = slot_idx.wrapping_add(1);
-            match synthesize_piper_wav(
-                &piper_bin,
-                &voice_onnx,
-                &voice_json,
-                &fa_text,
-                &wav_out,
-                speech_rate_pct,
-            ) {
+            let use_female_profile = auto_gender_voice && gender == SpeakerGender::Female;
+            let (sel_onnx, sel_json, eff_rate, apply_female_pitch) = if use_female_profile {
+                if female_voice_id != "auto_female" {
+                    let fspec = voice_spec(&female_voice_id);
+                    let fonnx = voice_dir_path.join(fspec.onnx_filename);
+                    let fjson = voice_dir_path.join(fspec.json_filename);
+                    if fonnx.is_file() && fjson.is_file() {
+                        (fonnx, fjson, speech_rate_pct, false)
+                    } else {
+                        let slow_rate =
+                            ((speech_rate_pct as f32) / 1.18).round().clamp(70.0, 150.0) as u16;
+                        (voice_onnx.clone(), voice_json.clone(), slow_rate, true)
+                    }
+                } else {
+                    let slow_rate =
+                        ((speech_rate_pct as f32) / 1.18).round().clamp(70.0, 150.0) as u16;
+                    (voice_onnx.clone(), voice_json.clone(), slow_rate, true)
+                }
+            } else {
+                (
+                    voice_onnx.clone(),
+                    voice_json.clone(),
+                    speech_rate_pct,
+                    false,
+                )
+            };
+            let synth_res = synthesize_piper_wav(
+                &piper_bin, &sel_onnx, &sel_json, &fa_text, &wav_out, eff_rate,
+            )
+            .and_then(|()| {
+                if apply_female_pitch {
+                    scale_wav_header_pitch(&wav_out, 1.20)
+                } else {
+                    Ok(())
+                }
+            });
+            match synth_res {
                 Ok(()) if DUB_RUNNING.load(Ordering::SeqCst) => {
                     {
                         let mut prefs = DUB_PREFS.lock().unwrap_or_else(|e| e.into_inner());
                         prefs.last_spoken_fa = fa_text.clone();
+                        prefs.last_detected_gender = gender.as_str().to_string();
                         prefs.last_error = None;
                     }
                     emit_status_changed(&app_tts, &build_status(&app_tts));
@@ -623,6 +804,7 @@ fn run_dubbing_pipeline(
         let local_model_path =
             whisper_dir.join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME);
         let mut rolling_ctx: VecDeque<String> = VecDeque::with_capacity(4);
+        let mut last_gender = SpeakerGender::Male;
 
         let (lock, cvar) = &*phrase_rx;
         loop {
@@ -638,6 +820,13 @@ fn run_dubbing_pipeline(
             };
             let Some(pcm_bytes) = pcm_opt else {
                 continue;
+            };
+            let detected_gender = if auto_gender_voice {
+                let g = detect_speaker_gender(&pcm_bytes, last_gender);
+                last_gender = g;
+                g
+            } else {
+                SpeakerGender::Male
             };
             let text_opt = server
                 .as_ref()
@@ -688,7 +877,7 @@ fn run_dubbing_pipeline(
             while qg.0.len() >= MAX_TTS_QUEUE {
                 qg.0.pop_front();
             }
-            qg.0.push_back(fa_text);
+            qg.0.push_back((fa_text, detected_gender));
             qcvar.notify_one();
         }
     });
@@ -950,6 +1139,8 @@ pub fn start_live_dubbing(
     voice_id: Option<String>,
     duck_percent: Option<u8>,
     speech_rate_pct: Option<u16>,
+    auto_gender_voice: Option<bool>,
+    female_voice_id: Option<String>,
     translate_provider: Option<String>,
 ) -> Result<DubbingStatus, String> {
     if !crate::ipc::is_privileged_window(window.label()) {
@@ -968,6 +1159,8 @@ pub fn start_live_dubbing(
     let spec = voice_spec(voice_id.as_deref().unwrap_or("fa_IR-amir-medium"));
     let duck = duck_percent.unwrap_or(25).clamp(5, 100);
     let rate = speech_rate_pct.unwrap_or(105).clamp(70, 150);
+    let auto_gender = auto_gender_voice.unwrap_or(true);
+    let fem_voice = female_voice_id.unwrap_or_else(|| "auto_female".to_string());
 
     let vdir = voice_dir(&app);
     let Some(piper_bin) = find_piper_binary(&vdir) else {
@@ -1013,6 +1206,9 @@ pub fn start_live_dubbing(
         prefs.target_app_name = target_app_name;
         prefs.duck_percent = duck;
         prefs.speech_rate_pct = rate;
+        prefs.auto_gender_voice = auto_gender;
+        prefs.female_voice_id = fem_voice.clone();
+        prefs.last_detected_gender = "unknown".to_string();
         prefs.last_error = None;
     }
 
@@ -1030,12 +1226,24 @@ pub fn start_live_dubbing(
             target_pid,
             duck,
             rate,
+            auto_gender,
+            fem_voice,
             prov_id,
         );
         #[cfg(not(windows))]
         let res: Result<(), String> = {
             let _ = (
-                wdir, wmodel, voice_onnx, voice_json, piper_bin, mode, target_pid, duck, rate,
+                wdir,
+                wmodel,
+                voice_onnx,
+                voice_json,
+                piper_bin,
+                mode,
+                target_pid,
+                duck,
+                rate,
+                auto_gender,
+                fem_voice,
                 prov_id,
             );
             Err("Live dubbing is supported on Windows 10/11 only.".to_string())
@@ -1139,5 +1347,48 @@ mod tests {
         assert!(!after.contains("eɪ"));
         assert!(after.contains("ʃ"));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn synth_tone_pcm16(freq_hz: f32, bass_hz: Option<f32>, secs: f32) -> Vec<u8> {
+        let n = (CAPTURE_SAMPLE_RATE as f32 * secs) as usize;
+        let mut out = Vec::with_capacity(n * 2);
+        for i in 0..n {
+            let t = i as f32 / CAPTURE_SAMPLE_RATE as f32;
+            let mut s = 0.45 * (2.0 * std::f32::consts::PI * freq_hz * t).sin()
+                + 0.20 * (2.0 * std::f32::consts::PI * freq_hz * 2.0 * t).sin();
+            if let Some(bhz) = bass_hz {
+                s += 0.25 * (2.0 * std::f32::consts::PI * bhz * t).sin();
+            }
+            let q = (s.clamp(-0.98, 0.98) * 32767.0) as i16;
+            out.extend_from_slice(&q.to_le_bytes());
+        }
+        out
+    }
+
+    #[test]
+    fn detect_gender_identifies_male_even_with_bass_music() {
+        let pcm = synth_tone_pcm16(120.0, Some(50.0), 0.6);
+        assert_eq!(
+            detect_speaker_gender(&pcm, SpeakerGender::Unknown),
+            SpeakerGender::Male
+        );
+    }
+
+    #[test]
+    fn detect_gender_identifies_female_voice() {
+        let pcm = synth_tone_pcm16(220.0, Some(55.0), 0.6);
+        assert_eq!(
+            detect_speaker_gender(&pcm, SpeakerGender::Male),
+            SpeakerGender::Female
+        );
+    }
+
+    #[test]
+    fn detect_gender_silence_preserves_previous() {
+        let pcm = vec![0u8; 16000];
+        assert_eq!(
+            detect_speaker_gender(&pcm, SpeakerGender::Female),
+            SpeakerGender::Female
+        );
     }
 }
