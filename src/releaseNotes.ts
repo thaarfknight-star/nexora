@@ -17,6 +17,38 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.23",
+    date: "2026-11-25",
+    title: {
+      en: "Nexora-Voice v1 Fixes, Flicker-Free Subtitles & Reliable Island Auto-Collapse",
+      fa: "بازنویسی و رفع باگ‌های موتور دوبله، زیرنویس کلمه‌به‌کلمه و جمع شدن داینامیک آیلند",
+    },
+    features: {
+      en: [
+        "Added dedicated System Audio / Specific Window selector and per-voice download status directly inside the Live Dubbing card.",
+        "Added debounced live Custom Subtitle CSS editing with instant Apply & Preview.",
+      ],
+      fa: [
+        "افزودن انتخابگر اختصاصی کل سیستم / پنجره خاص و وضعیت نصب جداگانه هر صدا داخل کارت موتور دوبله.",
+        "بهینه‌سازی ادیتور زنده CSS سفارشی زیرنویس با ذخیره بهینه و پیش‌نمایش فوری.",
+      ],
+    },
+    fixes: {
+      en: [
+        "Fixed Piper TTS execution on Windows (working directory + --espeak_data), added fallback system loopback, prevented sending English text to Persian TTS, and surfaced errors cleanly.",
+        "Fixed word-by-word subtitles rewriting from word 1 on minor Whisper edits by using punctuation-insensitive overlap tracking and stable keys.",
+        "Fixed Dynamic Island staying open after leaving the hot-zone or switching apps by adding hot-zone leave re-arming and an inactivity watchdog.",
+        "Added backend 4-second silence clearing so old translations never flash after a pause.",
+      ],
+      fa: [
+        "رفع خطای اجرای Piper در ویندوز (تنظیم مسیر کاری و espeak-ng-data)، جلوگیری از ارسال متن انگلیسی به صدای فارسی و نمایش خطاها.",
+        "رفع بازنویسی از اول جمله‌ها در زیرنویس با تشخیص ادامه جمله و کلیدهای پایدار بدون چشمک زدن.",
+        "رفع جمع نشدن داینامیک آیلند پس از خروج از لبه بالا یا سوییچ به برنامه‌های دیگر.",
+        "پاک‌سازی کامل ترجمه قبلی در بک‌اند پس از ۴ ثانیه سکوت.",
+      ],
+    },
+  },
+  {
     version: "0.2.22",
     date: "2026-11-24",
     title: {

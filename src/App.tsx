@@ -489,6 +489,7 @@ interface SubtitlePayload {
 interface DubbingStatus {
   piper_installed: boolean;
   voice_installed: boolean;
+  installed_voices: string[];
   ready: boolean;
   downloading: boolean;
   running: boolean;
@@ -644,6 +645,7 @@ function IslandApp() {
   const visibleRef = useRef<IslandVisible>("hidden");
   const keepOpenRef = useRef(false);
   const hoveringRef = useRef(false);
+  const lastInteractionAtRef = useRef(Date.now());
   const autoCloseTimer = useRef<number | undefined>(undefined);
   // Launch hint (item 3): true while the ~6 s COMPACT intro runs.
   const [launchHint, setLaunchHint] = useState(false);
@@ -794,10 +796,34 @@ function IslandApp() {
         armAutoClose();
       }
     };
+    const onDocLeave = () => {
+      hoveringRef.current = false;
+      if (visibleRef.current !== "hidden") {
+        armAutoClose();
+      }
+    };
+    const idleWatchdog = window.setInterval(() => {
+      if (visibleRef.current === "hidden") return;
+      if (!shouldArmAutoClose(machineGuards())) return;
+      if (
+        autoCloseTimer.current === undefined &&
+        Date.now() - lastInteractionAtRef.current >= AUTO_CLOSE_DELAY_MS
+      ) {
+        const next = nextVisible(
+          visibleRef.current,
+          "auto-close-timeout",
+          machineGuards(),
+        );
+        showIsland(next, "auto-close-timeout");
+      }
+    }, 1500);
     window.addEventListener("blur", onBlur);
+    document.addEventListener("mouseleave", onDocLeave);
     return () => {
       unlisten?.();
+      window.clearInterval(idleWatchdog);
       window.removeEventListener("blur", onBlur);
+      document.removeEventListener("mouseleave", onDocLeave);
     };
   }, []);
 
@@ -1066,7 +1092,14 @@ function IslandApp() {
       // Hovering the top edge no longer auto-opens the island;
       // users open it explicitly via clicking the top handle or hotkey.
       if (event.payload.in_hot_zone && visibleRef.current !== "hidden") {
+        lastInteractionAtRef.current = Date.now();
         clearAutoCloseTimer();
+      } else if (
+        !event.payload.in_hot_zone &&
+        visibleRef.current !== "hidden" &&
+        !hoveringRef.current
+      ) {
+        armAutoClose();
       }
     })
       .then((stop) => {
@@ -1230,11 +1263,13 @@ function IslandApp() {
 
   const onShellMouseEnter = () => {
     hoveringRef.current = true;
+    lastInteractionAtRef.current = Date.now();
     clearAutoCloseTimer();
   };
 
   const onShellMouseLeave = () => {
     hoveringRef.current = false;
+    lastInteractionAtRef.current = Date.now();
     if (visibleRef.current !== "hidden") {
       armAutoClose();
     }
@@ -1420,6 +1455,7 @@ function IslandApp() {
         className={`island-stage ${visible}`}
         onMouseEnter={onShellMouseEnter}
         onMouseLeave={onShellMouseLeave}
+        onMouseMove={() => { lastInteractionAtRef.current = Date.now(); }}
         style={{
           transitionDuration: `${stageMs}ms`,
           transitionTimingFunction: stageEasing,
@@ -2603,6 +2639,38 @@ function SettingsView() {
   const [dubDuckPercent, setDubDuckPercent] = useState(25);
   const [dubRatePct, setDubRatePct] = useState(105);
   const [dubTesting, setDubTesting] = useState(false);
+  const [subtitleCssDraft, setSubtitleCssDraft] = useState("");
+  const subtitleCssTimerRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (settings && subtitleCssTimerRef.current === undefined) {
+      setSubtitleCssDraft(settings.subtitle_custom_css ?? "");
+    }
+  }, [settings]);
+
+  const saveSubtitleCssNow = (cssText: string) => {
+    if (subtitleCssTimerRef.current !== undefined) {
+      window.clearTimeout(subtitleCssTimerRef.current);
+      subtitleCssTimerRef.current = undefined;
+    }
+    if (!settings) return;
+    invoke<NexoraSettings>("set_settings", {
+      settings: { ...settings, subtitle_custom_css: cssText },
+    })
+      .then(setSettings)
+      .catch(() => {});
+  };
+
+  const handleSubtitleCssChange = (cssText: string) => {
+    setSubtitleCssDraft(cssText);
+    if (subtitleCssTimerRef.current !== undefined) {
+      window.clearTimeout(subtitleCssTimerRef.current);
+    }
+    subtitleCssTimerRef.current = window.setTimeout(() => {
+      subtitleCssTimerRef.current = undefined;
+      saveSubtitleCssNow(cssText);
+    }, 350);
+  };
 
   useEffect(() => {
     invoke<DubbingStatus>("get_dubbing_status")
@@ -4268,7 +4336,7 @@ function SettingsView() {
                 <span className="settings-row-text">
                   <span>{t(language, "dubbingVoiceLabel")}</span>
                   <span className="audio-mode-hint">
-                    {dubbingStatus?.ready
+                    {dubbingStatus?.piper_installed && dubbingStatus.installed_voices?.includes(dubVoiceId)
                       ? t(language, "dubbingInstalled")
                       : t(language, "dubbingNotInstalled")}
                   </span>
@@ -4284,6 +4352,69 @@ function SettingsView() {
               </div>
               {!translateStatus?.installed && (
                 <div className="audio-mode-hint">{t(language, "dubbingNeedsWhisper")}</div>
+              )}
+              <div className="settings-row">
+                <span className="settings-row-text">
+                  <span>{t(language, "audioSourceLabel")}</span>
+                  <span className="audio-mode-hint">{t(language, "audioSourceNoMicHint")}</span>
+                </span>
+                <div className="audio-mode-pills">
+                  <button
+                    type="button"
+                    className={`audio-mode-pill${captureMode === "system" ? " active" : ""}`}
+                    onClick={() => {
+                      setCaptureMode("system");
+                      try { window.localStorage.setItem("nexora-translate-capture-mode", "system"); } catch {}
+                    }}
+                  >
+                    {t(language, "audioSourceSystem")}
+                  </button>
+                  <button
+                    type="button"
+                    className={`audio-mode-pill${captureMode === "app" ? " active" : ""}`}
+                    onClick={() => {
+                      setCaptureMode("app");
+                      refreshAudioTargets();
+                      try { window.localStorage.setItem("nexora-translate-capture-mode", "app"); } catch {}
+                    }}
+                  >
+                    {t(language, "audioSourceApp")}
+                  </button>
+                </div>
+              </div>
+              {captureMode === "app" && (
+                <div className="settings-row">
+                  <span className="settings-row-text"><span>{t(language, "targetAppLabel")}</span></span>
+                  <div className="translate-btn-group">
+                    <select
+                      className="translate-select"
+                      value={targetPid ?? ""}
+                      onChange={(e) => {
+                        const pid = e.target.value ? Number(e.target.value) : null;
+                        setTargetPid(pid);
+                        const found = audioTargets.find((item) => item.pid === pid);
+                        const label = found ? found.title || found.exe_name : "";
+                        setTargetAppName(label);
+                        try {
+                          if (pid) window.localStorage.setItem("nexora-translate-target-pid", String(pid));
+                          window.localStorage.setItem("nexora-translate-target-app", label);
+                        } catch {}
+                      }}
+                    >
+                      {audioTargets.length === 0 && (
+                        <option value="">{t(language, "targetAppPlaceholder")}</option>
+                      )}
+                      {audioTargets.map((item) => (
+                        <option key={item.pid} value={item.pid}>
+                          {item.exe_name} — {item.title}
+                        </option>
+                      ))}
+                    </select>
+                    <button type="button" className="mini-btn" onClick={refreshAudioTargets}>
+                      {t(language, "refreshAppsBtn")}
+                    </button>
+                  </div>
+                </div>
               )}
               <div className="settings-row">
                 <span>{t(language, "dubbingDuckLabel")} ({dubDuckPercent}%)</span>
@@ -4322,7 +4453,7 @@ function SettingsView() {
                   >
                     {t(language, "downloadDubbingBtn")}
                   </button>
-                  {dubbingStatus?.ready && (
+                  {dubbingStatus?.ready && dubbingStatus.installed_voices?.includes(dubVoiceId) && (
                     <>
                       <button
                         type="button"
@@ -4413,14 +4544,20 @@ function SettingsView() {
                 <button
                   type="button"
                   className="mini-btn"
-                  onClick={() => persistTranslateSettings({ subtitle_custom_css: "" })}
+                  onClick={() => {
+                    setSubtitleCssDraft("");
+                    saveSubtitleCssNow("");
+                  }}
                 >
                   {t(language, "subtitleCustomCssReset")}
                 </button>
                 <button
                   type="button"
                   className="mini-btn primary-btn"
-                  onClick={handleTestSubtitle}
+                  onClick={() => {
+                    saveSubtitleCssNow(subtitleCssDraft);
+                    handleTestSubtitle();
+                  }}
                 >
                   {t(language, "testSubtitleBtn")}
                 </button>
@@ -4428,9 +4565,9 @@ function SettingsView() {
             </div>
             <textarea
               className="subtitle-css-textarea"
-              value={settings?.subtitle_custom_css ?? ""}
+              value={subtitleCssDraft}
               placeholder={t(language, "subtitleCustomCssPlaceholder")}
-              onChange={(e) => persistTranslateSettings({ subtitle_custom_css: e.target.value })}
+              onChange={(e) => handleSubtitleCssChange(e.target.value)}
             />
           </div>
         </div>
@@ -4586,13 +4723,29 @@ function SettingsView() {
   );
 }
 
+function normSubWord(w: string): string {
+  return w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "").toLowerCase();
+}
+
 function commonWordPrefixLen(a: string[], b: string[]): number {
   const n = Math.min(a.length, b.length);
   let i = 0;
-  while (i < n && a[i].toLowerCase() === b[i].toLowerCase()) {
+  while (i < n && normSubWord(a[i]) === normSubWord(b[i]) && normSubWord(a[i]) !== "") {
     i += 1;
   }
   return i;
+}
+
+function wordOverlapRatio(a: string[], b: string[]): number {
+  if (a.length === 0 || b.length === 0) return 0;
+  const setA = new Set(a.map(normSubWord).filter(Boolean));
+  if (setA.size === 0) return 0;
+  let hits = 0;
+  for (const w of b) {
+    const nw = normSubWord(w);
+    if (nw && setA.has(nw)) hits += 1;
+  }
+  return hits / Math.max(1, Math.min(a.length, b.length));
 }
 
 function SubtitleOverlay() {
@@ -4612,6 +4765,8 @@ function SubtitleOverlay() {
   const [transWords, setTransWords] = useState<string[]>([]);
   const [origRevealed, setOrigRevealed] = useState(0);
   const [transRevealed, setTransRevealed] = useState(0);
+  const [origSettled, setOrigSettled] = useState(0);
+  const [transSettled, setTransSettled] = useState(0);
 
   const prevOrigRef = useRef<string[]>([]);
   const prevTransRef = useRef<string[]>([]);
@@ -4651,40 +4806,62 @@ function SubtitleOverlay() {
       }
     };
 
+    const resetOverlay = () => {
+      lastSigRef.current = "";
+      prevOrigRef.current = [];
+      prevTransRef.current = [];
+      origRevealedRef.current = 0;
+      transRevealedRef.current = 0;
+      setOrigWords([]);
+      setTransWords([]);
+      setOrigRevealed(0);
+      setTransRevealed(0);
+      setOrigSettled(0);
+      setTransSettled(0);
+      fadingRef.current = false;
+      setFadingOut(false);
+      setPayload((cur) => ({ ...cur, original: "", translated: "", active: false }));
+    };
+
+    const triggerSmoothFadeOut = () => {
+      clearTimers();
+      if (!lastSigRef.current) {
+        resetOverlay();
+        return;
+      }
+      fadingRef.current = true;
+      setFadingOut(true);
+      hideTimerRef.current = window.setTimeout(resetOverlay, FADE_ANIM_MS);
+    };
+
     let unlisten: (() => void) | undefined;
     listen<SubtitlePayload>("subtitle-update", (ev) => {
       const next = ev.payload;
       if (!next.active || (!next.original && !next.translated)) {
-        clearTimers();
-        lastSigRef.current = "";
-        prevOrigRef.current = [];
-        prevTransRef.current = [];
-        origRevealedRef.current = 0;
-        transRevealedRef.current = 0;
-        setOrigWords([]);
-        setTransWords([]);
-        setOrigRevealed(0);
-        setTransRevealed(0);
-        fadingRef.current = false;
-        setFadingOut(false);
-        setPayload(next);
+        triggerSmoothFadeOut();
         return;
       }
 
       const nextOrigWords = next.original.trim() ? next.original.trim().split(/\s+/) : [];
       const nextTransWords = next.translated.trim() ? next.translated.trim().split(/\s+/) : [];
 
+      // Keep already-shown words rock solid when a sentence grows or gets slightly refined;
+      // only animate newly appended trailing words.
       const origPrefix = commonWordPrefixLen(prevOrigRef.current, nextOrigWords);
-      const nextOrigRev =
-        origPrefix > 0
-          ? Math.min(Math.max(origRevealedRef.current, origPrefix), nextOrigWords.length)
-          : Math.min(1, nextOrigWords.length);
+      const origSameSentence =
+        origPrefix > 0 || wordOverlapRatio(prevOrigRef.current, nextOrigWords) >= 0.4;
+      const origBase = origSameSentence
+        ? Math.min(Math.max(origRevealedRef.current, origPrefix, prevOrigRef.current.length), nextOrigWords.length)
+        : 0;
+      const nextOrigRev = origSameSentence ? origBase : Math.min(1, nextOrigWords.length);
 
       const transPrefix = commonWordPrefixLen(prevTransRef.current, nextTransWords);
-      const nextTransRev =
-        transPrefix > 0
-          ? Math.min(Math.max(transRevealedRef.current, transPrefix), nextTransWords.length)
-          : Math.min(1, nextTransWords.length);
+      const transSameSentence =
+        transPrefix > 0 || wordOverlapRatio(prevTransRef.current, nextTransWords) >= 0.4;
+      const transBase = transSameSentence
+        ? Math.min(Math.max(transRevealedRef.current, transPrefix, prevTransRef.current.length), nextTransWords.length)
+        : 0;
+      const nextTransRev = transSameSentence ? transBase : Math.min(1, nextTransWords.length);
 
       prevOrigRef.current = nextOrigWords;
       prevTransRef.current = nextTransWords;
@@ -4693,6 +4870,8 @@ function SubtitleOverlay() {
 
       setOrigWords(nextOrigWords);
       setTransWords(nextTransWords);
+      setOrigSettled(origBase);
+      setTransSettled(transBase);
       setOrigRevealed(nextOrigRev);
       setTransRevealed(nextTransRev);
       setPayload(next);
@@ -4703,24 +4882,10 @@ function SubtitleOverlay() {
         clearTimers();
         fadingRef.current = false;
         setFadingOut(false);
-        silenceTimerRef.current = window.setTimeout(() => {
-          fadingRef.current = true;
-          setFadingOut(true);
-          hideTimerRef.current = window.setTimeout(() => {
-            lastSigRef.current = "";
-            prevOrigRef.current = [];
-            prevTransRef.current = [];
-            origRevealedRef.current = 0;
-            transRevealedRef.current = 0;
-            setOrigWords([]);
-            setTransWords([]);
-            setOrigRevealed(0);
-            setTransRevealed(0);
-            fadingRef.current = false;
-            setFadingOut(false);
-            setPayload((cur) => ({ ...cur, original: "", translated: "", active: false }));
-          }, FADE_ANIM_MS);
-        }, SUBTITLE_SILENCE_FADE_MS);
+        silenceTimerRef.current = window.setTimeout(
+          triggerSmoothFadeOut,
+          SUBTITLE_SILENCE_FADE_MS,
+        );
       }
     })
       .then((fn) => {
@@ -4749,7 +4914,7 @@ function SubtitleOverlay() {
         transRevealedRef.current = Math.min(transWords.length, transRevealedRef.current + step);
         setTransRevealed(transRevealedRef.current);
       }
-    }, 42);
+    }, 40);
     return () => window.clearInterval(id);
   }, [origWords.length, transWords.length, origRevealed, transRevealed]);
 
@@ -4770,7 +4935,10 @@ function SubtitleOverlay() {
         {shownOrig.length > 0 && (
           <div className="subtitle-original" dir="auto">
             {shownOrig.map((w, idx) => (
-              <span key={`o-${idx}-${w}`} className="sub-word">
+              <span
+                key={`o-${idx}`}
+                className={idx >= origSettled ? "sub-word sub-word--new" : "sub-word"}
+              >
                 {idx > 0 ? " " : ""}
                 {w}
               </span>
@@ -4780,7 +4948,10 @@ function SubtitleOverlay() {
         {shownTrans.length > 0 && (
           <div className="subtitle-translated">
             {shownTrans.map((w, idx) => (
-              <span key={`t-${idx}-${w}`} className="sub-word">
+              <span
+                key={`t-${idx}`}
+                className={idx >= transSettled ? "sub-word sub-word--new" : "sub-word"}
+              >
                 {idx > 0 ? " " : ""}
                 {w}
               </span>

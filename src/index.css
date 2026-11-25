@@ -2238,7 +2238,10 @@ body,
 
 .sub-word {
   display: inline;
-  animation: subWordIn 0.14s ease-out;
+}
+
+.sub-word--new {
+  animation: subWordIn 0.16s ease-out;
 }
 
 .subtitle-css-textarea {

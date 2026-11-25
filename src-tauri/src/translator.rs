@@ -1592,6 +1592,7 @@ fn run_wasapi_loopback_worker(
     let mut vad = AdaptiveVadGate::new();
     let mut in_speech = false;
     let mut last_voice_at: Option<Instant> = None;
+    let mut last_speech_ended_at: Option<Instant> = None;
     let mut last_snapshot_at = Instant::now();
     let mut dirty_since_snapshot = false;
     let step_ms = snapshot_interval_ms.max(STREAM_STEP_MS);
@@ -1618,6 +1619,7 @@ fn run_wasapi_loopback_worker(
                     if voiced {
                         in_speech = true;
                         last_voice_at = Some(now);
+                        last_speech_ended_at = None;
                         rolling_pcm.extend(pkt_slice);
                         dirty_since_snapshot = true;
                     } else if in_speech {
@@ -1665,8 +1667,26 @@ fn run_wasapi_loopback_worker(
                     vad.reset();
                     in_speech = false;
                     last_voice_at = None;
+                    last_speech_ended_at = Some(now);
                     dirty_since_snapshot = false;
                 }
+            }
+        } else if let Some(ended_at) = last_speech_ended_at {
+            if ended_at.elapsed() >= Duration::from_millis(4_000) {
+                last_speech_ended_at = None;
+                if let Ok(mut guard) = last_translated_text.lock() {
+                    guard.clear();
+                }
+                emit_subtitle(
+                    app,
+                    &SubtitlePayload {
+                        original: String::new(),
+                        translated: String::new(),
+                        target_lang: target_lang.to_string(),
+                        active: false,
+                        translation_status: "ok".to_string(),
+                    },
+                );
             }
         }
     }

@@ -78,6 +78,7 @@ pub fn voice_spec(id: &str) -> &'static NexoraVoiceSpec {
 pub struct DubbingStatus {
     pub piper_installed: bool,
     pub voice_installed: bool,
+    pub installed_voices: Vec<String>,
     pub ready: bool,
     pub downloading: bool,
     pub running: bool,
@@ -148,8 +149,13 @@ fn build_status(app: &AppHandle) -> DubbingStatus {
     let prefs = DUB_PREFS.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let spec = voice_spec(&prefs.voice_id);
     let piper_installed = find_piper_binary(&dir).is_some();
-    let voice_installed =
-        dir.join(spec.onnx_filename).is_file() && dir.join(spec.json_filename).is_file();
+    let installed_voices: Vec<String> = PERSIAN_VOICES
+        .iter()
+        .filter(|v| dir.join(v.onnx_filename).is_file() && dir.join(v.json_filename).is_file())
+        .map(|v| v.id.to_string())
+        .collect();
+    let voice_installed = installed_voices.iter().any(|id| id == spec.id);
+    let any_voice_installed = !installed_voices.is_empty();
     let whisper_ready = {
         let t_dir = crate::translator::engine_dir(app);
         crate::translator::find_whisper_binary(&t_dir).is_some()
@@ -157,7 +163,8 @@ fn build_status(app: &AppHandle) -> DubbingStatus {
     DubbingStatus {
         piper_installed,
         voice_installed,
-        ready: piper_installed && voice_installed && whisper_ready,
+        installed_voices,
+        ready: piper_installed && any_voice_installed && whisper_ready,
         downloading: DUB_DOWNLOADING.load(Ordering::SeqCst),
         running: DUB_RUNNING.load(Ordering::SeqCst),
         voice_id: spec.id.to_string(),
@@ -232,6 +239,13 @@ fn synthesize_piper_wav(
     }
     let scale = format!("{:.3}", speech_rate_to_length_scale(speech_rate_pct));
     let mut cmd = Command::new(piper_bin);
+    if let Some(piper_dir) = piper_bin.parent() {
+        cmd.current_dir(piper_dir);
+        let espeak_dir = piper_dir.join("espeak-ng-data");
+        if espeak_dir.is_dir() {
+            cmd.arg("--espeak_data").arg(espeak_dir);
+        }
+    }
     cmd.arg("--model")
         .arg(onnx_path)
         .arg("--config")
@@ -418,7 +432,10 @@ fn run_dubbing_pipeline(
     speech_rate_pct: u16,
     provider_id: crate::translate_provider::TranslateProviderId,
 ) -> Result<(), String> {
-    use wasapi::{initialize_mta, AudioClient, Direction, SampleType, StreamMode, WaveFormat};
+    use wasapi::{
+        initialize_mta, AudioClient, DeviceEnumerator, Direction, SampleType, StreamMode,
+        WaveFormat,
+    };
 
     let _ = initialize_mta();
     let desired_format = WaveFormat::new(16, 16, SampleType::Int, CAPTURE_SAMPLE_RATE, 1, None);
@@ -435,18 +452,38 @@ fn run_dubbing_pipeline(
             .map_err(|e| format!("Failed initializing app loopback: {e}"))?;
         client
     } else {
-        // Full system audio EXCLUDING Nexora's own process tree so our Persian
-        // dubbed audio never feeds back into Whisper.
-        let mut client = AudioClient::new_application_loopback_client(std::process::id(), false)
-            .map_err(|e| format!("Failed initializing system loopback (excluding Nexora): {e}"))?;
-        let mode = StreamMode::EventsShared {
-            autoconvert: true,
-            buffer_duration_hns: 0,
-        };
-        client
-            .initialize_client(&desired_format, Direction::Capture, mode, None)
-            .map_err(|e| format!("Failed initializing system loopback stream: {e}"))?;
-        client
+        // Prefer excluding Nexora's own process tree so dubbed Persian output never
+        // loops back into Whisper; fall back to default render loopback on older Windows 10.
+        let excl_res = AudioClient::new_application_loopback_client(std::process::id(), false)
+            .and_then(|mut client| {
+                let mode = StreamMode::EventsShared {
+                    autoconvert: true,
+                    buffer_duration_hns: 0,
+                };
+                client.initialize_client(&desired_format, Direction::Capture, mode, None)?;
+                Ok(client)
+            });
+        match excl_res {
+            Ok(client) => client,
+            Err(_) => {
+                let enumerator = DeviceEnumerator::new()
+                    .map_err(|e| format!("Failed creating WASAPI enumerator: {e}"))?;
+                let device = enumerator
+                    .get_default_device(Direction::Render)
+                    .map_err(|e| format!("Failed getting default render device: {e}"))?;
+                let mut client = device
+                    .get_iaudioclient()
+                    .map_err(|e| format!("Failed opening render audio client: {e}"))?;
+                let mode = StreamMode::EventsShared {
+                    autoconvert: true,
+                    buffer_duration_hns: 0,
+                };
+                client
+                    .initialize_client(&desired_format, Direction::Capture, mode, None)
+                    .map_err(|e| format!("Failed initializing fallback system loopback: {e}"))?;
+                client
+            }
+        }
     };
 
     let h_event = audio_client
@@ -471,9 +508,9 @@ fn run_dubbing_pipeline(
     let tts_rx = Arc::clone(&tts_queue);
     let app_tts = app.clone();
     let voice_dir_path = voice_dir(&app);
-    let wav_out = voice_dir_path.join("_nexora_dub_out.wav");
     let playback_handle = std::thread::spawn(move || {
         let (lock, cvar) = &*tts_rx;
+        let mut slot_idx: usize = 0;
         loop {
             let text = {
                 let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -488,29 +525,43 @@ fn run_dubbing_pipeline(
             let Some(fa_text) = text else {
                 continue;
             };
-            if synthesize_piper_wav(
+            let wav_out = voice_dir_path.join(format!("_nexora_dub_out_{}.wav", slot_idx % 2));
+            slot_idx = slot_idx.wrapping_add(1);
+            match synthesize_piper_wav(
                 &piper_bin,
                 &voice_onnx,
                 &voice_json,
                 &fa_text,
                 &wav_out,
                 speech_rate_pct,
-            )
-            .is_ok()
-                && DUB_RUNNING.load(Ordering::SeqCst)
-            {
-                {
-                    let mut prefs = DUB_PREFS.lock().unwrap_or_else(|e| e.into_inner());
-                    prefs.last_spoken_fa = fa_text.clone();
+            ) {
+                Ok(()) if DUB_RUNNING.load(Ordering::SeqCst) => {
+                    {
+                        let mut prefs = DUB_PREFS.lock().unwrap_or_else(|e| e.into_inner());
+                        prefs.last_spoken_fa = fa_text.clone();
+                        prefs.last_error = None;
+                    }
+                    emit_status_changed(&app_tts, &build_status(&app_tts));
+                    let duck_pid = if capture_mode == "app" {
+                        target_pid
+                    } else {
+                        None
+                    };
+                    let _ducker = win_audio::AudioDucker::engage(duck_pid, duck_percent);
+                    if let Err(err) = win_audio::play_wav_blocking(&wav_out) {
+                        let mut prefs = DUB_PREFS.lock().unwrap_or_else(|e| e.into_inner());
+                        prefs.last_error = Some(err);
+                        drop(prefs);
+                        emit_status_changed(&app_tts, &build_status(&app_tts));
+                    }
                 }
-                emit_status_changed(&app_tts, &build_status(&app_tts));
-                let duck_pid = if capture_mode == "app" {
-                    target_pid
-                } else {
-                    None
-                };
-                let _ducker = win_audio::AudioDucker::engage(duck_pid, duck_percent);
-                let _ = win_audio::play_wav_blocking(&wav_out);
+                Ok(()) => {}
+                Err(err) => {
+                    let mut prefs = DUB_PREFS.lock().unwrap_or_else(|e| e.into_inner());
+                    prefs.last_error = Some(err);
+                    drop(prefs);
+                    emit_status_changed(&app_tts, &build_status(&app_tts));
+                }
             }
         }
     });
@@ -906,7 +957,17 @@ pub fn start_live_dubbing(
     }
 
     let prov_str = translate_provider.unwrap_or_else(|| settings.translate_provider.clone());
-    let prov_id = crate::translate_provider::TranslateProviderId::parse_id(&prov_str);
+    let parsed_prov = crate::translate_provider::TranslateProviderId::parse_id(&prov_str);
+    let prov_id = if parsed_prov == crate::translate_provider::TranslateProviderId::None {
+        let local_mt = wdir.join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME);
+        if local_mt.is_file() {
+            crate::translate_provider::TranslateProviderId::Local
+        } else {
+            crate::translate_provider::TranslateProviderId::GoogleFree
+        }
+    } else {
+        parsed_prov
+    };
 
     {
         let mut prefs = DUB_PREFS.lock().unwrap_or_else(|e| e.into_inner());
