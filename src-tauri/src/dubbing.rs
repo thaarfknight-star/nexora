@@ -1279,11 +1279,7 @@ pub async fn download_dubbing_engine(
     let spec = voice_spec(&selected);
     {
         let mut prefs = DUB_PREFS.lock().unwrap_or_else(|e| e.into_inner());
-        prefs.voice_id = if voice_id.as_deref() == Some("clone_male") {
-            "clone_male".to_string()
-        } else {
-            spec.id.to_string()
-        };
+        prefs.voice_id = spec.id.to_string();
         prefs.last_error = None;
     }
 
@@ -1449,6 +1445,140 @@ pub fn start_live_dubbing(
     let mode = capture_mode
         .unwrap_or_else(|| "system".to_string())
         .to_ascii_lowercase();
+    let spec = voice_spec(voice_id.as_deref().unwrap_or("fa_IR-amir-medium"));
+    let duck = duck_percent.unwrap_or(25).clamp(5, 100);
+    let rate = speech_rate_pct.unwrap_or(105).clamp(70, 150);
+    let auto_gender = auto_gender_voice.unwrap_or(true);
+    let fem_voice = female_voice_id.unwrap_or_else(|| "auto_female".to_string());
+
+    let vdir = voice_dir(&app);
+    let Some(piper_bin) = find_piper_binary(&vdir) else {
+        DUB_RUNNING.store(false, Ordering::SeqCst);
+        return Err("Nexora-Voice v1 engine is not downloaded yet.".to_string());
+    };
+    let voice_onnx = vdir.join(spec.onnx_filename);
+    let voice_json = vdir.join(spec.json_filename);
+    if !voice_onnx.is_file() || !voice_json.is_file() {
+        DUB_RUNNING.store(false, Ordering::SeqCst);
+        return Err("Selected Persian voice model is not downloaded yet.".to_string());
+    }
+
+    let wdir = crate::translator::engine_dir(&app);
+    let settings = crate::settings::load(&app);
+    let wmodel = wdir.join(&settings.whisper_model);
+    if !wmodel.is_file() {
+        DUB_RUNNING.store(false, Ordering::SeqCst);
+        return Err(
+            "Whisper speech model is required for live dubbing. Download it in Engines first."
+                .to_string(),
+        );
+    }
+
+    let prov_str = translate_provider.unwrap_or_else(|| settings.translate_provider.clone());
+    let parsed_prov = crate::translate_provider::TranslateProviderId::parse_id(&prov_str);
+    let prov_id = if parsed_prov == crate::translate_provider::TranslateProviderId::None {
+        let local_mt = wdir.join(crate::translate_provider::LOCAL_TRANSLATE_MODEL_FILENAME);
+        if local_mt.is_file() {
+            crate::translate_provider::TranslateProviderId::Local
+        } else {
+            crate::translate_provider::TranslateProviderId::GoogleFree
+        }
+    } else {
+        parsed_prov
+    };
+
+    {
+        let mut prefs = DUB_PREFS.lock().unwrap_or_else(|e| e.into_inner());
+        prefs.voice_id = if voice_id.as_deref() == Some("clone_male") {
+            "clone_male".to_string()
+        } else {
+            spec.id.to_string()
+        };
+        prefs.capture_mode = mode.clone();
+        prefs.target_pid = target_pid;
+        prefs.target_app_name = target_app_name;
+        prefs.duck_percent = duck;
+        prefs.speech_rate_pct = rate;
+        prefs.auto_gender_voice = auto_gender;
+        prefs.female_voice_id = fem_voice.clone();
+        prefs.last_detected_gender = "unknown".to_string();
+        prefs.last_error = None;
+    }
+
+    let app_clone = app.clone();
+    std::thread::spawn(move || {
+        #[cfg(windows)]
+        let res = run_dubbing_pipeline(
+            app_clone.clone(),
+            wdir,
+            wmodel,
+            voice_onnx,
+            voice_json,
+            piper_bin,
+            mode,
+            target_pid,
+            duck,
+            rate,
+            auto_gender,
+            fem_voice,
+            prov_id,
+        );
+        #[cfg(not(windows))]
+        let res: Result<(), String> = {
+            let _ = (
+                wdir,
+                wmodel,
+                voice_onnx,
+                voice_json,
+                piper_bin,
+                mode,
+                target_pid,
+                duck,
+                rate,
+                auto_gender,
+                fem_voice,
+                prov_id,
+            );
+            Err("Live dubbing is supported on Windows 10/11 only.".to_string())
+        };
+
+        DUB_RUNNING.store(false, Ordering::SeqCst);
+        if let Err(err) = res {
+            let mut prefs = DUB_PREFS.lock().unwrap_or_else(|e| e.into_inner());
+            prefs.last_error = Some(err);
+        }
+        emit_status_changed(&app_clone, &build_status(&app_clone));
+    });
+
+    let st = build_status(&app);
+    emit_status_changed(&app, &st);
+    Ok(st)
+}
+
+#[tauri::command]
+pub fn stop_live_dubbing(window: tauri::Window, app: AppHandle) -> Result<DubbingStatus, String> {
+    if !crate::ipc::is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
+    DUB_RUNNING.store(false, Ordering::SeqCst);
+    let st = build_status(&app);
+    emit_status_changed(&app, &st);
+    Ok(st)
+}
+
+#[tauri::command]
+pub async fn test_dubbing_voice(
+    window: tauri::Window,
+    app: AppHandle,
+    text: Option<String>,
+    voice_id: Option<String>,
+    speech_rate_pct: Option<u16>,
+) -> Result<String, String> {
+    if !crate::ipc::is_privileged_window(window.label()) {
+        return Err("Unauthorized window".to_string());
+    }
+    let sample =
+        text.unwrap_or_else(|| "سلام! موتور دوبله هوشمند نوکسورا آماده به کار است.".to_string());
     let req_vid = voice_id.as_deref().unwrap_or("fa_IR-amir-medium");
     let clone_prof = if req_vid == "clone_male" {
         load_clone_profile(&app, "male")
