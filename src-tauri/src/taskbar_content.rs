@@ -46,6 +46,10 @@ pub struct TaskbarWindow {
     pub icon_size: u32,
     /// Icon pixels as base64 RGBA, row-major top-down ("" when no icon).
     pub icon_rgba_base64: String,
+    /// True when this app is running minimized/resident in the Windows System Tray
+    /// rather than as a visible taskbar window.
+    #[serde(default)]
+    pub in_tray: bool,
 }
 
 /// One app pinned to the user's taskbar.
@@ -86,6 +90,11 @@ pub struct WindowProps {
     pub cloaked: bool,
     /// This window is the Nexora island itself.
     pub is_nexora_island: bool,
+    /// Has standard top-level application chrome (`WS_CAPTION` or `WS_SYSMENU` or `WS_MINIMIZEBOX`),
+    /// distinguishing real GUI apps minimized to tray from hidden helper/IME/COM windows.
+    pub has_app_chrome: bool,
+    /// Belongs to Nexora's own process (never list Nexora's own hidden windows).
+    pub is_own_process: bool,
 }
 
 /// Pure decision: does this window belong in the taskbar list?
@@ -101,6 +110,51 @@ pub fn should_list_window(props: WindowProps) -> bool {
         && !props.is_nexora_island
         && (!props.is_tool_window || props.is_app_window)
         && (!props.has_owner || props.is_app_window)
+}
+
+/// Returns true when an executable path belongs to core Windows shell/system
+/// background hosts that should never be shown as user tray apps.
+pub fn is_system_background_exe(exe_path: &str) -> bool {
+    let norm = normalize_target_path(exe_path);
+    if norm.is_empty() {
+        return true;
+    }
+    if norm.contains("\\windows\\system32\\")
+        || norm.contains("\\windows\\syswow64\\")
+        || norm.contains("\\windows\\systemapps\\")
+        || norm.contains("\\windows\\immersivecontrolpanel\\")
+    {
+        return true;
+    }
+    let file = norm.rsplit('\\').next().unwrap_or("");
+    matches!(
+        file,
+        "applicationframehost.exe"
+            | "textinputhost.exe"
+            | "searchhost.exe"
+            | "searchapp.exe"
+            | "shellexperiencehost.exe"
+            | "startmenuexperiencehost.exe"
+            | "lockapp.exe"
+            | "explorer.exe"
+            | "dwm.exe"
+            | "ctfmon.exe"
+            | "nexora.exe"
+    )
+}
+
+/// Pure decision: does this hidden top-level window represent a running
+/// user application minimized/resident in the Windows System Tray?
+pub fn should_list_tray_window(props: WindowProps, exe_path: &str) -> bool {
+    !props.visible
+        && props.has_title
+        && props.has_app_chrome
+        && !props.cloaked
+        && !props.is_nexora_island
+        && !props.is_own_process
+        && !props.has_owner
+        && !props.is_tool_window
+        && !is_system_background_exe(exe_path)
 }
 
 /// Pure decision: what does a click on this window do?
@@ -291,7 +345,8 @@ mod win {
     use windows::Win32::UI::WindowsAndMessaging::{
         DestroyIcon, DrawIconEx, EnumWindows, GetForegroundWindow, GetWindow, GetWindowLongPtrW,
         GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, SetForegroundWindow,
-        ShowWindow, DI_NORMAL, GWL_EXSTYLE, GW_OWNER, SW_MINIMIZE, SW_RESTORE, SW_SHOWNORMAL,
+        ShowWindow, DI_NORMAL, GWL_EXSTYLE, GWL_STYLE, GW_OWNER, SW_MINIMIZE, SW_RESTORE, SW_SHOW,
+        SW_SHOWNORMAL,
     };
 
     /// One enumerated window before filtering.
@@ -360,6 +415,11 @@ mod win {
             let title_len = unsafe { GetWindowTextW(hwnd, &mut title_buf) };
             let title = buf_to_string(&title_buf, title_len.max(0) as usize);
             let exstyle = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
+            let style = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) } as u32;
+            let mut pid: u32 = 0;
+            unsafe {
+                GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            }
             let props = WindowProps {
                 visible,
                 has_title: !title.trim().is_empty(),
@@ -370,6 +430,8 @@ mod win {
                     .unwrap_or(false),
                 cloaked: is_cloaked(hwnd),
                 is_nexora_island: hwnd.0 as isize == crate::taskbar::island_window(),
+                has_app_chrome: (style & 0x00C0_0000) != 0 || (style & 0x0008_0000) != 0,
+                is_own_process: pid != 0 && pid == std::process::id(),
             };
             let exe_path = process_exe_path(hwnd);
             out.push(RawWindow {
@@ -430,20 +492,56 @@ mod win {
         // SAFETY: `enum_proc` only pushes into `raw`, which outlives the
         // synchronous enumeration.
         let _ = unsafe { EnumWindows(Some(enum_proc), lparam) };
-        raw.into_iter()
-            .filter(|w| should_list_window(w.props))
-            .map(|w| {
-                let (icon_size, icon_rgba_base64) = icon_for_window(&w.exe_path);
-                TaskbarWindow {
-                    id: w.hwnd.0 as i64,
-                    title: w.title,
-                    minimized: w.minimized,
-                    active: w.active,
-                    icon_size,
-                    icon_rgba_base64,
-                }
-            })
-            .collect()
+        let mut seen_exes = std::collections::HashSet::<String>::new();
+        let mut out = Vec::new();
+
+        // 1. Visible open Taskbar windows (Z-order, frontmost first).
+        for w in &raw {
+            if !should_list_window(w.props) || w.props.is_own_process {
+                continue;
+            }
+            let norm_exe = normalize_target_path(&w.exe_path);
+            if !norm_exe.is_empty() {
+                seen_exes.insert(norm_exe);
+            }
+            let (icon_size, icon_rgba_base64) = icon_for_window(&w.exe_path);
+            out.push(TaskbarWindow {
+                id: w.hwnd.0 as i64,
+                title: w.title.clone(),
+                minimized: w.minimized,
+                active: w.active,
+                icon_size,
+                icon_rgba_base64,
+                in_tray: false,
+            });
+        }
+
+        // 2. Running GUI apps minimized/resident in the System Tray (deduplicated per exe).
+        for w in &raw {
+            if !should_list_tray_window(w.props, &w.exe_path) {
+                continue;
+            }
+            let norm_exe = normalize_target_path(&w.exe_path);
+            if norm_exe.is_empty() || seen_exes.contains(&norm_exe) {
+                continue;
+            }
+            let (icon_size, icon_rgba_base64) = icon_for_window(&w.exe_path);
+            if icon_size == 0 {
+                continue;
+            }
+            seen_exes.insert(norm_exe);
+            out.push(TaskbarWindow {
+                id: w.hwnd.0 as i64,
+                title: w.title.clone(),
+                minimized: true,
+                active: false,
+                icon_size,
+                icon_rgba_base64,
+                in_tray: true,
+            });
+        }
+
+        out
     }
 
     /// Icon for a window's executable. UWP windows report
@@ -726,14 +824,20 @@ mod win {
             }
             ToggleAction::Activate => {
                 // SAFETY: as above.
+                let was_hidden = !is_window_visible(hwnd);
                 let was_minimized = unsafe { IsIconic(hwnd) }.as_bool();
-                if was_minimized {
+                if was_hidden {
+                    let _ = unsafe { ShowWindow(hwnd, SW_SHOW) };
+                    let _ = unsafe { ShowWindow(hwnd, SW_RESTORE) };
+                } else if was_minimized {
                     // Return value is the previous state, not success;
                     // the live check below is the result.
                     let _ = unsafe { ShowWindow(hwnd, SW_RESTORE) };
                 }
                 let foreground = unsafe { SetForegroundWindow(hwnd) }.as_bool();
-                foreground || (was_minimized && !unsafe { IsIconic(hwnd) }.as_bool())
+                foreground
+                    || (was_hidden && is_window_visible(hwnd))
+                    || (was_minimized && !unsafe { IsIconic(hwnd) }.as_bool())
             }
         }
     }
@@ -801,7 +905,23 @@ mod tests {
             has_owner: false,
             cloaked: false,
             is_nexora_island: false,
+            has_app_chrome: true,
+            is_own_process: false,
         }
+    }
+
+    #[test]
+    fn tray_filter_accepts_hidden_user_gui_app_and_rejects_system_or_helper_windows() {
+        let mut p = normal_props();
+        p.visible = false;
+        assert!(should_list_tray_window(p, r"C:\Users\taha\AppData\Local\Discord\app\Discord.exe"));
+        assert!(!should_list_tray_window(p, r"C:\Windows\System32\ctfmon.exe"));
+        assert!(!should_list_tray_window(p, r"C:\Program Files\Nexora\nexora.exe"));
+        p.has_app_chrome = false;
+        assert!(!should_list_tray_window(p, r"C:\Users\taha\AppData\Local\Discord\app\Discord.exe"));
+        p.has_app_chrome = true;
+        p.is_own_process = true;
+        assert!(!should_list_tray_window(p, r"C:\Users\taha\AppData\Local\Discord\app\Discord.exe"));
     }
 
     #[test]

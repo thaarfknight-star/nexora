@@ -17,6 +17,32 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.27",
+    date: "2026-11-25",
+    title: {
+      en: "Logo-Only Island, Open Apps Carousel (Taskbar & Tray), Hardware Icons & Per-Engine Customization",
+      fa: "داینامیک آیلند مینیمال، کروسل برنامه‌های باز (تسک‌بار و Tray)، آیکون سخت‌افزار و شخصی‌سازی دکمه‌ها",
+    },
+    features: {
+      en: [
+        "Simplified the Dynamic Island brand area to show only the Nexora logo without app title or theme text.",
+        "Updated the apps strip to show only currently open Taskbar and System Tray apps in a smooth left/right scrollable carousel (with arrows, mouse-wheel scroll, and click-to-restore for tray apps).",
+        "Added individual customization toggles in Settings → Island Style for every Dynamic Island section and each engine button separately (Local Engine, Online Translation Engine, and Live Dubbing Engine).",
+        "Added crisp SVG hardware logos for CPU, RAM, and GPU in both the compact island and expanded Stats panel.",
+      ],
+      fa: [
+        "حذف متن اسم برنامه و نام تم از بخش برند داینامیک آیلند برای نمایش مینیمال فقط با لوگو.",
+        "نمایش فقط برنامه‌های باز (تسک‌بار و سینی سیستم / Tray) در یک کروسل روان با قابلیت اسکرول چپ و راست و بازگردانی مستقیم برنامه‌های Tray با کلیک.",
+        "افزودن تنظیمات شخصی‌سازی کامل دکمه‌های داینامیک آیلند (از جمله فعال/غیرفعال کردن جداگانه دکمه هر موتور: آفلاین، آنلاین و دوبله زنده).",
+        "تعریف آیکون‌های اختصاصی برای CPU، RAM و GPU در نوار فشرده و پنل آمار.",
+      ],
+    },
+    fixes: {
+      en: [],
+      fa: [],
+    },
+  },
+  {
     version: "0.2.26",
     date: "2026-11-25",
     title: {

@@ -2881,3 +2881,103 @@ body,
   flex-direction: column;
   gap: 12px;
 }
+
+/* v0.2.27: Logo-only brand, open-apps carousel, Tray indicator, CPU/RAM/GPU icons & engine buttons */
+.island-brand {
+  padding-inline: 2px;
+  gap: 0;
+}
+
+.taskbar-carousel {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.taskbar-track {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+}
+
+.taskbar-track::-webkit-scrollbar {
+  display: none;
+}
+
+.carousel-arrow {
+  width: 20px;
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--island-subtext);
+  cursor: pointer;
+  padding: 0;
+  transition: background 140ms ease, color 140ms ease, opacity 140ms ease;
+}
+
+.carousel-arrow:hover:not(:disabled) {
+  background: var(--island-btn-bg);
+  color: var(--island-text);
+}
+
+.carousel-arrow:disabled {
+  opacity: 0.22;
+  cursor: default;
+}
+
+.taskbar-app.in-tray::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--island-accent);
+  box-shadow: 0 0 5px var(--island-accent);
+  pointer-events: none;
+}
+
+.compact-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stat-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--island-subtext);
+  flex: none;
+}
+
+.stat-chip-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.engine-quick-btn.active-online {
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.45);
+  background: rgba(56, 189, 248, 0.14);
+}
+
+.engine-quick-btn.active-dubbing {
+  color: #f472b6;
+  border-color: rgba(244, 114, 182, 0.45);
+  background: rgba(244, 114, 182, 0.14);
+}
