@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.26] - 2026-11-25
+
+### What's New
+- **Custom Pure-Rust Persian Pronunciation & Ezafe Engine (`src-tauri/src/persian_g2p.rs`)**: Automatically converts numerals/currency/percentages (`$50,000`, `25%`, `2026`) into spoken Persian words, transliterates common YouTube/gaming/tech terms (`Nexora`, `YouTube`, `MrBeast`, `GPU`, `FPS`, `AI`), and inserts Persian Ezafe (`ِ`) hints on construct prepositions and nouns for noticeably more natural dubbing.
+- **Offline Custom Voice Cloning Studio (Separate Male & Female Slots)**: Record a 6-second microphone sample in Settings → Engines → Live Dubbing to extract your own offline acoustic voice profile (F0 pitch + warmth/brightness timbre EQ + loudness) for Male and Female voices separately, test them immediately, and route TV series / YouTube / game dialogue directly through your cloned voices.
+
 ## [0.2.25] - 2026-11-25
 
 ### What's New

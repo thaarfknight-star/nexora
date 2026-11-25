@@ -506,6 +506,8 @@ interface DubbingStatus {
   auto_gender_voice: boolean;
   female_voice_id: string;
   last_detected_gender: string;
+  male_clone_f0_hz: number | null;
+  female_clone_f0_hz: number | null;
   last_spoken_fa: string;
   last_error: string | null;
 }
@@ -2650,6 +2652,7 @@ function SettingsView() {
   const [dubDuckPercent, setDubDuckPercent] = useState(25);
   const [dubRatePct, setDubRatePct] = useState(105);
   const [dubTesting, setDubTesting] = useState(false);
+  const [recordingCloneSlot, setRecordingCloneSlot] = useState<"male" | "female" | null>(null);
   const [subtitleCssDraft, setSubtitleCssDraft] = useState("");
   const subtitleCssTimerRef = useRef<number | undefined>(undefined);
 
@@ -4418,7 +4421,7 @@ function SettingsView() {
                 <span className="settings-row-text">
                   <span>{t(language, "dubbingVoiceLabel")}</span>
                   <span className="audio-mode-hint">
-                    {dubbingStatus?.piper_installed && dubbingStatus.installed_voices?.includes(dubVoiceId)
+                    {dubbingStatus?.piper_installed && (dubVoiceId === "clone_male" ? (dubbingStatus.installed_voices?.length ?? 0) > 0 : dubbingStatus.installed_voices?.includes(dubVoiceId))
                       ? t(language, "dubbingInstalled")
                       : t(language, "dubbingNotInstalled")}
                   </span>
@@ -4430,6 +4433,9 @@ function SettingsView() {
                 >
                   <option value="fa_IR-amir-medium">Amir (Persian Natural, 22 kHz)</option>
                   <option value="fa_IR-gyro-medium">Gyro (Persian Expressive, 22 kHz)</option>
+                  {dubbingStatus?.male_clone_f0_hz && (
+                    <option value="clone_male">{t(language, "voiceCloneMaleOption")}</option>
+                  )}
                 </select>
               </div>
               {!translateStatus?.installed && (
@@ -4455,6 +4461,9 @@ function SettingsView() {
                     onChange={(e) => setDubFemaleVoiceId(e.target.value)}
                   >
                     <option value="auto_female">{t(language, "dubbingFemaleAutoOption")}</option>
+                    {dubbingStatus?.female_clone_f0_hz && (
+                      <option value="clone_female">{t(language, "voiceCloneFemaleOption")}</option>
+                    )}
                     <option value="fa_IR-gyro-medium">Gyro (Persian Expressive, 22 kHz)</option>
                     <option value="fa_IR-amir-medium">Amir (Persian Natural, 22 kHz)</option>
                   </select>
@@ -4552,6 +4561,138 @@ function SettingsView() {
                 />
               </div>
               <div className="settings-row">
+                <span className="settings-row-text">
+                  <span>{t(language, "voiceCloneTitle")}</span>
+                  <span className="audio-mode-hint">{t(language, "voiceCloneDesc")}</span>
+                </span>
+              </div>
+              <div className="settings-row">
+                <span className="settings-row-text">
+                  <span>{t(language, "voiceCloneMaleLabel")}</span>
+                  <span className="audio-mode-hint">
+                    {dubbingStatus?.male_clone_f0_hz
+                      ? `${t(language, "voiceCloneReadyHint")} (${Math.round(dubbingStatus.male_clone_f0_hz)} Hz)`
+                      : t(language, "voiceCloneNotRecorded")}
+                  </span>
+                </span>
+                <div className="translate-btn-group">
+                  <button
+                    type="button"
+                    className="mini-btn primary-btn"
+                    disabled={recordingCloneSlot !== null}
+                    onClick={() => {
+                      setRecordingCloneSlot("male");
+                      invoke<DubbingStatus>("record_voice_clone_sample", { slot: "male", durationSecs: 6 })
+                        .then((st) => {
+                          setDubbingStatus(st);
+                          setDubVoiceId("clone_male");
+                        })
+                        .catch(() => {})
+                        .finally(() => setRecordingCloneSlot(null));
+                    }}
+                  >
+                    {recordingCloneSlot === "male"
+                      ? t(language, "voiceCloneRecordingBtn")
+                      : t(language, "voiceCloneRecordBtn")}
+                  </button>
+                  {dubbingStatus?.male_clone_f0_hz && dubbingStatus.ready && (
+                    <button
+                      type="button"
+                      className="mini-btn"
+                      disabled={dubTesting}
+                      onClick={() => {
+                        setDubTesting(true);
+                        invoke<string>("test_dubbing_voice", {
+                          voiceId: "clone_male",
+                          speechRatePct: dubRatePct,
+                        }).finally(() => setDubTesting(false));
+                      }}
+                    >
+                      {t(language, "testDubbingBtn")}
+                    </button>
+                  )}
+                  {dubbingStatus?.male_clone_f0_hz && (
+                    <button
+                      type="button"
+                      className="mini-btn danger-btn"
+                      onClick={() => {
+                        invoke<DubbingStatus>("delete_voice_clone_sample", { slot: "male" })
+                          .then((st) => {
+                            setDubbingStatus(st);
+                            if (dubVoiceId === "clone_male") setDubVoiceId("fa_IR-amir-medium");
+                          })
+                          .catch(() => {});
+                      }}
+                    >
+                      {t(language, "subtitleCssDeletePresetBtn")}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="settings-row">
+                <span className="settings-row-text">
+                  <span>{t(language, "voiceCloneFemaleLabel")}</span>
+                  <span className="audio-mode-hint">
+                    {dubbingStatus?.female_clone_f0_hz
+                      ? `${t(language, "voiceCloneReadyHint")} (${Math.round(dubbingStatus.female_clone_f0_hz)} Hz)`
+                      : t(language, "voiceCloneNotRecorded")}
+                  </span>
+                </span>
+                <div className="translate-btn-group">
+                  <button
+                    type="button"
+                    className="mini-btn primary-btn"
+                    disabled={recordingCloneSlot !== null}
+                    onClick={() => {
+                      setRecordingCloneSlot("female");
+                      invoke<DubbingStatus>("record_voice_clone_sample", { slot: "female", durationSecs: 6 })
+                        .then((st) => {
+                          setDubbingStatus(st);
+                          setDubFemaleVoiceId("clone_female");
+                        })
+                        .catch(() => {})
+                        .finally(() => setRecordingCloneSlot(null));
+                    }}
+                  >
+                    {recordingCloneSlot === "female"
+                      ? t(language, "voiceCloneRecordingBtn")
+                      : t(language, "voiceCloneRecordBtn")}
+                  </button>
+                  {dubbingStatus?.female_clone_f0_hz && dubbingStatus.ready && (
+                    <button
+                      type="button"
+                      className="mini-btn"
+                      disabled={dubTesting}
+                      onClick={() => {
+                        setDubTesting(true);
+                        invoke<string>("test_dubbing_voice", {
+                          voiceId: "clone_female",
+                          speechRatePct: dubRatePct,
+                        }).finally(() => setDubTesting(false));
+                      }}
+                    >
+                      {t(language, "testDubbingBtn")}
+                    </button>
+                  )}
+                  {dubbingStatus?.female_clone_f0_hz && (
+                    <button
+                      type="button"
+                      className="mini-btn danger-btn"
+                      onClick={() => {
+                        invoke<DubbingStatus>("delete_voice_clone_sample", { slot: "female" })
+                          .then((st) => {
+                            setDubbingStatus(st);
+                            if (dubFemaleVoiceId === "clone_female") setDubFemaleVoiceId("auto_female");
+                          })
+                          .catch(() => {});
+                      }}
+                    >
+                      {t(language, "subtitleCssDeletePresetBtn")}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="settings-row">
                 <div className="translate-btn-group">
                   <button
                     type="button"
@@ -4566,7 +4707,7 @@ function SettingsView() {
                   >
                     {t(language, "downloadDubbingBtn")}
                   </button>
-                  {dubbingStatus?.ready && dubbingStatus.installed_voices?.includes(dubVoiceId) && (
+                  {dubbingStatus?.ready && (dubVoiceId === "clone_male" || dubbingStatus.installed_voices?.includes(dubVoiceId)) && (
                     <>
                       <button
                         type="button"

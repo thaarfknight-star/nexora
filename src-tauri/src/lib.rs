@@ -8,6 +8,7 @@ pub mod island;
 pub mod media;
 pub mod nexora_mt;
 pub mod notifications;
+mod persian_g2p;
 pub mod settings;
 pub mod stats;
 pub mod taskbar;
@@ -209,6 +210,8 @@ pub fn run() {
             dubbing::start_live_dubbing,
             dubbing::stop_live_dubbing,
             dubbing::test_dubbing_voice,
+            dubbing::record_voice_clone_sample,
+            dubbing::delete_voice_clone_sample,
             translator::set_translate_api_key,
             translator::delete_translate_api_key,
             translator::get_translate_api_key_status,
