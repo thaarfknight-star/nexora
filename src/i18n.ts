@@ -202,6 +202,10 @@ const EN = {
   lgQualityHigh: "High",
   lgQualityMedium: "Medium",
   lgQualityLow: "Low",
+  liquidGlassStyle: "Liquid Glass Style",
+  liquidGlassStyleDesc: "Clear: truly transparent glass with edge highlights only. Desktop refraction (beta): refracts desktop wallpaper on the bezel ring only (not open windows).",
+  lgStyleClear: "Clear",
+  lgStyleRefraction: "Clear + Desktop refraction (beta)",
   launchHint:
     "Move the mouse to the top edge or press {hotkey} to open Nexora",
   changeHotkey: "Change",
@@ -502,6 +506,10 @@ const FA: Record<StringKey, string> = {
   lgQualityHigh: "بالا (High)",
   lgQualityMedium: "متوسط (Medium)",
   lgQualityLow: "پایین (Low)",
+  liquidGlassStyle: "سبک Liquid Glass",
+  liquidGlassStyleDesc: "شفاف (Clear): شیشه کاملاً شفاف فقط با نور لبه. شکست نور دسکتاپ (بتا): فقط والپیپر دسکتاپ را در حاشیه می‌شکند (نه پنجره‌های باز).",
+  lgStyleClear: "شفاف (Clear)",
+  lgStyleRefraction: "شفاف + شکست نور دسکتاپ (بتا)",
   launchHint:
     "برای باز کردن Nexora، نشانگر موس را به لبه‌ی بالای صفحه ببر یا {hotkey} را فشار بده",
   changeHotkey: "تغییر",
@@ -648,7 +656,7 @@ export function tf(
 export const THEME_DESCRIPTIONS: Record<Language, Record<ThemeId, string>> = {
   en: {
     obsidian: "Dark slate pill with a sky-blue accent.",
-    "liquid-glass": "True optical refractive lens glass with rim chromatic dispersion and specular glare.",
+    "liquid-glass": "Truly transparent clear glass with crisp edge highlights and zero blur.",
     aurora: "Deep teal with an emerald accent.",
     sunset: "Warm ember dark with an orange accent.",
     midnight: "Deep violet night with a lavender accent.",
@@ -658,7 +666,7 @@ export const THEME_DESCRIPTIONS: Record<Language, Record<ThemeId, string>> = {
   },
   fa: {
     obsidian: "قرص خاکستری تیره با اکسنت آبی آسمانی.",
-    "liquid-glass": "شیشه‌ی اپتیکال واقعی با شکست نور لبه‌ها، انعکاس منشوری و درخشش زنده.",
+    "liquid-glass": "شیشه کاملاً شفاف بدون بلور و رنگ پس‌زمینه، فقط با لبه‌های درخشان.",
     aurora: "فیروزه‌ای عمیق با اکسنت زمردی.",
     sunset: "تیره‌ی گرم اخگری با اکسنت نارنجی.",
     midnight: "شب بنفش عمیق با اکسنت اسطوخودوسی.",

@@ -2,7 +2,7 @@ use tauri::Emitter;
 
 use crate::{
     island, media, notifications, settings, stats, taskbar, taskbar_content, tray, updater,
-    watchdog,
+    wallpaper, watchdog,
 };
 
 /// Only `"main"` and `"settings"` windows may invoke privileged commands
@@ -37,6 +37,24 @@ pub fn set_island_click_through(window: tauri::Window, ignore: bool) -> Result<(
 #[tauri::command]
 pub fn island_heartbeat() {
     island::record_ui_heartbeat();
+}
+
+#[tauri::command]
+pub fn get_desktop_wallpaper(window: tauri::Window) -> wallpaper::DesktopWallpaperInfo {
+    if !is_privileged_window(window.label()) {
+        return wallpaper::DesktopWallpaperInfo {
+            data_url: None,
+            fit_style: "fill".into(),
+            monitor_x: 0,
+            monitor_y: 0,
+            monitor_w: 1920,
+            monitor_h: 1080,
+            window_x: 0,
+            window_y: 0,
+            scale_factor: 1.0,
+        };
+    }
+    wallpaper::collect_for_window(&window)
 }
 
 #[tauri::command]

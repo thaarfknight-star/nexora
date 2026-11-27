@@ -17,6 +17,28 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.31",
+    date: "2026-11-27",
+    title: {
+      en: "Truly Transparent Clear Liquid Glass & Optional Desktop Refraction (Beta)",
+      fa: "تم Liquid Glass کاملاً شفاف بدون فیل و حالت اختیاری شکست نور والپیپر (بتا)",
+    },
+    features: {
+      en: [
+        "Removed all purple/gradient/album-art fills and backdrop blur from Liquid Glass so the real Windows desktop and windows show cleanly through (0.02 alpha, 0px blur, edge-only rim highlights, and rim-only transparent round buttons).",
+        "Added optional Liquid Glass Style setting: Clear (default) or Clear + Desktop refraction (beta), which reads the Windows desktop wallpaper and applies bezel-ring optical refraction while keeping the center 100% see-through.",
+      ],
+      fa: [
+        "حذف کامل گرادینت، هاله بنفش، پس‌زمینه کاور آلبوم و بلور از Liquid Glass تا دسکتاپ و پنجره‌های واقعی ویندوز کاملاً شفاف دیده شوند (شفافیت ۹۸٪، بلور ۰px، فقط نور لبه و دکمه‌های دایره‌ای بدون پس‌زمینه).",
+        "افزودن تنظیم اختیاری سبک Liquid Glass: حالت شفاف (پیش‌فرض) یا شکست نور والپیپر دسکتاپ (بتا) فقط در حاشیه آیلند.",
+      ],
+    },
+    fixes: {
+      en: [],
+      fa: [],
+    },
+  },
+  {
     version: "0.2.30",
     date: "2026-11-27",
     title: {

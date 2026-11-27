@@ -1,7 +1,7 @@
 import { check as checkPluginUpdate } from "@tauri-apps/plugin-updater";
 import { latestReleaseNote } from "./releaseNotes";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LiquidGlass, type LiquidGlassQuality, useDominantMediaColor, useEffectiveLiquidGlassQuality } from "./LiquidGlass";
+import { DesktopWallpaperRefraction, LiquidGlass, type LiquidGlassQuality, type LiquidGlassStyle, useEffectiveLiquidGlassQuality } from "./LiquidGlass";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -92,6 +92,7 @@ interface NexoraSettings {
   island_show_engine_online?: boolean;
   island_show_engine_dubbing?: boolean;
   liquid_glass_quality?: LiquidGlassQuality;
+  liquid_glass_style?: LiquidGlassStyle;
 }
 
 interface SystemStats {
@@ -876,7 +877,9 @@ function IslandApp() {
     isLiquidGlass,
     stats?.gpu_percent,
   );
-  const mediaDominantRgb = useDominantMediaColor(media?.cover_art);
+  const lgStyle: LiquidGlassStyle =
+    settings?.liquid_glass_style === "refraction" ? "refraction" : "clear";
+  const islandPillRef = useRef<HTMLElement | null>(null);
 
   // Browser-only visual test harness (completely inactive inside Tauri runtime).
   useEffect(() => {
@@ -1746,6 +1749,7 @@ function IslandApp() {
         </button>
         <LiquidGlass
           as="section"
+          innerRef={islandPillRef}
           enabled={isLiquidGlass}
           quality={lgQuality}
           radius={islandStyle.radius ?? 28}
@@ -1758,7 +1762,7 @@ function IslandApp() {
           style={{
             transitionDuration: `${stageMs}ms`,
             transitionTimingFunction: stageEasing,
-            ...(islandStyle.blur !== null
+            ...(islandStyle.blur !== null && !isLiquidGlass
               ? ({ "--island-blur": `${islandStyle.blur}px` } as React.CSSProperties)
               : {}),
             ...(islandStyle.radius !== null
@@ -1766,32 +1770,14 @@ function IslandApp() {
               : {}),
           }}
         >
-        {isLiquidGlass && (
-          <div
-            className="lg-refract-backdrop"
-            aria-hidden="true"
-            style={{ "--lg-media-rgb": mediaDominantRgb } as React.CSSProperties}
-          >
-            {media?.cover_art && (
-              <img className="lg-refract-cover" src={media.cover_art} alt="" />
-            )}
-            <div className="lg-refract-ambient" />
-            <div className="lg-refract-stats-bars">
-              <span
-                className="lg-refract-bar cpu"
-                style={{ height: `${Math.max(22, Math.min(92, stats?.cpu_percent ?? 32))}%` }}
-              />
-              <span
-                className="lg-refract-bar ram"
-                style={{ height: `${Math.max(22, Math.min(92, stats?.memory_percent ?? 54))}%` }}
-              />
-              <span
-                className="lg-refract-bar gpu"
-                style={{ height: `${Math.max(18, Math.min(92, stats?.gpu_percent ?? 28))}%` }}
-              />
-            </div>
-          </div>
-        )}
+        <DesktopWallpaperRefraction
+          enabled={isLiquidGlass && lgStyle === "refraction"}
+          quality={lgQuality}
+          radius={islandStyle.radius ?? 28}
+          scale={118}
+          containerRef={islandPillRef}
+          layoutKey={`${visible}-${tab}`}
+        />
         <div className="island-row">
           <div
             className="island-brand"
@@ -3605,6 +3591,15 @@ function SettingsView() {
     });
   };
 
+  const toggleLiquidGlassStyle = () => {
+    if (!settings) return;
+    const cur = settings.liquid_glass_style ?? "clear";
+    saveSettings({
+      ...settings,
+      liquid_glass_style: cur === "clear" ? "refraction" : "clear",
+    });
+  };
+
   const cycleLiquidGlassQuality = () => {
     if (!settings) return;
     const cur = settings.liquid_glass_quality ?? "high";
@@ -3697,6 +3692,7 @@ function SettingsView() {
         island_show_engine_online: true,
         island_show_engine_dubbing: true,
         liquid_glass_quality: "high",
+        liquid_glass_style: "clear",
       });
     }
   };
@@ -4097,6 +4093,29 @@ function SettingsView() {
           onClick={() => toggleSetting("always_on_top")}
         >
           {settings ? onOff(settings.always_on_top, language) : "—"}
+        </button>
+      </div>
+      <div className="settings-row">
+        <span className="settings-row-text">
+          <span>{t(language, "liquidGlassStyle")}</span>
+          <span className="settings-row-desc">
+            {t(language, "liquidGlassStyleDesc")}
+          </span>
+        </span>
+        <button
+          type="button"
+          className="mini-btn"
+          disabled={!settings}
+          onClick={toggleLiquidGlassStyle}
+        >
+          {settings
+            ? t(
+                language,
+                (settings.liquid_glass_style ?? "clear") === "refraction"
+                  ? "lgStyleRefraction"
+                  : "lgStyleClear",
+              )
+            : "—"}
         </button>
       </div>
       <div className="settings-row">
