@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.31] - 2026-11-27
+
+### What's New
+- **Truly Transparent Clear Liquid Glass**: Removed all background gradients, purple/media-color glow, album-art backdrop, and backdrop blur from the `Liquid Glass` theme. The island now uses an ultra-clear `rgba(255, 255, 255, 0.02)` surface (`0px` blur, explicit transparent WebView2 `0x00000000` background) with edge-only specular rim/inner highlights, faint top-edge sheen, rim-only transparent round buttons, and shadowed crisp white icons/text so the real Windows desktop shines cleanly through.
+- **Optional "Desktop refraction (beta)" Mode (Default OFF)**: Added a `Liquid Glass Style` toggle in Settings (`Clear` default vs `Clear + Desktop refraction (beta)`) backed by a new Windows wallpaper reader (`src-tauri/src/wallpaper.rs`, `SPI_GETDESKWALLPAPER` + registry fit mode) that refracts the aligned desktop wallpaper strictly inside a masked bezel ring while keeping the center 100% see-through to the real desktop.
+
+
 ## [0.2.30] - 2026-11-27
 
 ### What's New

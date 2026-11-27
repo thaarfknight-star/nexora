@@ -2983,8 +2983,14 @@ body,
 }
 
 /* ==========================================================================
-   v0.2.30: Real Optical Liquid Glass (Clear Convex Bezel Refraction + Rim)
+   v0.2.31: Truly Transparent Clear Liquid Glass (0px blur, alpha <= 0.03, edge-only)
    ========================================================================== */
+html,
+body,
+#root {
+  background: transparent;
+}
+
 .lg-svg-defs {
   position: fixed;
   width: 0;
@@ -2995,41 +3001,41 @@ body,
 
 :root[data-theme="liquid-glass"],
 [data-theme="liquid-glass"] {
-  --island-bg: rgba(0, 0, 0, 0.14);
-  --island-border: rgba(255, 255, 255, 0.28);
+  --island-bg: rgba(255, 255, 255, 0.02);
+  --island-border: rgba(255, 255, 255, 0.35);
   --island-text: #ffffff;
-  --island-subtext: rgba(255, 255, 255, 0.84);
+  --island-subtext: rgba(255, 255, 255, 0.88);
   --island-accent: #ffffff;
-  --island-accent-text: #f0f9ff;
-  --island-btn-bg: rgba(0, 0, 0, 0.14);
-  --island-btn-border: rgba(255, 255, 255, 0.3);
-  --island-blur: 1.5px;
+  --island-accent-text: #ffffff;
+  --island-btn-bg: transparent;
+  --island-btn-border: rgba(255, 255, 255, 0.35);
+  --island-blur: 0px;
   --theme-shadow:
-    inset 0 0 0 1.5px rgba(255, 255, 255, 0.28),
-    inset 4px 5px 8px -2px rgba(255, 255, 255, 0.55),
-    inset -4px -5px 10px -3px rgba(255, 255, 255, 0.22),
-    0 24px 50px rgba(0, 0, 0, 0.45);
-  --theme-stage-bg:
-    radial-gradient(640px 380px at 18% 12%, rgba(56, 189, 248, 0.38), transparent 58%),
-    radial-gradient(580px 360px at 84% 22%, rgba(168, 85, 247, 0.36), transparent 58%),
-    radial-gradient(520px 340px at 52% 92%, rgba(244, 114, 182, 0.26), transparent 60%),
-    linear-gradient(155deg, #0b1020 0%, #090c16 55%, #060810 100%);
-  --theme-grad: linear-gradient(135deg, rgba(255, 255, 255, 0.52), rgba(147, 197, 253, 0.32));
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.35),
+    inset 3px 4px 6px -2px rgba(255, 255, 255, 0.55),
+    inset -3px -4px 8px -3px rgba(255, 255, 255, 0.2),
+    0 14px 28px rgba(0, 0, 0, 0.38);
+  --theme-stage-bg: linear-gradient(160deg, #111622 0%, #0b0e16 100%);
+  --theme-grad: linear-gradient(135deg, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0.2));
 }
 
-/* Core reusable .liquid-glass surface (exact rim, top-left specular, bottom-right bounce, soft outer shadow) */
+/* Fix 1 & Fix 2: Truly transparent glass — edge highlights only, alpha 0.02, 0px blur */
 .liquid-glass {
   position: relative;
-  background: rgba(0, 0, 0, 0.14) !important;
+  background: rgba(255, 255, 255, 0.02) !important;
   border-color: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
   box-shadow:
-    inset 0 0 0 1.5px rgba(255, 255, 255, 0.28),
-    inset 4px 5px 8px -2px rgba(255, 255, 255, 0.55),
-    inset -4px -5px 10px -3px rgba(255, 255, 255, 0.22),
-    0 24px 50px rgba(0, 0, 0, 0.45) !important;
-  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5);
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.35),
+    inset 3px 4px 6px -2px rgba(255, 255, 255, 0.55),
+    inset -3px -4px 8px -3px rgba(255, 255, 255, 0.2),
+    0 14px 28px rgba(0, 0, 0, 0.38) !important;
+  color: #ffffff;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45);
 }
 
+/* One very faint specular sheen along the top edge only (white alpha <= 0.10) */
 .liquid-glass::after {
   content: "";
   position: absolute;
@@ -3038,43 +3044,66 @@ body,
   pointer-events: none;
   z-index: 3;
   background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.22),
-    transparent 38%,
-    transparent 70%,
-    rgba(255, 255, 255, 0.1)
+    180deg,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0.02) 16%,
+    transparent 30%
   );
 }
 
+/* Round buttons: NO filled circles — thin rim + faint inner highlight only */
 .liquid-glass.liquid-glass-round {
   border-radius: 999px !important;
+  background: transparent !important;
+  border: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
   box-shadow:
-    inset 0 0 0 1.25px rgba(255, 255, 255, 0.32),
-    inset 2.5px 3px 5px -1px rgba(255, 255, 255, 0.58),
-    inset -2.5px -3px 6px -2px rgba(255, 255, 255, 0.22),
-    0 8px 18px rgba(0, 0, 0, 0.32) !important;
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.35),
+    inset 2px 2.5px 4px -1px rgba(255, 255, 255, 0.45),
+    inset -2px -2.5px 5px -2px rgba(255, 255, 255, 0.18) !important;
 }
 
-/* Keep island outer shadow inside the 40px transparent canvas so corners never clip */
+.liquid-glass.liquid-glass-round::after {
+  content: none !important;
+}
+
+.liquid-glass.liquid-glass-round:hover {
+  background: rgba(255, 255, 255, 0.03) !important;
+  box-shadow:
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.55),
+    inset 2px 2.5px 5px -1px rgba(255, 255, 255, 0.6),
+    inset -2px -2.5px 5px -2px rgba(255, 255, 255, 0.25) !important;
+}
+
 :root[data-theme="liquid-glass"] .island-pill.liquid-glass {
   overflow: hidden;
-  box-shadow:
-    inset 0 0 0 1.5px rgba(255, 255, 255, 0.3),
-    inset 4px 5px 8px -2px rgba(255, 255, 255, 0.55),
-    inset -4px -5px 10px -3px rgba(255, 255, 255, 0.22),
-    0 14px 28px rgba(0, 0, 0, 0.45) !important;
+  background: rgba(255, 255, 255, 0.02) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 :root[data-theme="liquid-glass"] .island-pill::before {
   content: none !important;
 }
 
-:root[data-theme="liquid-glass"] .island-stage:not(.hidden) .island-pill:hover {
-  transform: translateY(1px) scale(1.012);
+:root[data-theme="liquid-glass"] .island-pill svg,
+:root[data-theme="liquid-glass"] .island-pill .island-clock-time,
+:root[data-theme="liquid-glass"] .island-pill .compact-stat {
+  filter: drop-shadow(0 1px 4px rgba(0, 0, 0, 0.45));
 }
 
-/* Internal refractable content layer inside the island (gives Chromium WebView2 real pixels to refract!) */
-.lg-refract-backdrop {
+:root[data-theme="liquid-glass"] .island-stage:not(.hidden) .island-pill:hover {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.42),
+    inset 3px 4px 6px -2px rgba(255, 255, 255, 0.62),
+    inset -3px -4px 8px -3px rgba(255, 255, 255, 0.24),
+    0 16px 32px rgba(0, 0, 0, 0.42) !important;
+}
+
+/* Fix 3: Optional Desktop refraction (beta) bezel-ring wallpaper layer (center 100% transparent) */
+.lg-desktop-refract-ring {
   position: absolute;
   inset: 0;
   border-radius: inherit;
@@ -3083,69 +3112,12 @@ body,
   z-index: 0;
 }
 
-.lg-refract-cover {
-  position: absolute;
-  inset: -14%;
-  width: 128%;
-  height: 128%;
-  object-fit: cover;
-  filter: blur(12px) saturate(1.45) brightness(0.72);
-  opacity: 0.85;
-  transform: scale(1.06);
+.lg-desktop-refract-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
-.lg-refract-ambient {
-  position: absolute;
-  inset: -25%;
-  background:
-    radial-gradient(60% 90% at 18% 25%, rgba(var(--lg-media-rgb, 98, 168, 255), 0.52), transparent 62%),
-    radial-gradient(55% 85% at 82% 75%, rgba(168, 85, 247, 0.42), transparent 60%),
-    radial-gradient(45% 70% at 52% 15%, rgba(56, 189, 248, 0.34), transparent 58%);
-  animation: lg-ambient-drift 14s ease-in-out infinite alternate;
-}
-
-.lg-refract-stats-bars {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-around;
-  padding: 0 8%;
-  opacity: 0.42;
-}
-
-.lg-refract-bar {
-  width: 18%;
-  border-radius: 999px 999px 0 0;
-  filter: blur(8px);
-  transition: height 600ms ease;
-}
-
-.lg-refract-bar.cpu {
-  background: linear-gradient(180deg, rgba(56, 189, 248, 0.85), rgba(56, 189, 248, 0.08));
-}
-
-.lg-refract-bar.ram {
-  background: linear-gradient(180deg, rgba(168, 85, 247, 0.85), rgba(168, 85, 247, 0.08));
-}
-
-.lg-refract-bar.gpu {
-  background: linear-gradient(180deg, rgba(52, 211, 153, 0.85), rgba(52, 211, 153, 0.08));
-}
-
-@keyframes lg-ambient-drift {
-  0% { transform: translate3d(-4%, -3%, 0) scale(1); }
-  50% { transform: translate3d(4%, 3%, 0) scale(1.06); }
-  100% { transform: translate3d(-2%, 4%, 0) scale(1.02); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .lg-refract-ambient {
-    animation: none !important;
-  }
-}
-
-/* Keep foreground island UI above the internal refractable layer */
 :root[data-theme="liquid-glass"] .island-row,
 :root[data-theme="liquid-glass"] .island-tabs,
 :root[data-theme="liquid-glass"] .island-panel,
@@ -3155,72 +3127,67 @@ body,
   z-index: 2;
 }
 
-/* Settings & glass components in Liquid Glass mode */
+/* Settings & glass components in Liquid Glass mode (clean clear rim, no purple fill) */
 :root[data-theme="liquid-glass"] .settings-row,
 :root[data-theme="liquid-glass"] .settings-slider-row,
 :root[data-theme="liquid-glass"] .engine-card,
 :root[data-theme="liquid-glass"] .notif-item,
 :root[data-theme="liquid-glass"] .running-app-row {
   position: relative;
-  background: rgba(0, 0, 0, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.24);
-  backdrop-filter: blur(1.5px) saturate(1.25);
-  -webkit-backdrop-filter: blur(1.5px) saturate(1.25);
+  background: rgba(255, 255, 255, 0.02);
+  border: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.22),
-    inset 3px 4px 7px -2px rgba(255, 255, 255, 0.42),
-    inset -3px -4px 8px -3px rgba(255, 255, 255, 0.16),
-    0 12px 26px rgba(0, 0, 0, 0.34);
-  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.48);
+    inset 0 0 0 1.25px rgba(255, 255, 255, 0.32),
+    inset 2.5px 3px 5px -2px rgba(255, 255, 255, 0.45),
+    inset -2.5px -3px 6px -2px rgba(255, 255, 255, 0.18);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
 }
 
 :root[data-theme="liquid-glass"] .mini-btn,
 :root[data-theme="liquid-glass"] .settings-nav-btn.active,
 :root[data-theme="liquid-glass"] .island-tab.active {
-  background: rgba(0, 0, 0, 0.16);
+  background: rgba(255, 255, 255, 0.03);
   color: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.32);
+  border: none;
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.26),
-    inset 2px 3px 5px -1px rgba(255, 255, 255, 0.48),
-    inset -2px -3px 6px -2px rgba(255, 255, 255, 0.18),
-    0 6px 14px rgba(0, 0, 0, 0.28);
-  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
+    inset 0 0 0 1.25px rgba(255, 255, 255, 0.38),
+    inset 2px 2.5px 4px -1px rgba(255, 255, 255, 0.5),
+    inset -2px -2.5px 5px -2px rgba(255, 255, 255, 0.18);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
 }
 
-/* Circular liquid-glass slider thumbs */
+/* Circular rim-only liquid-glass slider thumbs */
 :root[data-theme="liquid-glass"] input[type="range"]::-webkit-slider-thumb {
   appearance: none;
   -webkit-appearance: none;
   width: 18px;
   height: 18px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.18);
-  border: 1.5px solid rgba(255, 255, 255, 0.65);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
   box-shadow:
-    inset 2px 2px 4px rgba(255, 255, 255, 0.8),
-    inset -2px -2px 4px rgba(255, 255, 255, 0.25),
-    0 4px 10px rgba(0, 0, 0, 0.45);
+    inset 2px 2px 4px rgba(255, 255, 255, 0.65),
+    inset -2px -2px 4px rgba(255, 255, 255, 0.2),
+    0 3px 8px rgba(0, 0, 0, 0.35);
   cursor: pointer;
 }
 
-/* Live Liquid Glass theme card preview in Settings > Appearance */
+/* Clean neutral Appearance preview card for Clear Liquid Glass (no purple tint) */
 .theme-card[data-theme="liquid-glass"] {
-  background:
-    radial-gradient(circle at 22% 24%, rgba(56, 189, 248, 0.55), transparent 55%),
-    radial-gradient(circle at 82% 76%, rgba(168, 85, 247, 0.55), transparent 55%),
-    linear-gradient(145deg, #0d1326 0%, #090d19 100%);
-  border-color: rgba(255, 255, 255, 0.36);
+  background: linear-gradient(145deg, #1b2230 0%, #0f141e 100%);
+  border-color: rgba(255, 255, 255, 0.35);
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.28),
-    inset 3px 4px 7px -2px rgba(255, 255, 255, 0.48),
-    inset -3px -4px 8px -3px rgba(255, 255, 255, 0.18);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.3),
+    inset 2.5px 3px 5px -2px rgba(255, 255, 255, 0.5),
+    inset -2.5px -3px 6px -2px rgba(255, 255, 255, 0.18);
 }
 
 .theme-card[data-theme="liquid-glass"] .theme-card-preview {
-  background: rgba(0, 0, 0, 0.16);
+  background: rgba(255, 255, 255, 0.02);
   box-shadow:
-    inset 0 0 0 1.25px rgba(255, 255, 255, 0.35),
-    inset 2px 3px 5px -1px rgba(255, 255, 255, 0.65),
-    inset -2px -2px 5px -1px rgba(255, 255, 255, 0.22);
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.38),
+    inset 2px 3px 5px -1px rgba(255, 255, 255, 0.6),
+    inset -2px -2px 5px -1px rgba(255, 255, 255, 0.2);
 }

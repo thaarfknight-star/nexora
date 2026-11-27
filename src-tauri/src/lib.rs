@@ -19,7 +19,8 @@ mod translator;
 pub mod tray;
 pub mod updater;
 pub mod vibrancy;
-pub mod watchdog;
+pub mod wallpaper;
+mod watchdog;
 
 /// Shows the Settings window (defined in `tauri.conf.json` with label
 /// `"settings"`; created hidden at startup) and focuses it. Called by
@@ -70,6 +71,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // Island: place the window at its startup position (fixed
     // size, top-center). Skipped when the main window is missing.
     if let Some(webview_window) = app.get_webview_window("main") {
+        let _ = webview_window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
         let window = webview_window.as_ref().window();
         island::setup_window(&window)?;
         crate::diagnostics::log("setup", "island window placed");
@@ -166,6 +168,7 @@ pub fn run() {
             ipc::set_island_expanded,
             ipc::set_island_click_through,
             ipc::island_heartbeat,
+            ipc::get_desktop_wallpaper,
             ipc::get_system_stats,
             ipc::get_now_playing,
             ipc::media_play,

@@ -15,6 +15,10 @@ fn default_liquid_glass_quality() -> String {
     "high".into()
 }
 
+fn default_liquid_glass_style() -> String {
+    "clear".into()
+}
+
 fn default_always_on_top() -> bool {
     true
 }
@@ -177,6 +181,10 @@ pub struct NexoraSettings {
     /// `"medium"` (refraction only), or `"low"` (clear glass rim + 1.5px blur, no SVG filter).
     #[serde(default = "default_liquid_glass_quality")]
     pub liquid_glass_quality: String,
+    /// Liquid Glass style: `"clear"` (default, truly transparent glass with rim/highlights only)
+    /// or `"refraction"` (Clear + Desktop wallpaper refraction beta on bezel ring).
+    #[serde(default = "default_liquid_glass_style")]
+    pub liquid_glass_style: String,
 }
 
 impl Default for NexoraSettings {
@@ -219,6 +227,7 @@ pub fn defaults() -> NexoraSettings {
         island_show_engine_online: true,
         island_show_engine_dubbing: true,
         liquid_glass_quality: default_liquid_glass_quality(),
+        liquid_glass_style: default_liquid_glass_style(),
     }
 }
 
@@ -290,6 +299,9 @@ impl NexoraSettings {
             "high" | "medium" | "low"
         ) {
             self.liquid_glass_quality = default_liquid_glass_quality();
+        }
+        if !matches!(self.liquid_glass_style.as_str(), "clear" | "refraction") {
+            self.liquid_glass_style = default_liquid_glass_style();
         }
         self
     }
@@ -427,6 +439,7 @@ mod tests {
             island_show_engine_online: false,
             island_show_engine_dubbing: true,
             liquid_glass_quality: "medium".into(),
+            liquid_glass_style: "refraction".into(),
             language: "fa".into(),
             island_hotkey: "Ctrl+Alt+N".into(),
         };
@@ -483,6 +496,7 @@ mod tests {
                 island_show_engine_online: true,
                 island_show_engine_dubbing: true,
                 liquid_glass_quality: "high".into(),
+                liquid_glass_style: "clear".into(),
                 language: "en".into(),
                 island_hotkey: "Alt+Space".into(),
             }
@@ -533,6 +547,7 @@ mod tests {
             island_show_engine_online: true,
             island_show_engine_dubbing: true,
             liquid_glass_quality: "high".into(),
+            liquid_glass_style: "clear".into(),
             language: "en".into(),
             island_hotkey: "Alt+Space".into(),
         };
@@ -576,6 +591,7 @@ mod tests {
             island_show_engine_online: true,
             island_show_engine_dubbing: true,
             liquid_glass_quality: "high".into(),
+            liquid_glass_style: "clear".into(),
             island_hotkey: "not-a-key".into(),
         };
         save_to_dir(&dir, &settings).expect("save must succeed");
@@ -617,6 +633,7 @@ mod tests {
             island_show_engine_online: true,
             island_show_engine_dubbing: true,
             liquid_glass_quality: "high".into(),
+            liquid_glass_style: "clear".into(),
             language: "de".into(),
             island_hotkey: "Alt+Space".into(),
         };
