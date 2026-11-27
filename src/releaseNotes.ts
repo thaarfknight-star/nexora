@@ -17,6 +17,26 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.29",
+    date: "2026-11-27",
+    title: {
+      en: "Liquid Glass Theme Updated to Custom Frosted Design System",
+      fa: "به‌روزرسانی تم Liquid Glass دقیقاً مطابق CSS اختصاصی پروژه",
+    },
+    features: {
+      en: [
+        "Ported the exact Liquid Glass / Glassmorphism palette, 20px frosted blur, crisp white inset rim, plum ambient shadow, diagonal hover light sweep, and crimson accent from the custom design system.",
+      ],
+      fa: [
+        "اعمال دقیق استایل شیشه‌ای (شفافیت سفید ۲۶٪، بلور ۲۰px، حاشیه سفید، سایه نرم، عبور نور مورب هنگام هاور و رنگ تاکیدی زرشکی) دقیقاً مطابق فایل CSS اختصاصی پروژه.",
+      ],
+    },
+    fixes: {
+      en: [],
+      fa: [],
+    },
+  },
+  {
     version: "0.2.28",
     date: "2026-11-27",
     title: {

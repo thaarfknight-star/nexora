@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.29] - 2026-11-27
+
+### What's New
+- **Liquid Glass Theme Ported from Custom Design System (`blog.css`)**: Updated the `Liquid Glass` theme to use the exact translucent white glass surface (`rgba(255, 255, 255, 0.26)`), `20px` backdrop blur, crisp white border (`rgba(255, 255, 255, 0.58)`), subtle plum shadow, diagonal white light sweep on hover, dark charcoal typography (`#25252a`), and deep crimson accent (`#7f0220`).
+
+
 ## [0.2.28] - 2026-11-27
 
 ### What's New

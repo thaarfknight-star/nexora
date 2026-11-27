@@ -606,156 +606,6 @@ interface DownloadProgressPayload {
   stage: string;
 }
 
-/**
- * Generates a true optical 2D SDF convex-bezel displacement map PNG once per
- * session and renders the hidden SVG `<filter id="nexora-liquid-glass-refract">`
- * used by the rewritten Liquid Glass theme (real rim refraction + subtle RGB
- * chromatic dispersion, crystal-clear optical center).
- */
-function buildLiquidGlassDisplacementUrl(): string {
-  if (typeof document === "undefined") return "";
-  const w = 256;
-  const h = 96;
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return "";
-
-  const img = ctx.createImageData(w, h);
-  const data = img.data;
-  const aspect = w / h;
-  const r = 0.86;
-  const bx = aspect - r;
-  const by = 1.0 - r;
-  const bezel = 0.36;
-  const eps = 0.008;
-
-  const sdf = (x: number, y: number): number => {
-    const qx = Math.abs(x) - bx;
-    const qy = Math.abs(y) - by;
-    const outD = Math.hypot(Math.max(qx, 0), Math.max(qy, 0));
-    const inD = Math.min(Math.max(qx, qy), 0);
-    return outD + inD - r;
-  };
-
-  for (let py = 0; py < h; py++) {
-    const y = (py / (h - 1)) * 2 - 1;
-    for (let px = 0; px < w; px++) {
-      const x = ((px / (w - 1)) * 2 - 1) * aspect;
-      const sd = sdf(x, y);
-      let dx = 0;
-      let dy = 0;
-      if (sd < 0) {
-        const edgeDist = -sd;
-        const gx = sdf(x + eps, y) - sdf(x - eps, y);
-        const gy = sdf(x, y + eps) - sdf(x, y - eps);
-        const glen = Math.hypot(gx, gy) || 1;
-        const nx = gx / glen;
-        const ny = gy / glen;
-
-        if (edgeDist < bezel) {
-          const t = edgeDist / bezel;
-          // Steep convex Snell-like liquid glass meniscus curve at the curved rim
-          const mag = Math.pow(1 - t, 1.8) * (0.42 + 0.58 * Math.sin(t * Math.PI * 0.5 + 0.35));
-          dx = nx * mag;
-          dy = ny * mag;
-        } else {
-          // Ultra-subtle optical dome in the center so text & icons stay razor-sharp
-          const mag = 0.035 * Math.max(0, 1 - edgeDist);
-          dx = nx * mag;
-          dy = ny * mag;
-        }
-      }
-      const idx = (py * w + px) * 4;
-      data[idx] = Math.max(0, Math.min(255, Math.round(128 + dx * 127)));
-      data[idx + 1] = Math.max(0, Math.min(255, Math.round(128 + dy * 127)));
-      data[idx + 2] = 128;
-      data[idx + 3] = 255;
-    }
-  }
-  ctx.putImageData(img, 0, 0);
-  try {
-    return canvas.toDataURL("image/png");
-  } catch {
-    return "";
-  }
-}
-
-const LiquidGlassSvgFilter = memo(function LiquidGlassSvgFilter() {
-  const dispUrl = useMemo(() => buildLiquidGlassDisplacementUrl(), []);
-  if (!dispUrl) return null;
-  return (
-    <svg
-      width="0"
-      height="0"
-      aria-hidden="true"
-      style={{ position: "fixed", pointerEvents: "none", opacity: 0 }}
-    >
-      <defs>
-        <filter
-          id="nexora-liquid-glass-refract"
-          x="0%"
-          y="0%"
-          width="100%"
-          height="100%"
-          colorInterpolationFilters="sRGB"
-        >
-          <feImage
-            href={dispUrl}
-            preserveAspectRatio="none"
-            result="dispMap"
-          />
-          <feDisplacementMap
-            in="SourceGraphic"
-            in2="dispMap"
-            scale="34"
-            xChannelSelector="R"
-            yChannelSelector="G"
-            result="dispR"
-          />
-          <feColorMatrix
-            in="dispR"
-            type="matrix"
-            values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0"
-            result="redOnly"
-          />
-          <feDisplacementMap
-            in="SourceGraphic"
-            in2="dispMap"
-            scale="27"
-            xChannelSelector="R"
-            yChannelSelector="G"
-            result="dispG"
-          />
-          <feColorMatrix
-            in="dispG"
-            type="matrix"
-            values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0"
-            result="greenOnly"
-          />
-          <feDisplacementMap
-            in="SourceGraphic"
-            in2="dispMap"
-            scale="20"
-            xChannelSelector="R"
-            yChannelSelector="G"
-            result="dispB"
-          />
-          <feColorMatrix
-            in="dispB"
-            type="matrix"
-            values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0"
-            result="blueOnly"
-          />
-          <feBlend in="redOnly" in2="greenOnly" mode="screen" result="rg" />
-          <feBlend in="rg" in2="blueOnly" mode="screen" result="refract" />
-        </filter>
-      </defs>
-    </svg>
-  );
-});
-
 const RgbaIcon = memo(function RgbaIcon({
   rgbaBase64,
   size,
@@ -1821,20 +1671,10 @@ function IslandApp() {
             }}
           />
         </button>
-        <LiquidGlassSvgFilter />
         <section
           className={`island-pill${visible === "expanded" ? " expanded" : ""}${
             visible === "compact" && launchHint ? " launch-hint" : ""
           }`}
-          onMouseMove={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            if (rect.width > 0 && rect.height > 0) {
-              const mx = ((e.clientX - rect.left) / rect.width) * 100;
-              const my = ((e.clientY - rect.top) / rect.height) * 100;
-              e.currentTarget.style.setProperty("--lg-mx", `${mx.toFixed(1)}%`);
-              e.currentTarget.style.setProperty("--lg-my", `${my.toFixed(1)}%`);
-            }
-          }}
           style={{
             transitionDuration: `${stageMs}ms`,
             transitionTimingFunction: stageEasing,
