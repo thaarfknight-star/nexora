@@ -17,6 +17,26 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.32",
+    date: "2026-11-27",
+    title: {
+      en: "Clean Borderless Settings in Liquid Glass Theme",
+      fa: "حذف کادرهای اضافی از پنجره تنظیمات در تم Liquid Glass",
+    },
+    features: {
+      en: [],
+      fa: [],
+    },
+    fixes: {
+      en: [
+        "Removed cramped inset box frames around Settings rows and buttons in Liquid Glass while keeping the transparent Dynamic Island glass styling intact.",
+      ],
+      fa: [
+        "حذف کادرهای اضافی دور ردیف‌ها و دکمه‌های پنجره تنظیمات در تم Liquid Glass، بدون تغییر در ظاهر شیشه‌ای و شفاف خود داینامیک آیلند.",
+      ],
+    },
+  },
+  {
     version: "0.2.31",
     date: "2026-11-27",
     title: {
