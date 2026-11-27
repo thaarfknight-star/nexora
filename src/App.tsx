@@ -1,6 +1,7 @@
 import { check as checkPluginUpdate } from "@tauri-apps/plugin-updater";
 import { latestReleaseNote } from "./releaseNotes";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LiquidGlass, type LiquidGlassQuality, useDominantMediaColor, useEffectiveLiquidGlassQuality } from "./LiquidGlass";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -90,6 +91,7 @@ interface NexoraSettings {
   island_show_engine_local?: boolean;
   island_show_engine_online?: boolean;
   island_show_engine_dubbing?: boolean;
+  liquid_glass_quality?: LiquidGlassQuality;
 }
 
 interface SystemStats {
@@ -859,6 +861,77 @@ function IslandApp() {
     return () => {
       unlisten?.();
     };
+  }, []);
+
+  const isLiquidGlass = theme === "liquid-glass";
+  const requestedLgQuality: LiquidGlassQuality =
+    settings?.liquid_glass_quality === "medium" ||
+    settings?.liquid_glass_quality === "low"
+      ? settings.liquid_glass_quality
+      : "high";
+  const [demoQualityOverride, setDemoQualityOverride] =
+    useState<LiquidGlassQuality | null>(null);
+  const { quality: lgQuality } = useEffectiveLiquidGlassQuality(
+    demoQualityOverride ?? requestedLgQuality,
+    isLiquidGlass,
+    stats?.gpu_percent,
+  );
+  const mediaDominantRgb = useDominantMediaColor(media?.cover_art);
+
+  // Browser-only visual test harness (completely inactive inside Tauri runtime).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if ((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("demo") !== "1") return;
+    const q = params.get("quality");
+    if (q === "high" || q === "medium" || q === "low") setDemoQualityOverride(q);
+    applyTheme("liquid-glass");
+    const st = params.get("state");
+    if (st === "expanded") {
+      showIsland("expanded", "demo");
+    } else {
+      showIsland("compact", "demo");
+    }
+    const tb = params.get("tab");
+    if (tb === "stats" || tb === "media" || tb === "apps" || tb === "notifications") {
+      setTab(tb);
+    }
+    setStats({
+      cpu_percent: 34,
+      memory_percent: 58,
+      gpu_percent: 24,
+      net_up_kbps: 420,
+      net_down_kbps: 3840,
+    });
+    if (params.get("media") === "1") {
+      const c = document.createElement("canvas");
+      c.width = 160;
+      c.height = 160;
+      const g = c.getContext("2d");
+      if (g) {
+        const grad = g.createLinearGradient(0, 0, 160, 160);
+        grad.addColorStop(0, "#ff4d6d");
+        grad.addColorStop(0.5, "#7c3aed");
+        grad.addColorStop(1, "#06b6d4");
+        g.fillStyle = grad;
+        g.fillRect(0, 0, 160, 160);
+        g.fillStyle = "rgba(255,255,255,0.88)";
+        g.font = "bold 36px sans-serif";
+        g.fillText("NEX", 36, 94);
+      }
+      setMedia({
+        playing: true,
+        title: "Midnight Synthwave",
+        artist: "Nexora Studio",
+        album: "Liquid Sessions",
+        source_app: "Spotify",
+        playback_status: "Playing",
+        cover_art: c.toDataURL("image/png"),
+      });
+    } else {
+      setMedia(null);
+    }
   }, []);
 
   const [islandDubbingStatus, setIslandDubbingStatus] =
@@ -1671,7 +1744,14 @@ function IslandApp() {
             }}
           />
         </button>
-        <section
+        <LiquidGlass
+          as="section"
+          enabled={isLiquidGlass}
+          quality={lgQuality}
+          radius={islandStyle.radius ?? 28}
+          scale={120}
+          initialWidth={visible === "expanded" ? 560 : 540}
+          initialHeight={visible === "expanded" ? 300 : 54}
           className={`island-pill${visible === "expanded" ? " expanded" : ""}${
             visible === "compact" && launchHint ? " launch-hint" : ""
           }`}
@@ -1686,6 +1766,32 @@ function IslandApp() {
               : {}),
           }}
         >
+        {isLiquidGlass && (
+          <div
+            className="lg-refract-backdrop"
+            aria-hidden="true"
+            style={{ "--lg-media-rgb": mediaDominantRgb } as React.CSSProperties}
+          >
+            {media?.cover_art && (
+              <img className="lg-refract-cover" src={media.cover_art} alt="" />
+            )}
+            <div className="lg-refract-ambient" />
+            <div className="lg-refract-stats-bars">
+              <span
+                className="lg-refract-bar cpu"
+                style={{ height: `${Math.max(22, Math.min(92, stats?.cpu_percent ?? 32))}%` }}
+              />
+              <span
+                className="lg-refract-bar ram"
+                style={{ height: `${Math.max(22, Math.min(92, stats?.memory_percent ?? 54))}%` }}
+              />
+              <span
+                className="lg-refract-bar gpu"
+                style={{ height: `${Math.max(18, Math.min(92, stats?.gpu_percent ?? 28))}%` }}
+              />
+            </div>
+          </div>
+        )}
         <div className="island-row">
           <div
             className="island-brand"
@@ -1876,8 +1982,15 @@ function IslandApp() {
                     alt=""
                   />
                 )}
-                <button
+                <LiquidGlass
+                  as="button"
                   type="button"
+                  enabled={isLiquidGlass}
+                  quality={lgQuality}
+                  round
+                  scale={94}
+                  initialWidth={28}
+                  initialHeight={28}
                   className="compact-media-btn"
                   onClick={() =>
                     sendMediaCommand(
@@ -1896,16 +2009,23 @@ function IslandApp() {
                   }
                 >
                   {media.playing ? <SvgPause size={12} /> : <SvgPlay size={12} />}
-                </button>
-                <button
+                </LiquidGlass>
+                <LiquidGlass
+                  as="button"
                   type="button"
+                  enabled={isLiquidGlass}
+                  quality={lgQuality}
+                  round
+                  scale={94}
+                  initialWidth={28}
+                  initialHeight={28}
                   className="compact-media-btn"
                   onClick={() => sendMediaCommand("media_stop")}
                   title={t(language, "mediaStop")}
                   aria-label={t(language, "mediaStop")}
                 >
                   <SvgStop size={10} />
-                </button>
+                </LiquidGlass>
               </div>
             </>
           )}
@@ -1945,8 +2065,15 @@ function IslandApp() {
             </>
           )}
           {(settings?.island_show_engine_local ?? true) && (
-            <button
+            <LiquidGlass
+              as="button"
               type="button"
+              enabled={isLiquidGlass}
+              quality={lgQuality}
+              round
+              scale={92}
+              initialWidth={30}
+              initialHeight={30}
               className={`theme-icon-btn engine-quick-btn${
                 liveSubActive && activeTranslateMode !== "online" ? " active" : ""
               }`}
@@ -1955,11 +2082,18 @@ function IslandApp() {
               aria-label={t(language, "engineLocalTooltip")}
             >
               <SvgSubtitle size={15} />
-            </button>
+            </LiquidGlass>
           )}
           {(settings?.island_show_engine_online ?? true) && (
-            <button
+            <LiquidGlass
+              as="button"
               type="button"
+              enabled={isLiquidGlass}
+              quality={lgQuality}
+              round
+              scale={92}
+              initialWidth={30}
+              initialHeight={30}
               className={`theme-icon-btn engine-quick-btn${
                 liveSubActive && activeTranslateMode === "online"
                   ? " active active-online"
@@ -1970,11 +2104,18 @@ function IslandApp() {
               aria-label={t(language, "engineOnlineTooltip")}
             >
               <SvgGlobe size={15} />
-            </button>
+            </LiquidGlass>
           )}
           {(settings?.island_show_engine_dubbing ?? true) && (
-            <button
+            <LiquidGlass
+              as="button"
               type="button"
+              enabled={isLiquidGlass}
+              quality={lgQuality}
+              round
+              scale={92}
+              initialWidth={30}
+              initialHeight={30}
               className={`theme-icon-btn engine-quick-btn${
                 islandDubbingStatus?.running ? " active active-dubbing" : ""
               }`}
@@ -1983,11 +2124,18 @@ function IslandApp() {
               aria-label={t(language, "engineDubbingTooltip")}
             >
               <SvgDubbing size={15} />
-            </button>
+            </LiquidGlass>
           )}
           {(settings?.island_show_notifications ?? true) && (
-            <button
+            <LiquidGlass
+              as="button"
               type="button"
+              enabled={isLiquidGlass}
+              quality={lgQuality}
+              round
+              scale={92}
+              initialWidth={30}
+              initialHeight={30}
               className="bell-btn theme-icon-btn"
               onClick={openNotificationsTab}
               title={t(language, "notifications")}
@@ -2000,17 +2148,24 @@ function IslandApp() {
                   {unreadCount > 9 ? "9+" : unreadCount}
                 </span>
               )}
-            </button>
+            </LiquidGlass>
           )}
-          <button
+          <LiquidGlass
+            as="button"
             type="button"
+            enabled={isLiquidGlass}
+            quality={lgQuality}
+            round
+            scale={92}
+            initialWidth={30}
+            initialHeight={30}
             className="gear-btn theme-icon-btn"
             onClick={openSettings}
             title={t(language, "openSettings")}
             aria-label={t(language, "openSettings")}
           >
             <SvgGear size={15} />
-          </button>
+          </LiquidGlass>
           {visible === "expanded" && (
             <button
               type="button"
@@ -2455,7 +2610,14 @@ function IslandApp() {
             {tab === "stats" && (
               <div className="island-panel" role="tabpanel">
                 <div className="stat-chips">
-                  <div
+                  <LiquidGlass
+                    as="div"
+                    enabled={isLiquidGlass}
+                    quality={lgQuality}
+                    radius={14}
+                    scale={108}
+                    initialWidth={150}
+                    initialHeight={66}
                     className="stat-chip"
                     title={
                       stats
@@ -2474,8 +2636,15 @@ function IslandApp() {
                           )
                         : "—"}
                     </span>
-                  </div>
-                  <div
+                  </LiquidGlass>
+                  <LiquidGlass
+                    as="div"
+                    enabled={isLiquidGlass}
+                    quality={lgQuality}
+                    radius={14}
+                    scale={108}
+                    initialWidth={150}
+                    initialHeight={66}
                     className="stat-chip"
                     title={
                       stats
@@ -2494,8 +2663,15 @@ function IslandApp() {
                           )
                         : "—"}
                     </span>
-                  </div>
-                  <div
+                  </LiquidGlass>
+                  <LiquidGlass
+                    as="div"
+                    enabled={isLiquidGlass}
+                    quality={lgQuality}
+                    radius={14}
+                    scale={108}
+                    initialWidth={150}
+                    initialHeight={66}
                     className="stat-chip"
                     title={
                       stats?.gpu_percent != null
@@ -2514,7 +2690,7 @@ function IslandApp() {
                           )
                         : "—"}
                     </span>
-                  </div>
+                  </LiquidGlass>
                 </div>
                 <div className="net-speed">
                   <span
@@ -2763,7 +2939,7 @@ function IslandApp() {
             )}
           </>
         )}
-        </section>
+        </LiquidGlass>
       </div>
     </main>
   );
@@ -3429,6 +3605,14 @@ function SettingsView() {
     });
   };
 
+  const cycleLiquidGlassQuality = () => {
+    if (!settings) return;
+    const cur = settings.liquid_glass_quality ?? "high";
+    const next: LiquidGlassQuality =
+      cur === "high" ? "medium" : cur === "medium" ? "low" : "high";
+    saveSettings({ ...settings, liquid_glass_quality: next });
+  };
+
   const cycleLanguage = () => {
     // The switch persists through set_settings, so settings-changed
     // carries it to the island at once (rule 18).
@@ -3512,6 +3696,7 @@ function SettingsView() {
         island_show_engine_local: true,
         island_show_engine_online: true,
         island_show_engine_dubbing: true,
+        liquid_glass_quality: "high",
       });
     }
   };
@@ -3912,6 +4097,31 @@ function SettingsView() {
           onClick={() => toggleSetting("always_on_top")}
         >
           {settings ? onOff(settings.always_on_top, language) : "—"}
+        </button>
+      </div>
+      <div className="settings-row">
+        <span className="settings-row-text">
+          <span>{t(language, "liquidGlassQuality")}</span>
+          <span className="settings-row-desc">
+            {t(language, "liquidGlassQualityDesc")}
+          </span>
+        </span>
+        <button
+          type="button"
+          className="mini-btn"
+          disabled={!settings}
+          onClick={cycleLiquidGlassQuality}
+        >
+          {settings
+            ? t(
+                language,
+                (settings.liquid_glass_quality ?? "high") === "high"
+                  ? "lgQualityHigh"
+                  : settings.liquid_glass_quality === "medium"
+                    ? "lgQualityMedium"
+                    : "lgQualityLow",
+              )
+            : "—"}
         </button>
       </div>
       <div className="settings-slider-row">
