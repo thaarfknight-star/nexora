@@ -638,7 +638,7 @@ export function tf(
 export const THEME_DESCRIPTIONS: Record<Language, Record<ThemeId, string>> = {
   en: {
     obsidian: "Dark slate pill with a sky-blue accent.",
-    "liquid-glass": "Translucent frosted glass with a soft white glow.",
+    "liquid-glass": "True optical refractive lens glass with rim chromatic dispersion and specular glare.",
     aurora: "Deep teal with an emerald accent.",
     sunset: "Warm ember dark with an orange accent.",
     midnight: "Deep violet night with a lavender accent.",
@@ -648,7 +648,7 @@ export const THEME_DESCRIPTIONS: Record<Language, Record<ThemeId, string>> = {
   },
   fa: {
     obsidian: "قرص خاکستری تیره با اکسنت آبی آسمانی.",
-    "liquid-glass": "شیشه‌ی مات نیمه‌شفاف با درخشش سفید ملایم.",
+    "liquid-glass": "شیشه‌ی اپتیکال واقعی با شکست نور لبه‌ها، انعکاس منشوری و درخشش زنده.",
     aurora: "فیروزه‌ای عمیق با اکسنت زمردی.",
     sunset: "تیره‌ی گرم اخگری با اکسنت نارنجی.",
     midnight: "شب بنفش عمیق با اکسنت اسطوخودوسی.",
