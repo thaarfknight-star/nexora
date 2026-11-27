@@ -1,6 +1,6 @@
 [package]
 name = "nexora"
-version = "0.2.28"
+version = "0.2.29"
 description = "Floating Dynamic Island shell replacement for Windows 10/11"
 authors = ["Taha Arefi"]
 license = "MIT OR Apache-2.0"
