@@ -20,7 +20,7 @@ pub mod tray;
 pub mod updater;
 pub mod vibrancy;
 pub mod wallpaper;
-mod watchdog;
+pub mod watchdog;
 
 /// Shows the Settings window (defined in `tauri.conf.json` with label
 /// `"settings"`; created hidden at startup) and focuses it. Called by
