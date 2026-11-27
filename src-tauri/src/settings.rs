@@ -483,7 +483,6 @@ mod tests {
                 island_show_engine_online: true,
                 island_show_engine_dubbing: true,
                 liquid_glass_quality: "high".into(),
-                liquid_glass_quality: "high".into(),
                 language: "en".into(),
                 island_hotkey: "Alt+Space".into(),
             }
