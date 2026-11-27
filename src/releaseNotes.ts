@@ -17,6 +17,30 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.30",
+    date: "2026-11-27",
+    title: {
+      en: "Real Refractive Liquid Glass Theme & Quality Modes",
+      fa: "تم واقعی Liquid Glass با شکست نور اپتیکال و تنظیمات کیفیت",
+    },
+    features: {
+      en: [
+        "Implemented a reusable LiquidGlass SDF convex-bezel refraction component with cached per-size displacement maps, 3-channel RGB chromatic aberration, clear glass interior, and crisp specular rim/highlights.",
+        "Added an internal refractable media/ambient/stats layer inside the island so glass buttons, engine toggles, and stat cards bend real colors and album art inside WebView2.",
+        "Added Liquid Glass Quality setting (High / Medium / Low) in Settings → Island Style with automatic fallback on high GPU load or frame drops and prefers-reduced-motion support.",
+      ],
+      fa: [
+        "پیاده‌سازی کامپوننت اختصاصی LiquidGlass با نقشه شکست نور SDF کش‌شده بر اساس ابعاد، پاشش رنگی RGB روی لبه‌ها، شیشه شفاف کریستالی و حاشیه درخشان Specular.",
+        "افزودن لایه پس‌زمینه داخلی (کاور آلبوم، گرادینت هوشمند هم‌رنگ رسانه و نمودار زنده سیستم) تا دکمه‌های شیشه‌ای و کارت‌های آمار واقعاً نور و رنگ را بشکنند.",
+        "افزودن تنظیم کیفیت Liquid Glass (بالا / متوسط / پایین) با افت کیفیت خودکار در فشار GPU و پشتیبانی از prefers-reduced-motion.",
+      ],
+    },
+    fixes: {
+      en: [],
+      fa: [],
+    },
+  },
+  {
     version: "0.2.29",
     date: "2026-11-27",
     title: {

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.30] - 2026-11-27
+
+### What's New
+- **Real Optical Liquid Glass (`src/LiquidGlass.tsx`)**: Implemented a reusable `<LiquidGlass>` component and `useLiquidGlassFilter` hook using per-element SDF convex-bezel displacement maps (cached by `w x h x radius x bezel`, rebuilt only on debounced resize) and 3-pass RGB chromatic aberration SVG filters (`S`, `0.93S`, `0.86S`) over clear `rgba(0,0,0,0.14)` refractive glass with bright specular rim and top-left/bottom-right inner highlights.
+- **Refractable Internal Island Layer**: Added an internal backdrop layer inside the Liquid Glass island combining enlarged blurred album art, a dominant-media-color animated ambient gradient, and live CPU/RAM/GPU stat ribbons so circular glass playback/engine/icon buttons and stat cards genuinely refract real pixels inside Windows WebView2.
+- **Liquid Glass Quality & Auto-Fallback**: Added a persisted **Liquid Glass Quality** setting (`High`: refraction + RGB chromatic aberration, `Medium`: refraction only, `Low`: clear glass rim + 1.5px blur with no SVG filter) with automatic fallback to `Low` on high GPU load or sustained frame drops, plus `prefers-reduced-motion` support.
+
+
 ## [0.2.29] - 2026-11-27
 
 ### What's New

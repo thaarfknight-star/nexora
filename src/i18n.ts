@@ -197,6 +197,11 @@ const EN = {
   engineLocalTooltip: "Local Engine: Offline Live Subtitles & Nexora-MT",
   engineOnlineTooltip: "Online Engine: Live Online Translation",
   engineDubbingTooltip: "Dubbing Engine: Nexora-Voice Live Dubbing",
+  liquidGlassQuality: "Liquid Glass Quality",
+  liquidGlassQualityDesc: "High: refraction + RGB dispersion · Medium: refraction only · Low: clear rim + 1.5px blur.",
+  lgQualityHigh: "High",
+  lgQualityMedium: "Medium",
+  lgQualityLow: "Low",
   launchHint:
     "Move the mouse to the top edge or press {hotkey} to open Nexora",
   changeHotkey: "Change",
@@ -492,6 +497,11 @@ const FA: Record<StringKey, string> = {
   engineLocalTooltip: "موتور آفلاین: زیرنویس و ترجمه آفلاین Nexora-MT",
   engineOnlineTooltip: "موتور آنلاین: ترجمه آنلاین زنده",
   engineDubbingTooltip: "موتور دوبله: دوبله زنده فارسی Nexora-Voice",
+  liquidGlassQuality: "کیفیت Liquid Glass",
+  liquidGlassQualityDesc: "بالا: شکست نور + پاشش RGB · متوسط: فقط شکست نور · پایین: شیشه شفاف بدون فیلتر SVG.",
+  lgQualityHigh: "بالا (High)",
+  lgQualityMedium: "متوسط (Medium)",
+  lgQualityLow: "پایین (Low)",
   launchHint:
     "برای باز کردن Nexora، نشانگر موس را به لبه‌ی بالای صفحه ببر یا {hotkey} را فشار بده",
   changeHotkey: "تغییر",
