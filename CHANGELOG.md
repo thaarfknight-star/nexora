@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.28] - 2026-11-27
+
+### What's New
+- **True Optical Liquid Glass Theme Rewrite**: Replaced the old frosted-blur `Liquid Glass` theme with a real optical refractive lens shader powered by an SVG `feDisplacementMap` convex-bezel SDF map, 3-channel RGB prismatic chromatic dispersion along the curved glass rim, ultra-clear `1.5px` optical center clarity, specular prism bezel border, and live cursor-following glass glare.
+
+
 ## [0.2.27] - 2026-11-25
 
 ### What's New

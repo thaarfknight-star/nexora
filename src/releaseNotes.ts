@@ -17,6 +17,26 @@ export interface ReleaseEntry {
 
 export const RELEASE_NOTES: readonly ReleaseEntry[] = [
   {
+    version: "0.2.28",
+    date: "2026-11-27",
+    title: {
+      en: "True Optical Refractive Liquid Glass Theme",
+      fa: "بازنویسی کامل تم Liquid Glass با شکست نور اپتیکال واقعی",
+    },
+    features: {
+      en: [
+        "Rewrote the Liquid Glass theme with real optical rim refraction (SVG feDisplacementMap convex-bezel lens), subtle RGB chromatic dispersion on the curved edges, crystal-clear center optics, specular prism rim, and live mouse-following glass glare.",
+      ],
+      fa: [
+        "بازنویسی کامل تم Liquid Glass با شکست نور اپتیکال واقعی روی لبه‌ها (نقشه جابه‌جایی عدسی محدب SVG)، انعکاس منشوری RGB در حاشیه شیشه، شفافیت کریستالی مرکز و درخشش زنده همگام با حرکت ماوس.",
+      ],
+    },
+    fixes: {
+      en: [],
+      fa: [],
+    },
+  },
+  {
     version: "0.2.27",
     date: "2026-11-25",
     title: {
