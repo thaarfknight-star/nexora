@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.32] - 2026-11-27
+
+### Bug Fixes
+- **Removed Cramped Box Frames in Liquid Glass Settings**: Removed the heavy inset glass box borders around `.settings-row`, `.settings-slider-row`, `.mini-btn`, and active Settings navigation buttons in the `Liquid Glass` theme so Settings stays clean and borderless while keeping the transparent glass Dynamic Island intact.
+
+
 ## [0.2.31] - 2026-11-27
 
 ### What's New

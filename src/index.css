@@ -3127,35 +3127,34 @@ body,
   z-index: 2;
 }
 
-/* Settings & glass components in Liquid Glass mode (clean clear rim, no purple fill) */
+/* Settings in Liquid Glass mode: keep rows clean & borderless (no tight boxes around rows) */
 :root[data-theme="liquid-glass"] .settings-row,
-:root[data-theme="liquid-glass"] .settings-slider-row,
-:root[data-theme="liquid-glass"] .engine-card,
-:root[data-theme="liquid-glass"] .notif-item,
-:root[data-theme="liquid-glass"] .running-app-row {
-  position: relative;
-  background: rgba(255, 255, 255, 0.02);
+:root[data-theme="liquid-glass"] .settings-slider-row {
+  background: transparent;
   border: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  box-shadow:
-    inset 0 0 0 1.25px rgba(255, 255, 255, 0.32),
-    inset 2.5px 3px 5px -2px rgba(255, 255, 255, 0.45),
-    inset -2.5px -3px 6px -2px rgba(255, 255, 255, 0.18);
-  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+  text-shadow: none;
 }
 
-:root[data-theme="liquid-glass"] .mini-btn,
 :root[data-theme="liquid-glass"] .settings-nav-btn.active,
 :root[data-theme="liquid-glass"] .island-tab.active {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.1);
   color: #ffffff;
-  border: none;
-  box-shadow:
-    inset 0 0 0 1.25px rgba(255, 255, 255, 0.38),
-    inset 2px 2.5px 4px -1px rgba(255, 255, 255, 0.5),
-    inset -2px -2.5px 5px -2px rgba(255, 255, 255, 0.18);
-  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: none;
+}
+
+:root[data-theme="liquid-glass"] .mini-btn {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: none;
+  text-shadow: none;
+}
+
+:root[data-theme="liquid-glass"] .mini-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
 }
 
 /* Circular rim-only liquid-glass slider thumbs */
